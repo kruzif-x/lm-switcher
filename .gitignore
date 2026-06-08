@@ -1,0 +1,44 @@
+# macOS / Xcode
+.DS_Store
+*.swp
+*~.nib
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+.build/
+DerivedData/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+
+# Generated icon PNGs (kept in repo for reference; iconutil output is
+# in AppIcon.icns which IS committed)
+assets/icon.iconset/
+
+# Build artifacts
+*.o
+*.obj
+*.exe
+*.dll
+*.dylib
+*.so
+*.app/
+build/
+dist/
+
+# Logs
+*.log
+logs/

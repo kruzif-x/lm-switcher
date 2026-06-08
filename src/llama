@@ -1,0 +1,643 @@
+#!/bin/bash
+# =============================================================================
+#  llama — CLI companion to the LLM Switcher menu bar app
+# =============================================================================
+#
+#  PURPOSE
+#  -------
+#  This is a bash-based command-line tool for managing local LLM model
+#  servers. It complements the `LlamaMenubarApp` Swift menu bar app, sharing
+#  the same on-disk state (PID files, logs) and the same `UserDefaults`
+#  settings (via the `defaults` command on macOS).
+#
+#  The two tools can be used interchangeably: the menu bar app picks up
+#  models launched by the CLI (via periodic `ps` scanning), and vice versa.
+#
+#  USAGE
+#  -----
+#      llama list                       # list all models (recursive scan)
+#      llama load <model>               # start server (fuzzy match)
+#      llama load <m1> <m2> ...         # start multiple
+#      llama unload <model>             # stop one
+#      llama unload all                 # stop all
+#      llama switch <model> ...         # stop all, start new model(s)
+#      llama status                     # show running + ports
+#      llama ctx <model> <size>         # set per-model ctx
+#      llama port <model> <port>        # set per-model port
+#      llama menubar                    # launch menu bar app
+#      llama uninstall                  # remove everything
+#      llama help                       # show this help
+#
+#  STATE STORAGE
+#  -------------
+#  - PID files:     $LLAMA_DIR/pids/<safe-name>.pid
+#                   First line is the PID. Second line is "PID --port N"
+#                   for fast port recovery without re-scanning `ps`.
+#  - Log files:     $LLAMA_DIR/logs/<safe-name>.log
+#                   Captures stdout+stderr of each server process.
+#  - Settings:      ~/Library/Preferences/local.llama-menubar.plist
+#                   Read/written via the `defaults` command. The same
+#                   domain is used by the Swift app, so settings stay
+#                   in sync between the two tools.
+#
+#  MODEL TYPES
+#  -----------
+#  - GGUF: a single .gguf file. Served by `llama-server` (`-m <file>`).
+#  - MLX:  a directory containing `*.safetensors` and `config.json`.
+#         Served by `mlx_lm.server` (`--model <dir>`).
+#
+#  WHY BASH (NOT ZSH)
+#  ------------------
+#  Earlier versions of this script used zsh, but a zsh-specific parser
+#  bug caused `local x; x=$(...)` patterns to corrupt the PATH inside
+#  some functions, breaking commands like `cut`, `md5`, and `basename`.
+#  Bash handles this pattern reliably, so we use bash explicitly.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Configuration
+# -----------------------------------------------------------------------------
+# These are the runtime configuration values. Each can be overridden by
+# setting the corresponding environment variable before invoking the script
+# (e.g. `LLAMA_PORT=9000 llama load gemma`).
+
+# Where PID files and log files live. Defaults to ~/.local/share/llama-menubar.
+LLAMA_DIR="${LLAMA_DIR:-$HOME/.local/share/llama-menubar}"
+
+# Absolute path to the llama-server binary (Homebrew location by default).
+LLAMA_SERVER="${LLAMA_SERVER:-/opt/homebrew/bin/llama-server}"
+
+# Absolute path to the mlx_lm.server entry script (pip --user install).
+MLX_SERVER="${MLX_SERVER:-$HOME/Library/Python/3.14/bin/mlx_lm.server}"
+
+# Ensure the base directory exists before doing anything else. Using
+# `mkdir -p` is idempotent — safe to call even if the directory is present.
+mkdir -p "$LLAMA_DIR"
+
+# Subdirectories for per-process state. We keep one PID file and one log
+# file per loaded model so multiple instances don't trample each other.
+PIDS_DIR="$LLAMA_DIR/pids"
+mkdir -p "$PIDS_DIR"
+LOGS_DIR="$LLAMA_DIR/logs"
+mkdir -p "$LOGS_DIR"
+
+# User-overridable settings. Each is a `:- default` expression: if the
+# variable is unset or empty, use the default.
+MODELS_DIR="${LLAMA_MODELS_DIR:-$HOME/models}"   # scanned recursively
+PORT="${LLAMA_PORT:-8080}"                       # default port
+CTX_SIZE="${LLAMA_CTX_SIZE:-4096}"               # default ctx size (tokens)
+
+
+# -----------------------------------------------------------------------------
+# Path helpers
+# -----------------------------------------------------------------------------
+# Model "ids" in the Swift app are absolute paths. We need a stable,
+# filesystem-safe representation to use as a filename for PID/log files.
+# We do this by taking the basename and replacing `/` and ` ` with `_`.
+# For example, `/Users/foo/gguf/my model.gguf` becomes `my_model.gguf`.
+
+# Print the PID file path for a given model path.
+pidfile_for() {
+    local b; b=$(basename "$1")          # take the filename
+    local s; s=$(echo "$b" | tr '/ ' '__')  # replace separators
+    echo "$PIDS_DIR/${s}.pid"
+}
+
+# Print the log file path for a given model path.
+logfile_for() {
+    local b; b=$(basename "$1")
+    local s; s=$(echo "$b" | tr '/ ' '__')
+    echo "$LOGS_DIR/${s}.log"
+}
+
+
+# -----------------------------------------------------------------------------
+# Model discovery
+# -----------------------------------------------------------------------------
+# `list_all_models` performs a recursive scan of `$MODELS_DIR` and emits
+# one line per discovered model on stdout. Each line has the format:
+#
+#     TYPE|PATH|NAME
+#
+#   TYPE: "gguf" or "mlx"
+#   PATH: absolute path to the .gguf file or MLX directory
+#   NAME: human-readable name (filename or directory name)
+#
+# This format is easy to parse downstream with `cut` or `IFS='|' read`.
+#
+# Hidden files are skipped. Specific prefixes are excluded:
+#   - mmproj-*.gguf         (vision projection, paired automatically)
+#   - modernbert-embed-*.gguf (embedding model, not for chat)
+
+list_all_models() {
+    # If the models directory doesn't exist, return empty (not an error).
+    [[ -d "$MODELS_DIR" ]] || return 0
+
+    # GGUF: every .gguf file in the tree.
+    while IFS= read -r f; do
+        local bn; bn=$(basename "$f")
+        case "$bn" in
+            mmproj-*|modernbert-embed-*) continue ;;
+        esac
+        echo "gguf|$f|$bn"
+    done < <(find "$MODELS_DIR" -type f -name "*.gguf" 2>/dev/null)
+
+    # MLX: every directory that contains BOTH .safetensors and config.json.
+    # We don't recurse into MLX dirs (each is a self-contained model), so
+    # we just iterate all directories returned by `find -type d`.
+    while IFS= read -r d; do
+        if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
+            echo "mlx|$d|$(basename "$d")"
+        fi
+    done < <(find "$MODELS_DIR" -type d 2>/dev/null)
+}
+
+
+# -----------------------------------------------------------------------------
+# Query resolution
+# -----------------------------------------------------------------------------
+# `resolve_query <query>` accepts a user-provided substring (e.g. "gemma")
+# and returns a single "TYPE|PATH" line that matches. If zero or multiple
+# matches, it prints an error and returns non-zero. The matching is fuzzy:
+# the query is a substring of the model name (filename or dir name).
+
+resolve_query() {
+    local query="$1"
+    local line type path name matches_str count
+
+    # Build a newline-separated list of matches. Using a string instead of
+    # an array avoids zsh `local -a + +=` quirks we hit in earlier versions.
+    matches_str=""
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        type=$(echo "$line" | cut -d'|' -f1)
+        path=$(echo "$line" | cut -d'|' -f2)
+        name=$(echo "$line" | cut -d'|' -f3)
+        # Match against the model name (not the path), so users can
+        # type "gemma" instead of the full filename.
+        if [[ "$name" == *"$query"* ]] || [[ "$(basename "$path")" == *"$query"* ]]; then
+            if [[ -z "$matches_str" ]]; then
+                matches_str="$line"
+            else
+                matches_str="${matches_str}
+$line"
+            fi
+        fi
+    done < <(list_all_models)
+
+    # No matches: distinguish "no models at all" from "no match".
+    if [[ -z "$matches_str" ]]; then
+        count=$(list_all_models | wc -l | tr -d ' ')
+        if [[ "$count" -eq 0 ]]; then
+            echo "No models found in $MODELS_DIR" >&2
+        else
+            echo "No model matching '$query'" >&2
+        fi
+        return 1
+    fi
+
+    # Multiple matches: show them all and refuse to guess.
+    local match_count
+    match_count=$(echo "$matches_str" | wc -l | tr -d ' ')
+    if [[ "$match_count" -gt 1 ]]; then
+        echo "Multiple models match '$query':" >&2
+        local m
+        while IFS= read -r m; do
+            echo "  [$(echo "$m" | cut -d'|' -f1)] $(echo "$m" | cut -d'|' -f3)" >&2
+        done <<< "$matches_str"
+        return 1
+    fi
+
+    # Single match: emit it.
+    echo "$matches_str"
+}
+
+
+# -----------------------------------------------------------------------------
+# State queries
+# -----------------------------------------------------------------------------
+# These read the on-disk PID files (and the Swift app's UserDefaults) to
+# answer simple questions like "is this model loaded?" and "what port
+# is it on?".
+
+# Is a model with the given id-hash currently running? We treat the model
+# as running iff its PID file exists AND the process it points to is alive.
+is_loaded() {
+    local id="$1"
+    local pidfile; pidfile=$(pidfile_for "$id")
+    [[ -f "$pidfile" ]] || return 1
+    local pid; pid=$(cat "$pidfile" 2>/dev/null)
+    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+# What port is the model with the given id-hash listening on? Reads the
+# second line of the PID file (which we wrote as "PID --port N" for fast
+# recovery). Falls back to scanning `ps` if the second line is missing.
+get_port_for() {
+    local id="$1"
+    local pidfile; pidfile=$(pidfile_for "$id")
+    [[ -f "$pidfile" ]] || return 1
+    local pid; pid=$(cat "$pidfile")
+    # Prefer the embedded port info we wrote.
+    local pp
+    pp=$(grep -oE '\--port [0-9]+' "$pidfile" 2>/dev/null | awk '{print $2}')
+    [[ -n "$pp" ]] && { echo "$pp"; return; }
+    # Fall back: ask the live process.
+    ps -o args= -p "$pid" 2>/dev/null | grep -oE '\--port [0-9]+' | awk '{print $2}'
+}
+
+# Read the per-model preferred port from defaults(1). Returns 0 if unset.
+per_model_port() {
+    local id_hash="$1"
+    local key="model.${id_hash}.port"
+    defaults read local.llama-menubar "$key" 2>/dev/null || echo 0
+}
+
+# Read the per-model context size from defaults(1). Falls back to the
+# default ctx size if the per-model value is unset or zero.
+per_model_ctx() {
+    local id_hash="$1"
+    local key="model.${id_hash}.ctx"
+    local stored; stored=$(defaults read local.llama-menubar "$key" 2>/dev/null || echo 0)
+    if [[ "$stored" -gt 0 ]]; then
+        echo "$stored"
+    else
+        echo "$CTX_SIZE"
+    fi
+}
+
+# Compute a short, stable hash of a model path. We use this as the key
+# for per-model settings and PID files. md5 is used because it's a
+# stable, widely-available hash.
+id_hash() {
+    local h; h=$(md5 -q <<< "$1")
+    echo "${h:0:12}"
+}
+
+
+# -----------------------------------------------------------------------------
+# Port allocation
+# -----------------------------------------------------------------------------
+# Find the smallest unused port starting at $PORT. We need this so that
+# loading multiple models doesn't collide on the same port.
+
+next_port() {
+    local used_str="" p pf port
+    # `nullglob` makes a glob that matches nothing expand to nothing
+    # (instead of the literal pattern). Without it, an empty pids
+    # directory would cause "no matches found" errors under bash.
+    shopt -s nullglob
+    for pf in "$PIDS_DIR"/*.pid; do
+        [[ -f "$pf" ]] || continue
+        p=$(head -1 "$pf" 2>/dev/null)
+        # Skip dead PIDs (the file is stale).
+        [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null || continue
+        # Read --port N from the live process. Most reliable source.
+        local pp
+        pp=$(ps -o args= -p "$p" 2>/dev/null | grep -oE '\--port [0-9]+' | awk '{print $2}')
+        [[ -n "$pp" ]] && used_str="${used_str} ${pp}"
+    done
+    shopt -u nullglob
+
+    # Walk up from $PORT until we find one not in `used_str`.
+    port=$PORT
+    while [[ " ${used_str} " == *" ${port} "* ]]; do
+        ((port++))
+    done
+    echo $port
+}
+
+
+# -----------------------------------------------------------------------------
+# Load / Unload
+# -----------------------------------------------------------------------------
+# `load_model` starts a server process for one model. `unload_model` stops
+# it. `cmd_unload all` iterates all PID files and unloads each.
+
+# Start a server process for a "TYPE|PATH|NAME" line.
+load_model() {
+    local line="$1"
+    # Parse the three fields.
+    local type; type=$(echo "$line" | cut -d'|' -f1)
+    local path; path=$(echo "$line" | cut -d'|' -f2)
+    local name; name=$(echo "$line" | cut -d'|' -f3)
+    local id_hash; id_hash=$(id_hash "$path")
+
+    # If the same model is already running on some port, no-op.
+    if is_loaded "$id_hash"; then
+        echo "● [$type] $name already loaded on port $(get_port_for "$id_hash")"
+        return 0
+    fi
+
+    # Pick a port: prefer the per-model saved port; otherwise the next
+    # free port starting from $PORT.
+    local preferred; preferred=$(per_model_port "$id_hash")
+    local port
+    if [[ "$preferred" -gt 0 ]]; then
+        port=$preferred
+    else
+        port=$(next_port)
+    fi
+    local ctx; ctx=$(per_model_ctx "$id_hash")
+
+    # Build the command line, depending on the backend.
+    local -a args=()
+    local executable
+    if [[ "$type" == "gguf" ]]; then
+        executable="$LLAMA_SERVER"
+        args=("-m" "$path")
+        # Auto-pair an mmproj projection model if one exists with a
+        # matching base name. The match is by stripping the quantization
+        # suffix and looking for "mmproj-<base>*".
+        local dir; dir=$(dirname "$path")
+        local base; base=$(basename "$path" .gguf)
+        local stripped; stripped=$(echo "$base" | sed -E 's/-Q[0-9]+(_[0-9]+)?(_K)?(_[A-Z]+)?$//' | sed -E 's/-Q[0-9]+_[A-Z0-9_]+$//')
+        shopt -s nullglob
+        local f
+        for f in "$dir/mmproj-${stripped}-"*.gguf; do
+            [[ -f "$f" ]] && args+=("--mmproj" "$f") && break
+        done
+        shopt -u nullglob
+        # Bind to localhost, set the ctx size, then any global extras.
+        args+=("--host" "127.0.0.1" "--port" "$port" "--ctx-size" "$ctx")
+    else
+        # MLX: invoke mlx_lm.server. No mmproj, no explicit ctx (mlx
+        # uses the model's own config).
+        executable="$MLX_SERVER"
+        args=("--model" "$path" "--host" "127.0.0.1" "--port" "$port")
+    fi
+
+    # Append any user-provided extra args (split on whitespace).
+    if [[ -n "$LLAMA_EXTRA_ARGS" ]]; then
+        args+=($LLAMA_EXTRA_ARGS)
+    fi
+
+    echo "Loading [$type] $name on :$port ..."
+
+    # nohup detaches the child from the controlling terminal so it
+    # survives the parent shell exiting. We redirect all output to a
+    # per-model log file so the user can `tail -f` it.
+    nohup "$executable" "${args[@]}" > "$(logfile_for "$id_hash")" 2>&1 &
+
+    # Capture the new PID and write the PID file.
+    local newpid; newpid=$!
+    local pf; pf=$(pidfile_for "$id_hash")
+    echo "$newpid" > "$pf"
+    # Second line is the port — for fast get_port_for() without ps.
+    echo "$newpid --port $port" >> "$pf"
+
+    # Brief sleep to let the process either fail or start successfully.
+    # `kill -0` is the portable way to test "is this PID alive?".
+    sleep 1
+    if kill -0 "$newpid" 2>/dev/null; then
+        echo "● [$type] $name loaded on :$port (PID $newpid)"
+    else
+        echo "✗ Failed to start $name"
+        rm -f "$pf"
+        return 1
+    fi
+}
+
+# Stop a single model by id-hash and display name. The name is only used
+# for user-facing messages.
+unload_model() {
+    local id_hash="$1"
+    local name="$2"
+    local pidfile; pidfile=$(pidfile_for "$id_hash")
+    if [[ ! -f "$pidfile" ]]; then
+        echo "○ $name not loaded"
+        return 0
+    fi
+    local pid; pid=$(head -1 "$pidfile")
+    if kill -0 "$pid" 2>/dev/null; then
+        echo "Stopping $name (PID $pid) ..."
+        # SIGTERM (default for `kill`) gives the process a chance to
+        # shut down gracefully. We escalate to SIGKILL if it's still
+        # alive after a second.
+        kill "$pid" 2>/dev/null
+        sleep 1
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+        echo "✓ $name stopped"
+    else
+        echo "○ $name already stopped"
+    fi
+    # Always remove the PID file, even if the process was already dead.
+    rm -f "$pidfile"
+}
+
+
+# -----------------------------------------------------------------------------
+# Subcommands
+# -----------------------------------------------------------------------------
+# Each `cmd_*` function implements one user-facing subcommand. The `case`
+# at the bottom dispatches to them.
+
+# Show the current state: one line per running model.
+cmd_status() {
+    local any=0
+    shopt -s nullglob
+    for pf in "$PIDS_DIR"/*.pid; do
+        [[ -f "$pf" ]] || continue
+        local id_hash; id_hash=$(basename "$pf" .pid)
+        local pid; pid=$(head -1 "$pf" 2>/dev/null)
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            local port
+            port=$(ps -o args= -p "$pid" 2>/dev/null | grep -oE '\--port [0-9]+' | awk '{print $2}')
+            local mname
+            mname=$(ps -o args= -p "$pid" 2>/dev/null | grep -oE '(\-m|--model) [^ ]+\.gguf|--model [^ ]+' | head -1)
+            echo "● $mname  :$port  (PID $pid)"
+            any=1
+        else
+            # Stale PID file — process is gone, clean up.
+            rm -f "$pf"
+        fi
+    done
+    shopt -u nullglob
+    [[ $any -eq 0 ]] && echo "○ No models loaded"
+}
+
+# List all discovered models with a "●" marker next to running ones.
+cmd_list() {
+    local all_str
+    all_str=$(list_all_models)
+    if [[ -z "$all_str" ]]; then
+        echo "No models in $MODELS_DIR"
+        return 1
+    fi
+    # Use `read -r` with a custom IFS to split on "|" cleanly. This
+    # avoids subshells from `cut` and works in bash without the zsh
+    # `local -a + +=` quirks we hit earlier.
+    local l
+    while IFS='|' read -r type path name; do
+        [[ -z "$type" ]] && continue
+        local id_hash; id_hash=$(id_hash "$path")
+        local marker=" "
+        is_loaded "$id_hash" && marker="●"
+        echo " $marker [$type] $name"
+    done <<< "$all_str"
+}
+
+# `llama load <m1> [m2 ...]` — load one or more models.
+cmd_load() {
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: llama load <model> [model2 ...]"
+        return 1
+    fi
+    for q in "$@"; do
+        local line; line=$(resolve_query "$q") || return 1
+        load_model "$line"
+    done
+}
+
+# `llama unload <m>` or `llama unload all`.
+cmd_unload() {
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: llama unload <model>|all"
+        return 1
+    fi
+    for q in "$@"; do
+        if [[ "$q" == "all" ]]; then
+            shopt -s nullglob
+            for pf in "$PIDS_DIR"/*.pid; do
+                [[ -f "$pf" ]] || continue
+                local id_hash; id_hash=$(basename "$pf" .pid)
+                local pid; pid=$(head -1 "$pf")
+                local mname
+                mname=$(ps -o args= -p "$pid" 2>/dev/null | head -1 | sed 's/.*\(mlx_lm\.server\|llama-server\).*//')
+                unload_model "$id_hash" "$mname"
+            done
+            shopt -u nullglob
+        else
+            local line; line=$(resolve_query "$q") || return 1
+            local path; path=$(echo "$line" | cut -d'|' -f2)
+            local name; name=$(echo "$line" | cut -d'|' -f3)
+            local id_hash; id_hash=$(id_hash "$path")
+            unload_model "$id_hash" "$name"
+        fi
+    done
+}
+
+# `llama switch <m1> [m2 ...]` — stop everything, then start fresh.
+cmd_switch() {
+    cmd_unload all
+    cmd_load "$@"
+}
+
+# `llama ctx <model> <size>` — set per-model context size (applies next load).
+cmd_ctx() {
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: llama ctx <model> <size>"
+        return 1
+    fi
+    local q="$1"
+    local size="$2"
+    local line; line=$(resolve_query "$q") || return 1
+    local path; path=$(echo "$line" | cut -d'|' -f2)
+    local id_hash; id_hash=$(id_hash "$path")
+    defaults write local.llama-menubar "model.${id_hash}.ctx" -int "$size"
+    echo "✓ $(echo "$line" | cut -d'|' -f3) context size set to $size (applies on next load)"
+}
+
+# `llama port <model> <port>` — set per-model preferred port (0 = auto).
+cmd_port() {
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: llama port <model> <port>"
+        return 1
+    fi
+    local q="$1"
+    local port="$2"
+    local line; line=$(resolve_query "$q") || return 1
+    local path; path=$(echo "$line" | cut -d'|' -f2)
+    local id_hash; id_hash=$(id_hash "$path")
+    defaults write local.llama-menubar "model.${id_hash}.port" -int "$port"
+    echo "✓ $(echo "$line" | cut -d'|' -f3) preferred port set to $port (applies on next load)"
+}
+
+# `llama menubar` — launch the menu bar app from its standard install location.
+cmd_menubar() {
+    local app="$HOME/Applications/LLM Switcher.app"
+    if [[ -d "$app" ]]; then
+        open "$app"
+    else
+        # Fall back to the legacy location, in case the user hasn't
+        # re-run install.sh since the move to ~/Applications/.
+        app="$HOME/bin/llama-menubar.app"
+        if [[ -d "$app" ]]; then
+            open "$app"
+        else
+            echo "llama-menubar not found. Run install.sh first."
+            return 1
+        fi
+    fi
+}
+
+# `llama uninstall` — exec the uninstaller script, replacing this shell.
+cmd_uninstall() {
+    local script="$HOME/bin/uninstall.sh"
+    if [[ -f "$script" ]]; then
+        echo "Running uninstaller..."
+        exec "$script"
+    else
+        echo "uninstall.sh not found at $script"
+        return 1
+    fi
+}
+
+
+# -----------------------------------------------------------------------------
+# Command dispatch
+# -----------------------------------------------------------------------------
+# The first positional argument (`$1`) selects the subcommand. We use a
+# `case` statement rather than a lookup table for clarity and so the
+# help text can include a long multi-line usage block.
+
+case "${1:-help}" in
+    status)         cmd_status ;;
+    list|ls)        cmd_list ;;
+    load)           shift; cmd_load "$@" ;;
+    unload|stop)    shift; cmd_unload "$@" ;;
+    switch|swap)    shift; cmd_switch "$@" ;;
+    ctx)            shift; cmd_ctx "$@" ;;
+    port)           shift; cmd_port "$@" ;;
+    menubar)        cmd_menubar ;;
+    uninstall)      cmd_uninstall ;;
+    help|--help|-h)
+        # Heredoc with 'EOF' (quoted) prevents variable expansion in the
+        # help text, so $VAR sequences display literally.
+        cat <<'EOF'
+Usage: llama <command> [args]
+
+Commands:
+  list                       List all models (recursive scan of LLAMA_MODELS_DIR)
+  load <m1> [m2 ...]         Load 1+ models (GGUF or MLX, each on own port)
+  unload <m>|all             Unload a specific model or all
+  switch <m1> [m2 ...]       Unload all, then load new model(s)
+  status                     Show all running models + ports
+  ctx <model> <size>         Set per-model context size
+  port <model> <port>        Set per-model port (0 = auto)
+  menubar                    Launch menu bar app
+  uninstall                  Remove LLM switcher completely
+
+Config (env vars):
+  LLAMA_MODELS_DIR  Models directory (default: ~/models) - RECURSIVE scan
+  LLAMA_PORT        Default port (default: 8080)
+  LLAMA_CTX_SIZE    Default context size (default: 4096)
+  LLAMA_EXTRA_ARGS  Extra args for llama-server
+  LLAMA_SERVER      Path to llama-server (default: /opt/homebrew/bin/llama-server)
+  MLX_SERVER        Path to mlx_lm.server (default: ~/Library/Python/3.14/bin/mlx_lm.server)
+
+Examples:
+  llama load gemma                       # load GGUF model
+  llama load gemma llama                 # load 2 models
+  llama unload gemma                     # unload just gemma
+  llama unload all                       # unload everything
+  LLAMA_MODELS_DIR=~/models llama list   # scan different dir
+EOF
+        ;;
+    *)
+        echo "Unknown command: $1"
+        echo "Try 'llama help' for usage."
+        exit 1
+        ;;
+esac
