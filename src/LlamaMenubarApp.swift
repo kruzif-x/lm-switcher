@@ -102,31 +102,15 @@ struct LlamaMenubarApp: App {
             // menu bar icon.
             MenuView(manager: manager, settingsHost: settingsHost)
         } label: {
-            // The menu bar icon + optional model name text.
-            HStack(spacing: 4) {
-                // A purple-to-blue gradient lightning bolt (SF Symbol) when
-                // any model is running; gray when everything is stopped.
-                Image(systemName: "bolt.fill")
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [
-                                manager.anyRunning
-                                    ? Color(red: 0.49, green: 0.23, blue: 0.93) // purple
-                                    : Color.gray,
-                                manager.anyRunning
-                                    ? Color(red: 0.15, green: 0.39, blue: 0.92) // blue
-                                    : Color.gray.opacity(0.6)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                // Show the loaded model name(s) next to the icon when active.
-                if !manager.statusText.isEmpty {
-                    Text(manager.statusText)
-                        .lineLimit(1)
-                }
-            }
+            // The menu bar icon. We use the `Image(systemName:)` overload
+            // rather than a custom `View` body (which previously held an
+            // `HStack` with a gradient and a conditional `Text`). On
+            // macOS 26/Tahoe, custom `View` labels for `MenuBarExtra`
+            // can fail to register with the status bar — the app stays
+            // running but no status item is shown. The simpler
+            // `Image(systemName:)` form is reliably picked up by the
+            // NSStatusItem machinery across macOS versions.
+            Image(systemName: manager.anyRunning ? "bolt.fill" : "bolt")
         }
     }
 }
@@ -849,7 +833,7 @@ class ServerManager {
     // MARK:   Public state
 
     /// All models found on disk. Refreshed by `refreshModels()`.
-    var models: [URL>][ModelEntry] = []
+    var models: [ModelEntry] = []
 
     /// Persisted global settings (models dir, port, ctx, etc.).
     var settings = AppSettings()
@@ -868,25 +852,52 @@ class ServerManager {
     /// not here, because we have no `Process` object for them.)
     private var processes: [String: Process] = [:]
 
+    /// Serial queue used for the periodic `ps` reconciliation. Running the
+    /// `Process` spawn and pipe reads on a background queue prevents a slow
+    /// or hung `ps` from blocking the main thread (which would freeze the
+    /// entire menu bar app).
+    private let syncQueue = DispatchQueue(label: "local.llama-menubar.sync")
+
+    /// The repeating timer that triggers `syncWithRunningProcesses`. Held
+    /// so it can be invalidated on deinit / settings changes if needed.
+    @ObservationIgnored
+    private var syncTimer: DispatchSourceTimer?
+
     // MARK:   Init / setup
 
     /// On construction:
     /// 1. Load persisted settings from `UserDefaults`.
     /// 2. Scan the models directory to populate `models`.
     /// 3. Start the file-system watcher.
-    /// 4. Begin a 3-second timer that periodically reconciles our state
-    ///    with the actual set of running `llama-server`/`mlx_lm.server`
-    ///    processes (catches externally-launched models).
+    /// 4. Start a 3-second timer (on a private background serial queue)
+    ///    that periodically reconciles our state with the actual set of
+    ///    running `llama-server`/`mlx_lm.server` processes. Running the
+    ///    `ps` spawn + pipe reads off the main thread is critical: a slow
+    ///    `ps` (large process table, sleep/wake races) must not block the
+    ///    main run loop, since that would freeze the menu bar UI.
     init() {
         loadSettings()
         refreshModels()
         startWatching()
-        // Periodic state sync. The timer runs on the main run loop in the
-        // default mode; we use a 3-second interval which is responsive
-        // without being too aggressive.
-        Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        startSyncTimer()
+    }
+
+    /// Start (or restart) the periodic `ps` reconciliation. Using a
+    /// `DispatchSourceTimer` on a background queue keeps the spawn + pipe
+    /// reads off the main thread, so a slow `ps` can no longer freeze the
+    /// UI.
+    private func startSyncTimer() {
+        syncTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: syncQueue)
+        // First fire after 3s, then every 3s. Adding a tiny leeway keeps
+        // the timer from waking the CPU unnecessarily while still feeling
+        // responsive.
+        timer.schedule(deadline: .now() + 3.0, repeating: 3.0, leeway: .milliseconds(250))
+        timer.setEventHandler { [weak self] in
             self?.syncWithRunningProcesses()
         }
+        timer.resume()
+        syncTimer = timer
     }
 
     // MARK:   File-system watcher
@@ -951,9 +962,11 @@ class ServerManager {
         directorySource = src
     }
 
-    /// Deinit: ensure the watcher is torn down so we don't leak the FD.
+    /// Deinit: ensure the watcher and sync timer are torn down so we don't
+    /// leak the FD or keep firing on a dead `self`.
     deinit {
         directorySource?.cancel()
+        syncTimer?.cancel()
     }
 
     // MARK: - State queries
@@ -1214,13 +1227,18 @@ class ServerManager {
             }
         }
 
-        // Capture stdout/stderr to a pipe. We don't read the pipe in this
-        // app (the `llama` CLI does, via per-model log files), but the
-        // pipe prevents the OS from blocking the child process when its
-        // log buffer fills up.
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.standardError = pipe
+        // Redirect the child's stdout/stderr to /dev/null. The previous
+        // implementation created a `Pipe()` but never read from it; the
+        // local reference went out of scope as soon as this method
+        // returned, the read end was closed, and the kernel pipe buffer
+        // (~64KB on macOS) filled up the moment the child produced enough
+        // log output. The child's `write(2)` would then block in the
+        // kernel and the model server would freeze during loading. The
+        // `llama` CLI captures per-model log files; this app does not,
+        // so discarding the child's output is the correct behavior.
+        let devnull = FileHandle(forWritingAtPath: "/dev/null")
+        task.standardOutput = devnull
+        task.standardError = devnull
 
         do {
             try task.run()
@@ -1271,10 +1289,19 @@ class ServerManager {
     /// Stop every running model. Used by the "Unload All" button and on
     /// app quit. Syncs state first so we don't miss externally-launched
     /// processes.
+    ///
+    /// The `ps` scan and state merge run synchronously on the calling
+    /// thread. This is intentional: `unloadAll` iterates over
+    /// `modelStates` immediately afterward to send SIGTERM, so the
+    /// external-process PIDs must be present *before* the loop runs.
+    /// Blocking briefly here is acceptable because this is a
+    /// user-initiated action (button click / app quit), not a timer.
     func unloadAll() {
-        // First, reconcile with `ps` so any external processes get
-        // recorded in `modelStates` (with their PIDs).
-        syncWithRunningProcesses()
+        // Reconcile with `ps` synchronously so any external processes
+        // get recorded in `modelStates` before we iterate. Blocking
+        // here is acceptable because this is a user-initiated action.
+        let externalStates = collectExternalStatesFromPS()
+        mergeExternalStates(externalStates)
 
         // Iterate over a snapshot of keys (we mutate `modelStates` inside
         // `unloadModel`).
@@ -1365,11 +1392,63 @@ class ServerManager {
     //  we periodically scan `ps` output, parse out any model-related
     //  processes, and reconcile `modelStates` with reality.
 
+    /// Merge externally-discovered running processes into `modelStates`.
+    /// Clears stale entries and garbage-collects models no longer on disk.
+    /// Must be called on the main thread (accesses `@Observable` state).
+    private func mergeExternalStates(_ externalStates: [String: (pid: Int32, port: Int, ctx: Int)]) {
+        // Merge: for each external process, mark its model as running
+        // with the observed PID/port/ctx.
+        for (id, ext) in externalStates {
+            var s = modelStates[id] ?? ModelState()
+            s.isRunning = true
+            s.pid = ext.pid
+            s.port = ext.port
+            s.ctxSize = ext.ctx
+            modelStates[id] = s
+        }
+        // Clear stale state: any model we previously thought was
+        // running but that doesn't show up in `ps` anymore is now
+        // stopped. Also drop entries whose backing model no longer
+        // exists on disk so the dictionaries don't grow forever.
+        let knownIDs = Set(models.map { $0.id })
+        for id in Array(modelStates.keys) {
+            guard let s = modelStates[id] else { continue }
+            if s.isRunning && externalStates[id] == nil {
+                var cleared = s
+                cleared.isRunning = false
+                cleared.pid = nil
+                modelStates[id] = cleared
+            }
+            if !knownIDs.contains(id) {
+                modelStates[id] = nil
+                processes[id] = nil
+            }
+        }
+    }
+
     /// Reconcile `modelStates` with the actual set of running server
-    /// processes on the system. Called every 3s by the timer in `init`,
-    /// and also by `unloadAll` and `refreshModels`.
+    /// processes on the system. Called every 3s by the timer in `init`.
+    ///
+    /// This method is safe to call from any thread. The `ps` spawn and
+    /// pipe reads happen synchronously on the calling thread; the
+    /// dictionary mutations are then hopped to the main queue because
+    /// `modelStates` is observed by SwiftUI.
     func syncWithRunningProcesses() {
-        // Run `ps` and collect all processes.
+        // Run `ps` on whatever thread we were called from. Callers fire
+        // this from the background `syncQueue`, so a slow `ps` can no
+        // longer freeze the main thread.
+        let externalStates = collectExternalStatesFromPS()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.mergeExternalStates(externalStates)
+        }
+    }
+
+    /// Spawn `/bin/ps` synchronously and parse its output into a
+    /// `[modelID : (pid, port, ctx)]` map. This call is potentially
+    /// long-running (it blocks on `ps` finishing), so callers should
+    /// invoke it off the main thread.
+    private func collectExternalStatesFromPS() -> [String: (pid: Int32, port: Int, ctx: Int)] {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/ps")
         task.arguments = ["-ax", "-o", "pid=,command="]
@@ -1383,85 +1462,48 @@ class ServerManager {
             task.waitUntilExit()
         } catch {
             // If `ps` itself failed (very unusual), bail out.
-            return
+            return [:]
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
 
-        // We'll collect external process info keyed by the model file/dir path.
         var externalStates: [String: (pid: Int32, port: Int, ctx: Int)] = [:]
 
-        // Walk through every `ps` line.
         for line in output.split(separator: "\n") {
             let s = String(line)
-            // Skip anything that isn't a model server we care about.
             guard s.contains("llama-server") || s.contains("mlx_lm.server") else { continue }
-            // Skip our own `syncWithRunningProcesses` invocation. Without
-            // this, we'd detect the `ps` command's own grep matches.
+            // Skip our own `ps` invocation. Without this, we'd detect the
+            // `ps` command's own grep matches.
             if s.contains("syncWithRunning") { continue }
 
-            // Choose the regex based on which server we're looking at.
-            //
-            //   llama-server uses:    -m /path/to/model.gguf
-            //   mlx_lm.server uses:   --model /path/to/model-dir
-            //
-            // The `dropLen` is the number of characters to strip from the
-            // start of the matched substring (the flag + space).
             let mPattern: String
             let dropLen: Int
             if s.contains("llama-server") {
                 mPattern = #"-m (\/[^\s]+\.gguf)"#
-                dropLen = 3  // "-m ".count
+                dropLen = 3
             } else {
                 mPattern = #"--model (\/[^\s]+)"#
-                dropLen = 8  // "--model ".count
+                dropLen = 8
             }
             guard let m = s.range(of: mPattern, options: .regularExpression) else { continue }
-            // The matched range includes the flag itself; we only want the path.
             var pathStr = String(s[m].dropFirst(dropLen))
-            // MLX paths can have trailing whitespace; trim.
             pathStr.trimEnd()
 
-            // Parse the PID. `ps` output may have a leading space (" 7844 ...").
             let trimmed = s.drop(while: { $0 == " " })
             let pidStr = trimmed.prefix(while: { $0.isNumber })
             let pid: Int32 = Int32(pidStr) ?? 0
 
-            // Parse --port N. If missing, leave as 0.
             var port = 0
             if let pm = s.range(of: #"--port (\d+)"#, options: .regularExpression) {
                 port = Int(String(s[pm].split(separator: " ").last ?? "0")) ?? 0
             }
-            // Parse --ctx-size N (GGUF only).
             var ctx = 0
             if let pm = s.range(of: #"--ctx-size (\d+)"#, options: .regularExpression) {
                 ctx = Int(String(s[pm].split(separator: " ").last ?? "0")) ?? 0
             }
             externalStates[pathStr] = (pid, port, ctx)
         }
-
-        // Merge: for each external process, mark its model as running with
-        // the observed PID/port/ctx.
-        for (id, ext) in externalStates {
-            var s = modelStates[id] ?? ModelState()
-            s.isRunning = true
-            s.pid = ext.pid
-            s.port = ext.port
-            s.ctxSize = ext.ctx
-            modelStates[id] = s
-        }
-        // Clear stale state: any model we previously thought was running
-        // but that doesn't show up in `ps` anymore is now stopped.
-        for id in Array(modelStates.keys) {
-            if let s = modelStates[id], s.isRunning {
-                if externalStates[id] == nil {
-                    var cleared = s
-                    cleared.isRunning = false
-                    cleared.pid = nil
-                    modelStates[id] = cleared
-                }
-            }
-        }
+        return externalStates
     }
 
     // MARK: - Settings
