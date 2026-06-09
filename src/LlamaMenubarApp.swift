@@ -1066,10 +1066,9 @@ class ServerManager {
         var seen = Set<String>()
         models = entries.filter { seen.insert($0.id).inserted }
             .sorted { $0.name < $1.name }
-        // After refreshing, reconcile our state with what's actually
-        // running on the system. This catches externally-launched models
-        // and removes entries for processes that have died.
-        syncWithRunningProcesses()
+        // Process state is reconciled by the background sync timer
+        // (every 3s), NOT synchronously here. A blocking ps scan in
+        // refreshModels() would freeze the main thread during init.
     }
 
     /// Recursive directory walker. For each child of `dir`:
@@ -1217,13 +1216,19 @@ class ServerManager {
         // background thread, so we hop to the main queue before mutating
         // `@Observable` state.
         task.terminationHandler = { [weak self] _ in
-            DispatchQueue.main.async {
-                if var s = self?.modelStates[modelId] {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                // Only clear state if the PID still matches — a model
+                // may have been reloaded before the old process exited.
+                if var s = self.modelStates[modelId],
+                   s.pid == task.processIdentifier {
                     s.isRunning = false
                     s.pid = nil
-                    self?.modelStates[modelId] = s
+                    self.modelStates[modelId] = s
                 }
-                self?.processes[modelId] = nil
+                if self.processes[modelId] === task {
+                    self.processes[modelId] = nil
+                }
             }
         }
 
@@ -1236,7 +1241,7 @@ class ServerManager {
         // kernel and the model server would freeze during loading. The
         // `llama` CLI captures per-model log files; this app does not,
         // so discarding the child's output is the correct behavior.
-        let devnull = FileHandle(forWritingAtPath: "/dev/null")
+        let devnull: FileHandle = FileHandle(forWritingAtPath: "/dev/null") ?? FileHandle.nullDevice
         task.standardOutput = devnull
         task.standardError = devnull
 
@@ -1262,23 +1267,17 @@ class ServerManager {
     /// (and falls back to SIGKILL after a short wait). Also handles
     /// externally-launched processes by killing them by PID.
     func unloadModel(_ model: ModelEntry) {
-        // 1. If we own the process (started via loadModel), terminate it
-        //    cleanly. `Process.terminate()` sends SIGTERM.
+        // If we own the process, terminate it cleanly. For externally-
+        // launched processes (no Process object), kill by PID directly.
+        // Never do both — that risks double-SIGTERM and PID recycling.
         if let p = processes[model.id] {
             p.terminate()
-        }
-        processes[model.id] = nil
-
-        // 2. If we have a recorded PID (including from externally-launched
-        //    processes detected by `syncWithRunningProcesses`), send
-        //    SIGTERM via `kill(2)` to ensure it actually dies.
-        if let s = modelStates[model.id], let pid = s.pid {
-            // `kill(pid, SIGTERM)` returns -1 on error (e.g. process
-            // already dead). We ignore the result.
+            processes[model.id] = nil
+        } else if let s = modelStates[model.id], let pid = s.pid {
             kill(pid, SIGTERM)
         }
 
-        // 3. Clear our local state.
+        // Clear local state.
         if var s = modelStates[model.id] {
             s.isRunning = false
             s.pid = nil
@@ -1290,19 +1289,11 @@ class ServerManager {
     /// app quit. Syncs state first so we don't miss externally-launched
     /// processes.
     ///
-    /// The `ps` scan and state merge run synchronously on the calling
-    /// thread. This is intentional: `unloadAll` iterates over
-    /// `modelStates` immediately afterward to send SIGTERM, so the
-    /// external-process PIDs must be present *before* the loop runs.
-    /// Blocking briefly here is acceptable because this is a
-    /// user-initiated action (button click / app quit), not a timer.
+    /// PIDs of externally-launched processes are expected to already be
+    /// in `modelStates` from the background sync timer. We do NOT call
+    /// `collectExternalStatesFromPS()` here — a hanging `ps` would block
+    /// the main thread and freeze the menu bar / prevent quitting.
     func unloadAll() {
-        // Reconcile with `ps` synchronously so any external processes
-        // get recorded in `modelStates` before we iterate. Blocking
-        // here is acceptable because this is a user-initiated action.
-        let externalStates = collectExternalStatesFromPS()
-        mergeExternalStates(externalStates)
-
         // Iterate over a snapshot of keys (we mutate `modelStates` inside
         // `unloadModel`).
         for id in Array(processes.keys) {
@@ -1414,10 +1405,18 @@ class ServerManager {
         for id in Array(modelStates.keys) {
             guard let s = modelStates[id] else { continue }
             if s.isRunning && externalStates[id] == nil {
-                var cleared = s
-                cleared.isRunning = false
-                cleared.pid = nil
-                modelStates[id] = cleared
+                // Don't clear state if the PID is still alive — ps
+                // may have missed it (truncated output, path with
+                // spaces, startup/shutdown transition). Only clear
+                // when the process is actually dead.
+                if let pid = s.pid, kill(pid, 0) == 0 {
+                    // PID alive — keep the running state.
+                } else {
+                    var cleared = s
+                    cleared.isRunning = false
+                    cleared.pid = nil
+                    modelStates[id] = cleared
+                }
             }
             if !knownIDs.contains(id) {
                 modelStates[id] = nil
@@ -1454,8 +1453,12 @@ class ServerManager {
         task.arguments = ["-ax", "-o", "pid=,command="]
         let pipe = Pipe()
         task.standardOutput = pipe
-        // Discard stderr (some `ps` options emit warnings; we don't care).
-        task.standardError = Pipe()
+        // Redirect stderr to /dev/null to avoid pipe leak.
+        if let dn = FileHandle(forWritingAtPath: "/dev/null") {
+            task.standardError = dn
+        } else {
+            task.standardError = FileHandle.nullDevice
+        }
         do {
             try task.run()
             // Wait for `ps` to finish; the output is small.
