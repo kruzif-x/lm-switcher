@@ -863,6 +863,13 @@ class ServerManager {
     @ObservationIgnored
     private var syncTimer: DispatchSourceTimer?
 
+    /// Notification observer tokens for sleep/wake. Stored so we can
+    /// remove them in `deinit`.
+    @ObservationIgnored
+    private var sleepObserver: Any?
+    @ObservationIgnored
+    private var wakeObserver: Any?
+
     // MARK:   Init / setup
 
     /// On construction:
@@ -880,6 +887,19 @@ class ServerManager {
         refreshModels()
         startWatching()
         startSyncTimer()
+
+        // Observe system sleep/wake to manage the file system watcher
+        // and reconcile stale process state.
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.onSleep()
+        }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.onWake()
+        }
     }
 
     /// Start (or restart) the periodic `ps` reconciliation. Using a
@@ -898,6 +918,32 @@ class ServerManager {
         }
         timer.resume()
         syncTimer = timer
+    }
+
+    /// Called just before the system goes to sleep. Tear down the file
+    /// system watcher (its FD is invalid after I/O suspension) and cancel
+    /// the sync timer so `ps` isn't spawned during the transition.
+    private func onSleep() {
+        directorySource?.cancel()
+        directorySource = nil
+        syncTimer?.cancel()
+        syncTimer = nil
+    }
+
+    /// Called after the system wakes from sleep. Recreate the file system
+    /// watcher on a fresh FD and restart the sync timer. Then reconcile
+    /// process state — child processes may have been killed by the OS
+    /// during sleep, so we detect dead PIDs and update the UI.
+    private func onWake() {
+        startWatching()
+        startSyncTimer()
+        // Reconcile immediately: any model that was running but is absent
+        // from `ps` after wake is presumed dead (killed by the OS during
+        // sleep). The sync timer will also pick this up within 3s, but
+        // doing it here gives the user instant feedback.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            self?.syncWithRunningProcesses()
+        }
     }
 
     // MARK:   File-system watcher
@@ -967,6 +1013,12 @@ class ServerManager {
     deinit {
         directorySource?.cancel()
         syncTimer?.cancel()
+        if let obs = sleepObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+        }
+        if let obs = wakeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(obs)
+        }
     }
 
     // MARK: - State queries
