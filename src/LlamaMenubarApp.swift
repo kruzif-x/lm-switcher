@@ -555,7 +555,7 @@ struct SettingsView: View {
         self.manager = manager
         _modelsDir = State(initialValue: manager.settings.modelsDir)
         _defaultPort = State(initialValue: "\(manager.settings.defaultPort)")
-        _defaultCtxSize = State(initialValue: "\(manager.settings.defaultCtxSize)")
+        _defaultCtxSize = State(initialValue: manager.formatCtxDisplay(manager.settings.defaultCtxSize))
         _llamaServerPath = State(initialValue: manager.settings.llamaServerPath)
         _mlxServerPath = State(initialValue: manager.settings.mlxServerPath)
         _globalExtraArgs = State(initialValue: manager.settings.globalExtraArgs)
@@ -618,12 +618,12 @@ struct SettingsView: View {
                     Spacer()
                 }
 
-                // Default context size in tokens.
+                // Default context size in tokens (accepts "k" suffix, e.g. "8k").
                 HStack {
                     Text("Default Ctx Size:")
-                    TextField("4096", text: $defaultCtxSize)
+                    TextField("4k", text: $defaultCtxSize)
                         .frame(width: 100)
-                    Text("tokens")
+                    Text("tokens (e.g. 4k, 8192)")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -685,7 +685,7 @@ struct SettingsView: View {
             }
         }
         .onChange(of: defaultCtxSize) { _, newValue in
-            if let c = Int(newValue), c > 0 {
+            if let c = manager.parseCtxInput(newValue) {
                 manager.settings.defaultCtxSize = c
             }
         }
@@ -759,11 +759,11 @@ struct SettingsView: View {
                 }
             }
         )
-        // Same idea for the context size field.
+        // Same idea for the context size field, with k-suffix support.
         let ctxBinding = Binding<String>(
-            get: { "\(manager.perModelCtxSize(for: model))" },
+            get: { manager.formatCtxDisplay(manager.perModelCtxSize(for: model)) },
             set: { newVal in
-                if let c = Int(newVal), c > 0 {
+                if let c = manager.parseCtxInput(newVal) {
                     manager.setPerModelCtxSize(c, for: model)
                 }
             }
@@ -1134,6 +1134,27 @@ class ServerManager {
         // two models to share settings, but in practice path hashes are
         // unique enough for our purposes.
         "model.\(model.id.hashValue).\(suffix)"
+    }
+
+    // MARK:   Context size helpers
+
+    /// Parse context size input: "8k" → 8192, "12k" → 12288, "4096" → 4096.
+    /// Returns nil on invalid input.
+    func parseCtxInput(_ s: String) -> Int? {
+        let trimmed = s.trimmingCharacters(in: .whitespaces)
+        if trimmed.lowercased().hasSuffix("k") {
+            let num = String(trimmed.dropLast())
+            guard let v = Double(num), v > 0 else { return nil }
+            return Int(v * 1024)
+        }
+        guard let v = Int(trimmed), v > 0 else { return nil }
+        return v
+    }
+
+    /// Format context for display: 8192 → "8k", 12288 → "12k", 5000 → "5000".
+    func formatCtxDisplay(_ n: Int) -> String {
+        guard n > 0, n % 1024 == 0 else { return "\(n)" }
+        return "\(n / 1024)k"
     }
 
     // MARK: - Model discovery (recursive)
