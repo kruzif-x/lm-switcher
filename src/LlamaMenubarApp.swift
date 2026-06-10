@@ -1393,6 +1393,10 @@ class ServerManager {
             if ctx > 0 {
                 args += ["--ctx-size", "\(ctx)"]
             }
+            // Gemma 4 emits a `reasoning_content` field that breaks
+            // OpenAI-compatible clients (opencode, pi, OpenClaw).
+            // Suppress it. See docs/GEMMA4_LOADING_DETAILS.md §3.2.
+            args += ["--reasoning", "off", "--reasoning-format", "none"]
         case .mlx:
             // MLX: invoke mlx_lm.server with --model <dir>.
             executable = settings.mlxServerPath

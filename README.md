@@ -15,6 +15,7 @@ LLM Switcher is a native macOS app that lives in your menu bar (next to the cloc
 - 🎨 **Auto-pair** `mmproj-*.gguf` projection files with their vision-capable base models (with fallback matching for QAT/generic naming)
 - 🧠 **MTP exclusion** — `mtp-*.gguf` encoder files are excluded from the model list; loaded automatically by llama-server
 - 📝 **Chat Template Override** — configure a custom `.jinja` or `.json` template for agentic harnesses (opencode, pi)
+- 🤖 **Gemma 4 ready** — auto-applies `--reasoning off --reasoning-format none` so OpenAI-compatible clients (opencode, pi, OpenClaw) don't break on `reasoning_content`
 - ⚙️ **Tune per-model port, context size, and extra args** via a settings window
 - 🔌 **Sync** with externally-launched servers (started by the companion CLI or by hand)
 - 📁 **Show up in Launchpad, Spotlight, and `~/Applications/`** like a real Mac app
@@ -95,6 +96,28 @@ llama-server -m model.gguf --mmproj mmproj.gguf
 llama-server -m model.gguf --mmproj mmproj.gguf --chat-template gemma4_chat_template.jinja
 # → uses custom template (correct for agentic harnesses)
 ```
+
+## Gemma 4 Loading Details
+
+For a deep dive into how `llama-server` loads Gemma 4 12B and Gemma 4
+12B QAT — including every flag passed, how the SigLIP vision encoder
+(mmproj) is loaded, how Multi-Token Prediction (MTP) heads are
+discovered and loaded from model metadata, QAT vs standard differences,
+and why a custom Jinja template is only required for agentic use cases —
+see:
+
+**[docs/GEMMA4_LOADING_DETAILS.md](docs/GEMMA4_LOADING_DETAILS.md)**
+
+Highlights:
+
+- The full annotated `llama-server` command line for both variants
+- Why `--reasoning off --reasoning-format none` is required (Gemma 4
+  emits a `reasoning_content` field that crashes OpenAI-compatible
+  clients; LLM Switcher applies these flags automatically)
+- Decision table: when to use the built-in chat template vs a custom
+  `.jinja` (Gemma 4 is the only common model that needs an override)
+- Manual verification steps (server logs, `/v1/models`, GGUF metadata
+  inspection)
 
 ## Screenshot
 

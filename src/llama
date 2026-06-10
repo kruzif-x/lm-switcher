@@ -383,6 +383,10 @@ load_model() {
         shopt -u nullglob
         # Bind to localhost, set the ctx size, then any global extras.
         args+=("--host" "127.0.0.1" "--port" "$port" "--ctx-size" "$ctx")
+        # Gemma 4 emits a `reasoning_content` field that breaks
+        # OpenAI-compatible clients (opencode, pi, OpenClaw). Suppress it.
+        # See docs/GEMMA4_LOADING_DETAILS.md §3.2.
+        args+=("--reasoning" "off" "--reasoning-format" "none")
     else
         # MLX: invoke mlx_lm.server. No mmproj, no explicit ctx (mlx
         # uses the model's own config).
