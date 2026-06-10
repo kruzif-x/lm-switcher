@@ -87,6 +87,7 @@ mkdir -p "$LOGS_DIR"
 MODELS_DIR="${LLAMA_MODELS_DIR:-$HOME/models}"   # scanned recursively
 PORT="${LLAMA_PORT:-8080}"                       # default port
 CTX_SIZE="${LLAMA_CTX_SIZE:-4096}"               # default ctx size (tokens)
+CHAT_TEMPLATE="${LLAMA_CHAT_TEMPLATE:-}"          # optional chat template path
 
 
 # -----------------------------------------------------------------------------
@@ -128,6 +129,7 @@ logfile_for() {
 #
 # Hidden files are skipped. Specific prefixes are excluded:
 #   - mmproj-*.gguf         (vision projection, paired automatically)
+#   - chat_template.json    (chat template override for agentic harnesses)
 #   - modernbert-embed-*.gguf (embedding model, not for chat)
 
 list_all_models() {
@@ -138,7 +140,7 @@ list_all_models() {
     while IFS= read -r f; do
         local bn; bn=$(basename "$f")
         case "$bn" in
-            mmproj-*|modernbert-embed-*) continue ;;
+            mmproj-*|mtp-*|modernbert-embed-*) continue ;;
         esac
         echo "gguf|$f|$bn"
     done < <(find "$MODELS_DIR" -type f -name "*.gguf" 2>/dev/null)
@@ -347,17 +349,37 @@ load_model() {
     if [[ "$type" == "gguf" ]]; then
         executable="$LLAMA_SERVER"
         args=("-m" "$path")
-        # Auto-pair an mmproj projection model if one exists with a
-        # matching base name. The match is by stripping the quantization
-        # suffix and looking for "mmproj-<base>*".
+        # Auto-pair mmproj: try name-based match first, then fallback to
+        # any mmproj-*.gguf in the directory (handles QAT/generic naming).
         local dir; dir=$(dirname "$path")
         local base; base=$(basename "$path" .gguf)
         local stripped; stripped=$(echo "$base" | sed -E 's/-Q[0-9]+(_[0-9]+)?(_K)?(_[A-Z]+)?$//' | sed -E 's/-Q[0-9]+_[A-Z0-9_]+$//')
         shopt -s nullglob
         local f
+
+        # Auto-pair mmproj: try name-based match first, then fallback to
+        # any mmproj-*.gguf in the directory (handles QAT/generic naming).
+        local mmproj_found=0
         for f in "$dir/mmproj-${stripped}-"*.gguf; do
-            [[ -f "$f" ]] && args+=("--mmproj" "$f") && break
+            [[ -f "$f" ]] && args+=("--mmproj" "$f") && mmproj_found=1 && break
         done
+        if [[ $mmproj_found -eq 0 ]]; then
+            for f in "$dir/mmproj-"*.gguf; do
+                [[ -f "$f" ]] && args+=("--mmproj" "$f") && break
+            done
+        fi
+
+        # MTP heads are loaded automatically by llama-server from
+        # model metadata when --mmproj is attached. No --mtp flag needed.
+        # Apply chat template override if configured via env var.
+        # Agentic harnesses (opencode, pi) need custom templates to fix
+        # tool-calling edge cases (broken arg formatting, dropped reasoning,
+        # disabled thinking, null corruption).
+        # Apply chat template override if configured via env var.
+        if [[ -n "$CHAT_TEMPLATE" && -f "$CHAT_TEMPLATE" ]]; then
+            args+=("--chat-template" "$CHAT_TEMPLATE")
+            echo "  ✓ Using chat template: $CHAT_TEMPLATE"
+        fi
         shopt -u nullglob
         # Bind to localhost, set the ctx size, then any global extras.
         args+=("--host" "127.0.0.1" "--port" "$port" "--ctx-size" "$ctx")

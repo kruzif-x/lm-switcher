@@ -17,7 +17,10 @@
 //    — one process per model, each on its own port.
 //  - Tracks running processes, their PIDs, ports, and context sizes.
 //  - Auto-loads matching `mmproj-*.gguf` projection models for vision-capable
-//    GGUF models (e.g. gemma-3 vision).
+//    GGUF models (e.g. gemma-3 vision). Uses a name-based + fallback strategy
+//    to handle non-standard naming (e.g. QAT builds with `mmproj-BF16.gguf`).
+//  - Configurable chat template override for agentic harnesses (opencode, pi)
+//    that need custom tool-calling templates.
 //  - Detects externally-launched server processes (e.g. started by the
 //    companion `llama` CLI) by scanning `ps` output and reconciles state.
 //  - Persists all settings via `UserDefaults` (same domain as the CLI so they
@@ -165,7 +168,7 @@ final class SettingsWindowHost: ObservableObject {
         // the user to be able to mess with it.
         let win = NSWindow(contentViewController: hosting)
         win.title = "LLM Switcher Settings"
-        win.setContentSize(NSSize(width: 720, height: 540))
+        win.setContentSize(NSSize(width: 720, height: 620))
         win.styleMask = [.titled, .closable, .miniaturizable]
 
         // `isReleasedWhenClosed = false` means closing the window (red X)
@@ -326,7 +329,7 @@ struct MenuView: View {
     /// The set of model IDs the user has ticked with their checkboxes.
     /// We use a local `@State` set (not a server property) because this is
     /// purely view-level state — the checkboxes reset when the menu closes.
-    @State private var selected: Set<String> = []
+
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -347,16 +350,19 @@ struct MenuView: View {
             } else {
                 // Bulk action row.
                 HStack {
-                    Button("Load Selected (\(selected.count))") {
-                        // Filter the model list to just the ones the user
-                        // checked, then load each. (One process per model.)
-                        let toLoad = manager.models.filter { selected.contains($0.id) }
-                        for m in toLoad { manager.loadModel(m) }
+                    Button("Load Selected (\(manager.selected.count))") {
+                        let toLoad = manager.models.filter { manager.selected.contains($0.id) }
+                
+
+                        for m in toLoad {
+
+                            manager.loadModel(m)
+                        }
                     }
-                    .disabled(selected.isEmpty)
+                    .disabled(manager.selected.isEmpty)
                     Spacer()
-                    Button("Clear") { selected.removeAll() }
-                        .disabled(selected.isEmpty)
+                    Button("Clear") { manager.selected.removeAll() }
+                        .disabled(manager.selected.isEmpty)
                 }
                 .padding(.horizontal, 4)
             }
@@ -459,12 +465,12 @@ struct MenuView: View {
     /// the toggle is meant for *selection*, not state.)
     private func modelRow(for model: ModelEntry) -> some View {
         let state = manager.state(for: model)
-        let isChecked = selected.contains(model.id) || state.isRunning
+        let isChecked = manager.selected.contains(model.id) || state.isRunning
 
         return Toggle(isOn: Binding(
             get: { isChecked },
             set: { isOn in
-                if isOn { selected.insert(model.id) } else { selected.remove(model.id) }
+                if isOn { manager.selected.insert(model.id) } else { manager.selected.remove(model.id) }
             }
         )) {
             HStack(spacing: 6) {
@@ -548,6 +554,7 @@ struct SettingsView: View {
     @State private var llamaServerPath: String
     @State private var mlxServerPath: String
     @State private var globalExtraArgs: String
+    @State private var chatTemplatePath: String
     @State private var savedFeedback: Bool = false
     @State private var perModelSavedFeedback: Bool = false
 
@@ -562,6 +569,7 @@ struct SettingsView: View {
         _llamaServerPath = State(initialValue: manager.settings.llamaServerPath)
         _mlxServerPath = State(initialValue: manager.settings.mlxServerPath)
         _globalExtraArgs = State(initialValue: manager.settings.globalExtraArgs)
+        _chatTemplatePath = State(initialValue: manager.settings.chatTemplatePath)
     }
 
     var body: some View {
@@ -573,106 +581,123 @@ struct SettingsView: View {
         }
         .padding()
         // Fixed window size — content is laid out by hand.
-        .frame(width: 720, height: 540)
+        .frame(width: 720, height: 620)
     }
 
     /// "Global" tab: shared defaults and binary paths.
     private var globalPane: some View {
         Form {
             Section("Server Defaults") {
-                // Models directory: editable text + Browse button.
-                HStack {
+                // Models directory: text field spans full width, Browse below.
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Models Directory:")
-                    TextField("~/models", text: $modelsDir)
-                        .frame(width: 350)
-                    Button("Browse…") {
-                        // NSOpenPanel is AppKit's file/folder picker. We
-                        // configure it to allow only directories and a
-                        // single selection, with the current value as the
-                        // starting point.
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = false
-                        panel.canChooseDirectories = true
-                        panel.allowsMultipleSelection = false
-                        panel.directoryURL = URL(fileURLWithPath: modelsDir)
-                        if panel.runModal() == .OK, let url = panel.url {
-                            modelsDir = url.path
-                            // Push the change into the manager and refresh.
-                            manager.settings.modelsDir = url.path
-                            manager.refreshModels()
-                            // Restart the directory watcher on the new path.
-                            manager.startWatching()
+                    HStack {
+                        TextField("~/models", text: $modelsDir)
+                        Button("Browse…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = false
+                            panel.canChooseDirectories = true
+                            panel.allowsMultipleSelection = false
+                            panel.directoryURL = URL(fileURLWithPath: modelsDir)
+                            if panel.runModal() == .OK, let url = panel.url {
+                                modelsDir = url.path
+                                manager.settings.modelsDir = url.path
+                                manager.refreshModels()
+                                manager.startWatching()
+                            }
                         }
                     }
                 }
-                // Helper text below the field.
-                Text("Scanned recursively. GGUF files in any subdir, MLX dirs (containing .safetensors).")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
 
-                // Default port: parsed as Int on every change.
-                HStack {
-                    Text("Default Port:")
-                    TextField("8080", text: $defaultPort)
-                        .frame(width: 80)
-                    Text("(used if model has no specific port)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
+                // Default port and context size side by side.
+                HStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Default Port:")
+                        TextField("8080", text: $defaultPort)
+                            .frame(width: 120)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Default Ctx Size:")
+                        TextField("4k", text: $defaultCtxSize)
+                            .frame(width: 120)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(" ").font(.caption)
+                        Text("e.g. 4k, 8192")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
 
-                // Default context size in tokens (accepts "k" suffix, e.g. "8k").
-                HStack {
-                    Text("Default Ctx Size:")
-                    TextField("4k", text: $defaultCtxSize)
-                        .frame(width: 100)
-                    Text("tokens (e.g. 4k, 8192)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-
-                // Global extra args (parsed by `parseArgs` into argv).
-                HStack {
+                // Global extra args: full width.
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Global Extra Args:")
                     TextField("--no-mmap", text: $globalExtraArgs)
-                        .frame(width: 350)
                 }
             }
-            // Backend binary paths.
+
+            Section("Chat Template") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Template Override:")
+                    HStack {
+                        TextField("Leave empty for built-in template", text: $chatTemplatePath)
+                        Button("Browse…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = true
+                            panel.canChooseDirectories = false
+                            panel.allowsMultipleSelection = false
+                            panel.allowedContentTypes = [
+                                UTType(filenameExtension: "jinja") ?? .data,
+                                UTType(filenameExtension: "json") ?? .data,
+                                .data
+                            ]
+                            if panel.runModal() == .OK, let url = panel.url {
+                                chatTemplatePath = url.path
+                                manager.settings.chatTemplatePath = url.path
+                            }
+                        }
+                    }
+                }
+                Text("For agentic harnesses (opencode, pi). Leave empty for built-in.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
             Section("Backends") {
-                HStack {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("llama-server:")
-                    TextField("/opt/homebrew/bin/llama-server", text: $llamaServerPath)
-                        .frame(width: 380)
-                    Button("Browse…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = true
-                        panel.canChooseDirectories = false
-                        panel.allowsMultipleSelection = false
-                        if panel.runModal() == .OK, let url = panel.url {
-                            llamaServerPath = url.path
-                            manager.settings.llamaServerPath = url.path
+                    HStack {
+                        TextField("/opt/homebrew/bin/llama-server", text: $llamaServerPath)
+                        Button("Browse…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = true
+                            panel.canChooseDirectories = false
+                            panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK, let url = panel.url {
+                                llamaServerPath = url.path
+                                manager.settings.llamaServerPath = url.path
+                            }
                         }
                     }
                 }
-                HStack {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("mlx_lm.server:")
-                    TextField("mlx_lm.server", text: $mlxServerPath)
-                        .frame(width: 380)
-                    Button("Browse…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = true
-                        panel.canChooseDirectories = false
-                        panel.allowsMultipleSelection = false
-                        if panel.runModal() == .OK, let url = panel.url {
-                            mlxServerPath = url.path
-                            manager.settings.mlxServerPath = url.path
+                    HStack {
+                        TextField("mlx_lm.server", text: $mlxServerPath)
+                        Button("Browse…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseFiles = true
+                            panel.canChooseDirectories = false
+                            panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK, let url = panel.url {
+                                mlxServerPath = url.path
+                                manager.settings.mlxServerPath = url.path
+                            }
                         }
                     }
                 }
             }
-            // Save button: persists all global settings to UserDefaults.
+
             Section {
                 HStack {
                     Spacer()
@@ -718,6 +743,9 @@ struct SettingsView: View {
         }
         .onChange(of: globalExtraArgs) { _, newValue in
             manager.settings.globalExtraArgs = newValue
+        }
+        .onChange(of: chatTemplatePath) { _, newValue in
+            manager.settings.chatTemplatePath = newValue
         }
     }
 
@@ -877,6 +905,8 @@ class ServerManager {
 
     /// All models found on disk. Refreshed by `refreshModels()`.
     var models: [ModelEntry] = []
+    /// Set of model IDs the user has ticked for loading.
+    var selected: Set<String> = []
 
     /// Persisted global settings (models dir, port, ctx, etc.).
     var settings = AppSettings()
@@ -1264,11 +1294,22 @@ class ServerManager {
     ///                               a vision-capable base model. They're
     ///                               not standalone models; we auto-pair
     ///                               them in `findMmproj(for:)`.
+    ///   - `mtp-*.gguf`           — multi-token prediction head files,
+    ///                               paired with the base model. Excluded
+    ///                               from the model list; loaded
+    ///                               automatically by llama-server from
+    ///                               model metadata when --mmproj is
+    ///                               attached. Note: only the `mtp-`
+    ///                               prefix is excluded; files containing
+    ///                               `-mtp-` as an infix
+    ///                               (e.g. `gemma-3-mtp-Q4_K_M.gguf`) are
+    ///                               treated as regular models.
     ///   - `modernbert-embed-*.gguf` — embedding models used by the
     ///                                 gbrain system. Not a chat model.
     private func ggufEntry(at url: URL, baseDir: URL) -> ModelEntry? {
         let lname = url.lastPathComponent.lowercased()
         if lname.hasPrefix("mmproj-") { return nil }
+        if lname.hasPrefix("mtp-") { return nil }
         if lname.hasPrefix("modernbert-embed-") { return nil }
         return ModelEntry(
             id: url.path,
@@ -1309,6 +1350,9 @@ class ServerManager {
 
     /// Start a server for the given model. No-op if it's already running.
     func loadModel(_ model: ModelEntry) {
+
+
+
         // Don't start a second instance of the same model.
         if let s = modelStates[model.id], s.isRunning { return }
 
@@ -1333,6 +1377,17 @@ class ServerManager {
             // configuration.
             if let mmproj = findMmproj(for: model.path) {
                 args += ["--mmproj", mmproj.path]
+            }
+            // MTP heads are loaded automatically by llama-server from model
+            // metadata when --mmproj is attached. No --mtp flag needed.
+
+            // Apply chat template override if configured in settings.
+            // Agentic harnesses (opencode, pi) need custom templates to fix
+            // tool-calling edge cases (broken arg formatting, dropped reasoning,
+            // disabled thinking, null corruption).
+            if !settings.chatTemplatePath.isEmpty &&
+               FileManager.default.fileExists(atPath: settings.chatTemplatePath) {
+                args += ["--chat-template", settings.chatTemplatePath]
             }
             // Context size (only set if explicitly configured).
             if ctx > 0 {
@@ -1364,9 +1419,10 @@ class ServerManager {
         // and remove it from our `processes` map. The closure runs on a
         // background thread, so we hop to the main queue before mutating
         // `@Observable` state.
-        task.terminationHandler = { [weak self] _ in
+        task.terminationHandler = { [weak self] proc in
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+
                 // Only clear state if the PID still matches — a model
                 // may have been reloaded before the old process exited.
                 if var s = self.modelStates[modelId],
@@ -1396,6 +1452,7 @@ class ServerManager {
 
         do {
             try task.run()
+
             // Record the process and update state. The PID comes from
             // `processIdentifier` (POSIX `pid_t`).
             processes[model.id] = task
@@ -1406,9 +1463,7 @@ class ServerManager {
             s.ctxSize = ctx
             modelStates[model.id] = s
         } catch {
-            // Spawn failed (e.g. binary not found). We don't show an alert
-            // here — the menu icon stays gray and the user can check the
-            // log via the CLI. The CLI also shows errors in its output.
+
         }
     }
 
@@ -1482,17 +1537,31 @@ class ServerManager {
         return port
     }
 
-    /// For a GGUF model, find a matching `mmproj-*.gguf` file in the same
-    /// directory. The match is by base name with quantization stripped.
-    /// E.g. `gemma-4-12B-it-Q4_K_M.gguf` matches `mmproj-gemma-4-12B-it-Q8_0.gguf`.
+    /// Shared helper for finding companion GGUF files (e.g. mmproj) that
+    /// match a base model by name with quantization stripped. The `prefix`
+    /// parameter selects the companion type (e.g. "mmproj").
+    ///
+    /// Example: `gemma-4-12B-it-Q4_K_M.gguf` with prefix `"mmproj"` matches
+    /// `mmproj-gemma-4-12B-it-Q8_0.gguf`.
+    ///
+    /// Matching strategy:
+    ///   1. Name-based: strip quantization from the model name, look for
+    ///      `<prefix>-<stripped>*` in the same directory.
+    ///   2. Fallback: if name-based fails, find ANY `<prefix>-*.gguf` in
+    ///      the same directory. This handles models with non-standard
+    ///      naming (e.g. QAT builds where the mmproj is named
+    ///      `mmproj-BF16.gguf` instead of `mmproj-<modelname>-Q8_0.gguf`).
     ///
     /// Returns the first alphabetically-sorted match, or nil if none.
-    private func findMmproj(for modelURL: URL) -> URL? {
+    private func findCompanion(for modelURL: URL, prefix: String) -> URL? {
         let dir = modelURL.deletingLastPathComponent()
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil
+        ) else { return nil }
+
+        // Step 1: name-based matching — strip quantization, look for
+        // `<prefix>-<stripped>*`.
         let base = modelURL.deletingPathExtension().lastPathComponent
-        // Strip common quantization suffixes. We only strip suffixes we
-        // commonly see; if a model uses a different one, mmproj simply
-        // won't be auto-paired (no harm done).
         let stripped = base
             .replacingOccurrences(of: "-Q4_K_M", with: "")
             .replacingOccurrences(of: "-Q4_K_S", with: "")
@@ -1501,16 +1570,29 @@ class ServerManager {
             .replacingOccurrences(of: "-Q6_K", with: "")
             .replacingOccurrences(of: "-Q8_0", with: "")
 
-        // Look for files named `mmproj-<stripped>*` (any quantization).
-        let pattern = "mmproj-\(stripped)"
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: nil
-        ) else { return nil }
-        let matches = entries.filter {
+        let pattern = "\(prefix)-\(stripped)"
+        let nameMatches = entries.filter {
             $0.lastPathComponent.hasPrefix(pattern) && $0.pathExtension == "gguf"
         }
-        return matches.sorted { $0.lastPathComponent < $1.lastPathComponent }.first
+        if let first = nameMatches.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).first {
+            return first
+        }
+
+        // Step 2: fallback — find any `<prefix>-*.gguf` in the directory.
+        // This catches models with non-standard naming (e.g. QAT builds,
+        // generic mmproj files like `mmproj-BF16.gguf`).
+        let fallbackMatches = entries.filter {
+            $0.lastPathComponent.hasPrefix("\(prefix)-") && $0.pathExtension == "gguf"
+        }
+        return fallbackMatches.sorted { $0.lastPathComponent < $1.lastPathComponent }.first
     }
+
+    /// Find a matching `mmproj-*.gguf` vision projection file for a model.
+    private func findMmproj(for modelURL: URL) -> URL? {
+        findCompanion(for: modelURL, prefix: "mmproj")
+    }
+
+
 
     /// Split a free-form "extra args" string into argv-style tokens.
     /// Honors single and double quotes so `--prompt "hello world"` parses
@@ -1697,6 +1779,8 @@ class ServerManager {
             ?? (NSHomeDirectory() + "/Library/Python/3.14/bin/mlx_lm.server")
         // Global extra args default to empty.
         settings.globalExtraArgs = d.string(forKey: "globalExtraArgs") ?? ""
+        // Chat template override: empty = use built-in template.
+        settings.chatTemplatePath = d.string(forKey: "chatTemplatePath") ?? ""
     }
 
     /// Persist all settings to `UserDefaults`. Currently called by
@@ -1710,6 +1794,7 @@ class ServerManager {
         d.set(settings.llamaServerPath, forKey: "llamaServerPath")
         d.set(settings.mlxServerPath, forKey: "mlxServerPath")
         d.set(settings.globalExtraArgs, forKey: "globalExtraArgs")
+        d.set(settings.chatTemplatePath, forKey: "chatTemplatePath")
     }
 }
 
@@ -1752,4 +1837,10 @@ struct AppSettings {
     /// Free-form string of extra args passed to every server process.
     /// Parsed with `parseArgs` in `ServerManager` to handle quoting.
     var globalExtraArgs: String = ""
+
+    /// Optional path to a custom chat template file (.jinja or .json).
+    /// When set, passed as `--chat-template` to llama-server. Useful for
+    /// agentic harnesses (opencode, pi) that need custom tool-calling
+    /// templates. Empty string = use the model's built-in template.
+    var chatTemplatePath: String = ""
 }
