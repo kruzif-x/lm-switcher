@@ -115,6 +115,11 @@ struct LlamaMenubarApp: App {
             // NSStatusItem machinery across macOS versions.
             Image(systemName: manager.anyRunning ? "bolt.fill" : "bolt")
         }
+        // Window-based style keeps the panel open after each selection.
+        // The panel closes on click-outside or Escape (standard macOS
+        // panel behavior), instead of closing on every button/toggle
+        // click like the default menu-based style.
+        .menuBarExtraStyle(.window)
     }
 }
 
