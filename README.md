@@ -21,6 +21,81 @@ LLM Switcher is a native macOS app that lives in your menu bar (next to the cloc
 
 A companion shell command `llama` provides the same functionality from your terminal, and the two tools share state automatically.
 
+## Features Explained
+
+### mmproj Auto-Pairing with Fallback Matching
+
+Vision-capable GGUF models (e.g. Gemma 3, Gemma 4) need a separate **mmproj** (multimodal projection) file to process images. LLM Switcher automatically finds and attaches the right `--mmproj` flag when loading a model.
+
+**How it works:**
+
+1. **Name-based matching** — strips quantization suffixes from the model name (e.g. `gemma-4-12B-it-Q4_K_M` → `gemma-4-12B-it`), then looks for `mmproj-gemma-4-12B-it-*.gguf` in the same directory.
+
+2. **Fallback matching** — if name-based matching fails, scans the directory for **any** `mmproj-*.gguf` file. This handles QAT (Quantization-Aware Training) models where the mmproj might be named `mmproj-BF16.gguf` instead of following the standard naming convention.
+
+```
+# Standard naming — name-based match works:
+~/models/gguf/
+├── gemma-4-12B-it-Q4_K_M.gguf          ← main model
+└── mmproj-gemma-4-12B-it-Q8_0.gguf     ← matched by name
+
+# QAT naming — fallback catches it:
+~/models/gguf/gemma-4-12B-it-qat-GGUF/
+├── gemma-4-12B-it-qat-UD-Q4_K_XL.gguf  ← main model (non-standard name)
+└── mmproj-BF16.gguf                     ← matched by fallback
+```
+
+The same `findCompanion(for:prefix:)` helper is used for both Swift and bash, ensuring consistent behavior across the app and CLI.
+
+### MTP File Exclusion
+
+**MTP** (Multi-Token Prediction) is a technique where a model predicts multiple tokens per forward pass, speeding up inference. Some model distributions (e.g. unsloth QAT builds) include a separate `mtp-*.gguf` file alongside the main model.
+
+These files are **not standalone models** — they're encoder heads that `llama-server` loads automatically from the model's metadata when the `--mmproj` is attached. If they appeared in the model list, users would try to load them directly and get confusing errors.
+
+**What LLM Switcher does:**
+- **Excludes** `mtp-*.gguf` files from the model list (files starting with `mtp-` prefix)
+- **Does NOT exclude** files containing `-mtp-` as an infix (e.g. `gemma-3-mtp-Q4_K_M.gguf`) — those are standalone models
+
+```
+# Excluded from model list (not standalone):
+mtp-gemma-4-12B-it.gguf          ← MTP head, loaded automatically
+mtp-Q4_K_M.gguf                  ← MTP head, loaded automatically
+
+# Included in model list (standalone model):
+gemma-3-mtp-Q4_K_M.gguf          ← a model with "mtp" in its name
+```
+
+### Chat Template Override
+
+`llama-server` includes built-in chat templates for each model family, but **agentic coding harnesses** (opencode, pi, OpenClaw, etc.) need custom templates to handle tool-calling correctly.
+
+**Why the standard template breaks for agentic use:**
+
+The standard Gemma 4 chat template has four edge cases that only surface during multi-turn tool calling:
+
+1. **Broken tool call arguments** — when a harness sends `arguments` as a JSON string (common with Vercel AI SDK), the standard template wraps it in extra braces, producing invalid output like `call:fn{{"city":"Tokyo"}}`
+2. **Dropped reasoning** — after 3-4 rounds, the model's prior reasoning is stripped from history, causing tool calls to collapse to `arguments: {}`
+3. **Thinking disabled** — `enable_thinking` defaults to false in the standard template, and OpenAI-compatible adapters drop unknown fields, so thinking never activates
+4. **Null corruption** — `null` values in tool parameters render as the Python string `"None"` instead of JSON `null`
+
+Custom `.jinja` templates (like `gemma4_chat_template.jinja`) fix these issues but may cause tokenization errors if used with `llama-server`'s built-in tokenizer for regular chat.
+
+**How to use it:**
+- **Menu bar app:** Open Settings → Global → Chat Template Override → browse to your `.jinja` file
+- **CLI:** `LLAMA_CHAT_TEMPLATE=~/models/gemma4_chat_template.jinja llama load gemma-4-12B-it-qat-UD-Q4_K_XL`
+- **Leave empty** to use the model's built-in template (works for regular chat, web UI, Hermes, etc.)
+
+```
+# When chat template is NOT set:
+llama-server -m model.gguf --mmproj mmproj.gguf
+# → uses built-in GGUF template (correct for regular use)
+
+# When chat template IS set:
+llama-server -m model.gguf --mmproj mmproj.gguf --chat-template gemma4_chat_template.jinja
+# → uses custom template (correct for agentic harnesses)
+```
+
 ## Screenshot
 
 The menu bar app looks like this:
