@@ -12,7 +12,9 @@ LLM Switcher is a native macOS app that lives in your menu bar (next to the cloc
 - ▶️ **Load** any model with one click (spawns the right backend: `llama-server` or `mlx_lm.server`)
 - ⏹ **Unload** any model independently — no more "kill the wrong process" surprises
 - 🔄 **Run multiple models simultaneously**, each on its own port (e.g. one chat model on :8080, an embedder on :8081)
-- 🎨 **Auto-pair** `mmproj-*.gguf` projection files with their vision-capable base models
+- 🎨 **Auto-pair** `mmproj-*.gguf` projection files with their vision-capable base models (with fallback matching for QAT/generic naming)
+- 🧠 **MTP exclusion** — `mtp-*.gguf` encoder files are excluded from the model list; loaded automatically by llama-server
+- 📝 **Chat Template Override** — configure a custom `.jinja` or `.json` template for agentic harnesses (opencode, pi)
 - ⚙️ **Tune per-model port, context size, and extra args** via a settings window
 - 🔌 **Sync** with externally-launched servers (started by the companion CLI or by hand)
 - 📁 **Show up in Launchpad, Spotlight, and `~/Applications/`** like a real Mac app
@@ -91,7 +93,12 @@ llama help                       # full usage
 │   ├── gemma-4-12B-it-Q4_K_M.gguf
 │   ├── mmproj-gemma-4-12B-it-Q8_0.gguf   # auto-paired with gemma
 │   ├── cerebras_Qwen3-Coder-25B-A3B-Q4_K_M.gguf
-│   └── omnicoder-9b-q4_k_m.gguf
+│   ├── omnicoder-9b-q4_k_m.gguf
+│   └── gemma-4-12B-it-qat-GGUF/          # QAT model with companion files
+│       ├── gemma-4-12B-it-qat-UD-Q4_K_XL.gguf
+│       ├── mmproj-BF16.gguf              # auto-paired via fallback
+│       ├── mtp-gemma-4-12B-it.gguf       # excluded, loaded automatically
+│       └── gemma4_chat_template.jinja    # custom template (optional)
 └── mlx/                     # one dir per model
     └── llama-3.2-3b/
         ├── config.json
@@ -100,7 +107,35 @@ llama help                       # full usage
 
 The app **automatically excludes** these files from the model list (they're not standalone chat models):
 - `mmproj-*.gguf` — vision projection, auto-paired with vision-capable base models
+- `mtp-*.gguf` — multi-token prediction head, loaded automatically by llama-server
 - `modernbert-embed-*.gguf` — embedding model used by the gbrain system
+
+## Settings
+
+Open Settings from the menu bar dropdown (⚙ Settings…).
+
+**Global tab:**
+- **Models Directory** — root directory to scan recursively for GGUF and MLX models
+- **Default Port** — base port for auto-assignment (each model gets the next available)
+- **Default Ctx Size** — context window size in tokens (accepts "k" suffix, e.g. "8k")
+- **Global Extra Args** — extra arguments passed to every `llama-server` process
+- **Chat Template Override** — optional path to a custom `.jinja` or `.json` chat template (for agentic harnesses like opencode/pi that need custom tool-calling templates)
+- **llama-server** / **mlx_lm.server** — backend binary paths
+
+**Per-Model tab:**
+- Editable port and context size for each discovered model
+- Load/Unload buttons per model
+
+**CLI environment variables:**
+```bash
+LLAMA_MODELS_DIR=~/models    # models directory (default: ~/models)
+LLAMA_PORT=8080              # default port
+LLAMA_CTX_SIZE=4096          # default context size
+LLAMA_EXTRA_ARGS=""          # extra args for llama-server
+LLAMA_SERVER=/opt/homebrew/bin/llama-server
+MLX_SERVER=~/Library/Python/3.14/bin/mlx_lm.server
+LLAMA_CHAT_TEMPLATE=""       # optional chat template override
+```
 
 ## Architecture
 
@@ -173,6 +208,12 @@ Because that's the lightest-weight way to keep a tool always available on macOS 
 - Feeling heavy when you just want to toggle a model
 
 `LSUIElement = true` in Info.plist is what makes the app a "true" menu bar app — invisible in the dock and app switcher.
+
+## Version
+
+Current: **v2.0** — MTP exclusion, mmproj fallback matching, chat template settings, layout overhaul.
+
+See `CHANGELOG.md` for full version history.
 
 ## License
 
