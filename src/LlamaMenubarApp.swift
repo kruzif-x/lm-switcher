@@ -547,6 +547,7 @@ struct SettingsView: View {
     @State private var llamaServerPath: String
     @State private var mlxServerPath: String
     @State private var globalExtraArgs: String
+    @State private var savedFeedback: Bool = false
 
     /// Initialize the local state from the manager's settings.
     /// SwiftUI's `@State` must be initialized in `init`, not the property
@@ -669,6 +670,24 @@ struct SettingsView: View {
                     }
                 }
             }
+            // Save button: persists all global settings to UserDefaults.
+            Section {
+                HStack {
+                    Spacer()
+                    Button("Save") {
+                        manager.saveSettings()
+                        withAnimation { savedFeedback = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            withAnimation { savedFeedback = false }
+                        }
+                    }
+                    if savedFeedback {
+                        Text("✓ Saved")
+                            .foregroundColor(.green)
+                            .font(.caption)
+                    }
+                }
+            }
         }
         // Push every keystroke into the manager (and into UserDefaults via
         // the manager's own setters). `.onChange(of:_:)` is the modern form
@@ -708,7 +727,7 @@ struct SettingsView: View {
                 Text("Per-Model Settings")
                     .font(.headline)
                 Spacer()
-                Text("Edits apply on next load")
+                Text("Edits apply on next load · Saved automatically")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
