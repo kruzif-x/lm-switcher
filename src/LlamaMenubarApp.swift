@@ -24,6 +24,9 @@
 //    share configuration).
 //  - Watches the models directory with a `DispatchSource` so newly added or
 //    removed models appear/disappear from the menu live.
+//  - Handles macOS sleep/wake: tears down the FS watcher before I/O
+//    suspends, recreates it after wake, and reconciles PIDs of child
+//    processes that the OS may have killed during deep sleep.
 //
 //  ARCHITECTURE OVERVIEW
 //  ---------------------
@@ -863,8 +866,24 @@ class ServerManager {
     @ObservationIgnored
     private var syncTimer: DispatchSourceTimer?
 
+    // MARK:   Sleep / wake
+    //
+    //  When macBook sleeps, the I/O subsystem suspends and our
+    //  `O_EVTONLY` file descriptor (used by `directorySource`) becomes
+    //  invalid. If left intact, the DispatchSource may fire spurious
+    //  events on the stale FD, or silently stop working. Additionally,
+    //  child processes (llama-server / mlx_lm.server) may be killed by
+    //  the OS during deep sleep under memory pressure, leaving stale
+    //  PIDs in `modelStates`.
+    //
+    //  We handle this by listening to `NSWorkspace.willSleepNotification`
+    //  and `didWakeNotification`:
+    //   - onSleep: tear down the watcher + timer before I/O suspends
+    //   - onWake:  recreate both on fresh FDs and reconcile process state
+
     /// Notification observer tokens for sleep/wake. Stored so we can
-    /// remove them in `deinit`.
+    /// remove them in `deinit`. The notification center does not retain
+    /// block-based observers, so we must hold the token ourselves.
     @ObservationIgnored
     private var sleepObserver: Any?
     @ObservationIgnored
@@ -888,8 +907,11 @@ class ServerManager {
         startWatching()
         startSyncTimer()
 
-        // Observe system sleep/wake to manage the file system watcher
-        // and reconcile stale process state.
+        // Register sleep/wake observers. Both fire on the main queue
+        // (matching the watcher/timer queues they manage), and use
+        // [weak self] to avoid a retain cycle — the notification center
+        // does not retain block observers, but the closure could
+        // otherwise keep `self` alive past its useful lifetime.
         sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -923,6 +945,10 @@ class ServerManager {
     /// Called just before the system goes to sleep. Tear down the file
     /// system watcher (its FD is invalid after I/O suspension) and cancel
     /// the sync timer so `ps` isn't spawned during the transition.
+    ///
+    /// Cancelling the DispatchSource stops it from firing; we also nil
+    /// the references so `onWake()` (or any later `startWatching()` /
+    /// `startSyncTimer()` call) starts cleanly with a fresh instance.
     private func onSleep() {
         directorySource?.cancel()
         directorySource = nil
@@ -934,13 +960,18 @@ class ServerManager {
     /// watcher on a fresh FD and restart the sync timer. Then reconcile
     /// process state — child processes may have been killed by the OS
     /// during sleep, so we detect dead PIDs and update the UI.
+    ///
+    /// Recreate from scratch (rather than trying to resume) because the
+    /// old FD is invalid after I/O suspension, and a cancelled
+    /// `DispatchSource` cannot be resumed — only recreated.
     private func onWake() {
         startWatching()
         startSyncTimer()
-        // Reconcile immediately: any model that was running but is absent
-        // from `ps` after wake is presumed dead (killed by the OS during
-        // sleep). The sync timer will also pick this up within 3s, but
-        // doing it here gives the user instant feedback.
+        // Reconcile immediately on a background utility queue so the
+        // user gets instant feedback (no 3-second wait for the next
+        // timer tick). The ps scan + `kill(pid, 0)` checks run off the
+        // main thread; only the final `mergeExternalStates` mutation
+        // hops back to main, so the UI stays responsive.
         DispatchQueue.global(qos: .utility).async { [weak self] in
             self?.syncWithRunningProcesses()
         }
@@ -1013,6 +1044,10 @@ class ServerManager {
     deinit {
         directorySource?.cancel()
         syncTimer?.cancel()
+        // Explicitly remove block-based observers — the notification
+        // center does not auto-remove them, so failing to do this leaks
+        // the observer tokens and keeps the closure (and any captured
+        // objects like `[weak self]`) alive past the lifetime of `self`.
         if let obs = sleepObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(obs)
         }
@@ -1319,9 +1354,16 @@ class ServerManager {
     /// (and falls back to SIGKILL after a short wait). Also handles
     /// externally-launched processes by killing them by PID.
     func unloadModel(_ model: ModelEntry) {
-        // If we own the process, terminate it cleanly. For externally-
-        // launched processes (no Process object), kill by PID directly.
-        // Never do both — that risks double-SIGTERM and PID recycling.
+        // Send SIGTERM via exactly one path:
+        //   - Owned process (`processes[id]`): use `Process.terminate()`
+        //     which sends SIGTERM and lets the `terminationHandler`
+        //     clear state.
+        //   - External process (only PID in `modelStates`): use
+        //     `kill(2)` directly since we have no `Process` object.
+        // The `else if` is critical — doing both would double-signal
+        // the process, and after the first SIGTERM kills it the PID
+        // could be recycled by an unrelated process before the second
+        // `kill()` fires.
         if let p = processes[model.id] {
             p.terminate()
             processes[model.id] = nil
@@ -1457,10 +1499,13 @@ class ServerManager {
         for id in Array(modelStates.keys) {
             guard let s = modelStates[id] else { continue }
             if s.isRunning && externalStates[id] == nil {
-                // Don't clear state if the PID is still alive — ps
-                // may have missed it (truncated output, path with
-                // spaces, startup/shutdown transition). Only clear
-                // when the process is actually dead.
+                // The `ps` scan may legitimately miss a running
+                // process: regex fails on paths with spaces, output
+                // truncated, or the process is mid-startup/shutdown.
+                // Before clearing state, verify the PID is actually
+                // dead via `kill(pid, 0)` (which sends no signal —
+                // it just tests for existence). This prevents
+                // loaded models from falsely appearing stopped.
                 if let pid = s.pid, kill(pid, 0) == 0 {
                     // PID alive — keep the running state.
                 } else {
