@@ -548,6 +548,7 @@ struct SettingsView: View {
     @State private var mlxServerPath: String
     @State private var globalExtraArgs: String
     @State private var savedFeedback: Bool = false
+    @State private var perModelSavedFeedback: Bool = false
 
     /// Initialize the local state from the manager's settings.
     /// SwiftUI's `@State` must be initialized in `init`, not the property
@@ -727,10 +728,24 @@ struct SettingsView: View {
                 Text("Per-Model Settings")
                     .font(.headline)
                 Spacer()
-                Text("Edits apply on next load · Saved automatically")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Button("Save") {
+                    // Per-model settings already save on each edit via
+                    // setPerModelPort/setPerModelCtxSize, but this button
+                    // provides visual confirmation.
+                    withAnimation { perModelSavedFeedback = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        withAnimation { perModelSavedFeedback = false }
+                    }
+                }
+                if perModelSavedFeedback {
+                    Text("✓ Saved")
+                        .foregroundColor(.green)
+                        .font(.caption)
+                }
             }
+            Text("Edits apply on next load · Port and ctx save automatically")
+                .font(.caption)
+                .foregroundColor(.secondary)
 
             if manager.models.isEmpty {
                 Text("No models found in \(manager.settings.modelsDir)")
