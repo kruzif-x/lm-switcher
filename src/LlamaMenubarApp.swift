@@ -499,7 +499,7 @@ struct MenuView: View {
                     Image(systemName: "circle.fill")
                         .foregroundColor(.green)
                         .imageScale(.small)
-                    Text(":\(state.port)")
+                    Text(":\(String(state.port))")
                         .font(.caption.monospaced())
                         .foregroundColor(.secondary)
                 } else {
@@ -835,7 +835,7 @@ struct SettingsView: View {
                     .foregroundColor(state.isRunning ? .green : .secondary)
                     .imageScale(.small)
                 if state.isRunning {
-                    Text(":\(state.port)")
+                    Text(":\(String(state.port))")
                         .font(.caption.monospaced())
                 }
             }
