@@ -251,8 +251,18 @@ LLAMA_CHAT_TEMPLATE=""       # optional chat template override
 │   └── icon.iconset/             # source PNGs at all sizes
 └── docs/
     ├── ARCHITECTURE.md           # how the pieces fit together
+    ├── GEMMA4_LOADING_DETAILS.md # Gemma 4 loading deep-dive
     └── STATE.md                  # where state lives
 ```
+
+
+**Documentation:**
+
+| Doc | What it covers |
+|-----|----------------|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Component diagram, how the Swift app and CLI talk to each other |
+| [GEMMA4_LOADING_DETAILS.md](docs/GEMMA4_LOADING_DETAILS.md) | Gemma 4 loading deep-dive: every `llama-server` flag, mmproj encoder, MTP heads, chat templates |
+| [STATE.md](docs/STATE.md) | Where state lives on disk, PID files, UserDefaults, auto-start |
 
 ### How the pieces talk to each other
 
