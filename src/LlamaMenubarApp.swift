@@ -76,6 +76,7 @@ import SwiftUI
 import AppKit
 import Darwin
 import UniformTypeIdentifiers
+import CryptoKit
 
 
 // MARK: - App Entry Point
@@ -1162,12 +1163,13 @@ class ServerManager {
     }
 
     /// Build a UserDefaults key for a given per-model attribute.
+    /// Uses the first 12 hex chars of the MD5 of the path — stable across
+    /// restarts (unlike String.hashValue which is randomized per process).
     private func perModelKey(_ suffix: String, model: ModelEntry) -> String {
-        // The id itself is already unique (it's the path), but using the
-        // hash keeps the key short. Note: a hash collision would cause
-        // two models to share settings, but in practice path hashes are
-        // unique enough for our purposes.
-        "model.\(model.id.hashValue).\(suffix)"
+        let data = Data(model.id.utf8)
+        let digest = Insecure.MD5.hash(data: data)
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "model.\(hex.prefix(12)).\(suffix)"
     }
 
     // MARK:   Context size helpers
