@@ -110,7 +110,7 @@ For example, `/Users/foo/gguf/my model.gguf` becomes `my_model.gguf.pid`.
 2. The manager picks a port (per-model override or next free).
 3. The manager spawns the backend process with the right args:
    ```
-   llama-server -m <model> --port <port> --host 127.0.0.1 [--ctx-size N] [--mmproj <vision>] [extra args]
+   llama-server -m <model> --port <port> --host 127.0.0.1 [--ctx-size N] [--mmproj <vision>] --reasoning off --reasoning-format none [--chat-template <jinja>] [extra args]
    mlx_lm.server --model <dir> --port <port> --host 127.0.0.1 [extra args]
    ```
 4. The process's PID is written to a file in `pids/`.

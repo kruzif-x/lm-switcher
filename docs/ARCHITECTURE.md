@@ -53,6 +53,7 @@ Each model is **one** `llama-server` (or `mlx_lm.server`) process:
         │  -m gemma.gguf   │  │  -m cerebras...  │  │  -m omnicoder..  │
         │  --port 8080     │  │  --port 8081     │  │  --port 8082     │
         │  --ctx-size 4096 │  │  --ctx-size 8192 │  │  --ctx-size 4096 │
+        │  --reasoning off │  │  --reasoning off │  │  --reasoning off │
         │  PID 1234        │  │  PID 1235        │  │  PID 1236        │
         └──────────────────┘  └──────────────────┘  └──────────────────┘
 ```
@@ -61,6 +62,11 @@ Each model is **one** `llama-server` (or `mlx_lm.server`) process:
 distinct models in a single instance (each model is loaded into GPU
 memory once and bound to that process). And it allows independent
 unload of any model without affecting the others.
+
+Note: every GGUF model is launched with `--reasoning off --reasoning-format
+none` to suppress Gemma 4's `reasoning_content` field, which breaks
+OpenAI-compatible clients. See [GEMMA4_LOADING_DETAILS.md](GEMMA4_LOADING_DETAILS.md)
+for a full flag-by-flag explanation.
 
 ## Communication paths
 
