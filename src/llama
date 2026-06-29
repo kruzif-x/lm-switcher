@@ -559,10 +559,37 @@ cmd_unload() {
     done
 }
 
-# `llama switch <m1> [m2 ...]` — stop everything, then start fresh.
+# `llama switch <m1> [m2 ...]` — atomic double-buffer switch (no gap).
+# Loads the new model first, verifies it started, THEN unloads old models.
+# If the new model fails to load, old models keep running (rollback).
 cmd_switch() {
-    cmd_unload all
-    cmd_load "$@"
+    local _target="$1"
+    [[ -z "$_target" ]] && { echo "Usage: llama switch <model>"; return 1; }
+
+    # Snapshot the currently-running PIDs before we do anything.
+    local _old_pids=()
+    local _pf
+    for _pf in "$PID_DIR"/*.pid; do
+        [[ -f "$_pf" ]] || continue
+        local _pid; _pid=$(head -1 "$_pf" 2>/dev/null)
+        [[ -n "$_pid" ]] && _old_pids+=("$_pf:$_pid")
+    done
+
+    # Load the target on a NEW port (existing processes unaffected).
+    cmd_load "$_target" || {
+        echo "✗ Switch failed: target failed to load (old models untouched)"
+        return 1
+    }
+
+    # Now safe to unload the old models.
+    for _entry in "${_old_pids[@]}"; do
+        local _pf="${_entry%%:*}"
+        local _pid="${_entry#*:}"
+        kill -TERM "$_pid" 2>/dev/null
+        rm -f "$_pf"
+    done
+
+    echo "✓ Switched to $_target"
 }
 
 # `llama ctx <model> <size>` — set per-model context size (applies next load).

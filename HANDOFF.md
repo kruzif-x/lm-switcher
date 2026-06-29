@@ -113,11 +113,11 @@ UI: when override OFF → read-only global values. When ON → editable fields +
 
 ## Pending Work
 
-1. ~~**Fix audit findings** — C-1, C-2, H-1, H-3, H-4, H-5~~ ✅ DONE (commit e0c6568, 2026-06-29). H-5 verified live (2nd instance self-terminates). Per-model "Reset to Default" override-aware fix also landed.
-2. **Model switching** — menu bar app has no "switch" (unload A, load B atomically). CLI has `llama switch` but it's sequential with a gap. See `HANDOFF_MODEL_SWITCHING.md` for design options
-3. **File splitting** — 3000 lines in one file is borderline. Suggested split in audit report section A-1
-4. **Dead code cleanup** — `pendingCtxEdit`, `statusText`, `ModelState.extraArgs` are unused (M-2, M-3, L-11)
-5. **Remaining MEDIUM/LOW** — M-1 (port bind check), M-6 (scan depth limit), L-3 (quant strip regex), L-7 (hardcoded Python 3.14 path)
+1. ~~**Fix audit findings** — C-1, C-2, H-1, H-3, H-4, H-5~~ ✅ DONE (commit e0c6568, 2026-06-29).
+2. ~~**Model switching** — menu bar app has no "switch"~~ ✅ DONE (commit bf8e2d?, 2026-06-29). Double-buffer atomic switch: loads new model on fresh port first, verifies readiness (5s timeout), then unloads old models. Rollback on failure. UI: "Switch" button in per-model card + "Switch to" in context menu. CLI: same double-buffer pattern.
+3. ~~**Dead code cleanup** — `pendingCtxEdit`, `statusText`, `ModelState.extraArgs`~~ ✅ DONE (M-2, M-3, L-11 removed).
+4. ~~**Remaining MEDIUM/LOW** — M-1 (port bind), M-5 (key filtering), M-6 (depth limit), M-8 (escape handling), L-2 (numeric sort), L-3 (regex quant), L-6 (@ObservationIgnored), L-7 (Python detect)~~ ✅ DONE.
+5. **File splitting** — ~3200 lines in one file. Suggested split in audit report section A-1.
 
 ## User Preferences
 

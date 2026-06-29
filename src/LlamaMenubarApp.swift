@@ -293,10 +293,6 @@ struct ModelState {
     /// menu so the user gets feedback instead of a silent no-op. Cleared
     /// on a successful load. `nil` when there's nothing to report.
     var lastError: String? = nil
-
-    /// Reserved for future per-model extra args. Currently unused — the
-    /// global `AppSettings.globalExtraArgs` covers most use cases.
-    var extraArgs: String = ""
 }
 
 
@@ -534,6 +530,12 @@ struct MenuView: View {
             Button(state.isRunning ? "Unload" : "Load") {
                 if state.isRunning { manager.unloadModel(model) }
                 else { manager.loadModel(model) }
+            }
+            // "Switch to" — atomically unload all other models and load
+            // this one. Only shown when the target isn't already running
+            // and at least one other model is loaded.
+            if !state.isRunning && manager.anyRunning {
+                Button("Switch to") { manager.switchModel(model) }
             }
         }
     }
@@ -1507,9 +1509,17 @@ struct SettingsView: View {
                 if state.isRunning {
                     Button("Unload") { manager.unloadModel(model) }
                         .controlSize(.small)
+                } else if manager.switchingTo == model.id {
+                    Text("Switching…").font(.caption).foregroundColor(.secondary)
                 } else {
-                    Button("Load") { manager.loadModel(model) }
-                        .controlSize(.small)
+                    HStack(spacing: 4) {
+                        Button("Load") { manager.loadModel(model) }
+                            .controlSize(.small)
+                        if manager.anyRunning {
+                            Button("Switch") { manager.switchModel(model) }
+                                .controlSize(.small)
+                        }
+                    }
                 }
             }
         }
@@ -1767,9 +1777,12 @@ class ServerManager {
     /// Bumped to force SwiftUI view refresh for per-model override toggles.
     var refreshTrigger: Int = 0
 
-    /// Reserved for future use; currently unused. Was intended to scroll
-    /// the per-model settings pane to a specific model.
-    var pendingCtxEdit: URL? = nil
+    /// Set to the model ID being switched to, or nil when idle. Used by UI
+    /// to disable buttons during the transition and show a "Switching…"
+    /// indicator instead of Load. The atomic double-buffer switch spawns
+    /// the new model first (on a fresh port), waits for it to be ready on ~5s
+    /// timeout, then unloads old models only if the new one is healthy.
+    var switchingTo: String? = nil
 
     // MARK:   Private state
 
@@ -1963,9 +1976,13 @@ class ServerManager {
     //  level up and re-scan on every change.
 
     /// The file descriptor for the directory we're watching.
+    /// `@ObservationIgnored`: never read by a SwiftUI view, so it must not
+    /// add observation overhead (L-6).
+    @ObservationIgnored
     private var directoryFD: Int32 = -1
 
     /// The dispatch source for the file-system events.
+    @ObservationIgnored
     private var directorySource: DispatchSourceFileSystemObject?
 
     /// Start (or restart) watching the models directory.
@@ -2044,23 +2061,13 @@ class ServerManager {
         !modelStates.values.filter { $0.isRunning }.isEmpty
     }
 
-    /// Short text shown next to the menu bar icon. Single-model case shows
-    /// the name; multi-model case shows a count.
-    var statusText: String {
-        let running = modelStates.filter { $0.value.isRunning }
-        if running.isEmpty { return "" }
-        if running.count == 1,
-           let entry = models.first(where: { modelStates[$0.id]?.isRunning == true }) {
-            return entry.name
-        }
-        return "\(running.count) models"
-    }
-
     /// Longer text shown at the bottom of the menu, e.g. "2 on :8080, 8081".
     var summaryText: String {
         let running = modelStates.filter { $0.value.isRunning }
         if running.isEmpty { return "All stopped" }
-        let ports = running.values.map { "\($0.port)" }.sorted().joined(separator: ", ")
+        // L-2 fix: sort ports numerically, not lexicographically. String
+        // sort would order e.g. 8080, 808, 8090 as "808, 8080, 8090".
+        let ports = running.values.map { $0.port }.sorted().map(String.init).joined(separator: ", ")
         return "\(running.count) on :\(ports)"
     }
 
@@ -2182,10 +2189,14 @@ class ServerManager {
     /// keys from deleted or moved model files.
     func cleanStalePerModelKeys() {
         let validHashes = Set(models.map { perModelHashPrefix($0) })
-        let allKeys = Array(UserDefaults.standard.dictionaryRepresentation().keys)
-        for key in allKeys {
+        // M-5 fix: filter to our `model.` namespace up front so we iterate
+        // only our own keys, not the hundreds of unrelated system/other-app
+        // keys that `dictionaryRepresentation()` returns. Keeps the
+        // main-thread work during a file-watcher refresh small.
+        let ourKeys = UserDefaults.standard.dictionaryRepresentation().keys
+            .filter { $0.hasPrefix("model.") }
+        for key in ourKeys {
             // Match keys of the form "model.<12hex>.<suffix>"
-            guard key.hasPrefix("model.") else { continue }
             let parts = key.split(separator: ".")
             // parts[0] = "model", parts[1] = hash, parts[2] = suffix
             guard parts.count >= 3 else { continue }
@@ -2252,7 +2263,12 @@ class ServerManager {
     ///   - Subdirectory: if it looks like an MLX model, add it; otherwise
     ///     recurse into it.
     ///   - `.gguf` file: add it as a GGUF model.
-    private func scanDirectory(_ dir: URL, into entries: inout [ModelEntry], baseDir: URL) {
+    private func scanDirectory(_ dir: URL, into entries: inout [ModelEntry], baseDir: URL, depth: Int = 0) {
+        // M-6 fix: cap recursion depth so a symlink loop (e.g.
+        // ~/models/link -> ~/models) can't recurse forever and hang the
+        // main thread (the file watcher fires `refreshModels` on .main).
+        // 12 levels is far deeper than any real model directory layout.
+        guard depth < 12 else { return }
         let fm = FileManager.default
         // `skipsHiddenFiles` excludes dotfiles. `skipsPackageDescendants`
         // avoids descending into .app, .bundle, etc.
@@ -2275,7 +2291,7 @@ class ServerManager {
                 if let entry = mlxEntry(at: url, baseDir: baseDir) {
                     entries.append(entry)
                 } else {
-                    scanDirectory(url, into: &entries, baseDir: baseDir)
+                    scanDirectory(url, into: &entries, baseDir: baseDir, depth: depth + 1)
                 }
             } else if url.pathExtension.lowercased() == "gguf" {
                 // Regular .gguf file: classify and add.
@@ -2638,15 +2654,146 @@ class ServerManager {
         }
     }
 
+    /// Atomically switch to a single model using the double-buffer strategy:
+    ///
+    /// 1. Load the new model on a **fresh** port (old models keep running
+    ///    — no gap where the user has zero models loaded).
+    /// 2. Poll for readiness (process alive + port bound, timeout ~5s).
+    /// 3. If ready → unload all old models. If not → unload the new model
+    ///    and keep the old ones running (rollback). The error is already in
+    ///    `modelStates[model.id].lastError` from the C-1 catch.
+    ///
+    /// Contrast with the CLI's `switch` command which does an unload-all
+    /// first, leaving the user with nothing if the new model fails to load.
+    func switchModel(_ model: ModelEntry) {
+        // Already running this model → no-op.
+        guard !state(for: model).isRunning else { return }
+        // Snapshot of what's currently running (for rollback).
+        let oldRunning: [(model: ModelEntry, state: ModelState)] = models.compactMap { m in
+            let s = state(for: m)
+            guard s.isRunning && m.id != model.id else { return nil }
+            return (m, s)
+        }
+        // Mark switching UI state.
+        switchingTo = model.id
+
+        // Step 1: load the target. `loadModel` picks a fresh port via
+        // `nextAvailablePort()` which now (M-1) also probes the port with
+        // a real bind() — since the old models still hold their ports, the
+        // new model gets a different one automatically.
+        loadModel(model)
+
+        // Step 2: wait for the new server to confirm it's listening.
+        let deadline = Date().addingTimeInterval(5.0)
+        var isReady = false
+        pollLoop: while Date() < deadline {
+            guard let s = modelStates[model.id], s.isRunning, let pid = s.pid else {
+                break  // process died → loadModel already recorded the error
+            }
+            if kill(pid, 0) == 0 && !Self.portIsFree(s.port) {
+                // Process alive AND port is bound (not free) → ready.
+                isReady = true
+                break pollLoop
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+
+        if isReady {
+            // Step 3: swap complete — unload old models.
+            for entry in oldRunning {
+                unloadModel(entry.model)
+            }
+        } else {
+            // Step 4: rollback — new model failed, unload it.
+            unloadModel(model)
+        }
+
+        switchingTo = nil
+    }
+
     /// Find the smallest unused port starting at `defaultPort`.
     /// Used when no per-model port has been set.
+    ///
+    /// M-1 fix: in addition to skipping ports we already track as in-use,
+    /// probe each candidate with a real `bind()` to localhost so we also
+    /// skip ports held by processes we don't manage (another app, a stale
+    /// server, a different tool). Previously we'd hand out a port that was
+    /// taken by an unmanaged process, `llama-server` would fail to bind,
+    /// and (pre-C-1) the failure was swallowed silently.
     private func nextAvailablePort() -> Int {
         let usedPorts = Set(modelStates.values.compactMap { $0.isRunning ? $0.port : nil })
         var port = settings.defaultPort
-        while usedPorts.contains(port) {
+        // Cap the search so a fully-saturated range can't loop forever.
+        let maxPort = min(settings.defaultPort + 200, 65535)
+        while port <= maxPort {
+            if !usedPorts.contains(port) && Self.portIsFree(port) {
+                return port
+            }
             port += 1
         }
-        return port
+        // Fall back to the default if nothing probed free (the spawn will
+        // surface the bind error via C-1 rather than hang here).
+        return settings.defaultPort
+    }
+
+    /// Probe whether a TCP port is free by attempting a `bind()` on
+    /// 127.0.0.1. Returns true if the bind succeeds (port available). The
+    /// socket is closed immediately; this is a best-effort check (a TOCTOU
+    /// race is possible but harmless — the spawn surfaces any real
+    /// collision via C-1). Async-signal-unsafe; main/background only.
+    static func portIsFree(_ port: Int) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return true }   // can't probe → assume free
+        defer { close(fd) }
+        // SO_REUSEADDR so a recently-closed port in TIME_WAIT doesn't read
+        // as taken.
+        var yes: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(UInt16(port)).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bindResult = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return bindResult == 0
+    }
+
+    /// Discover the `mlx_lm.server` executable path instead of hardcoding a
+    /// Python version (L-7 fix). Tries, in order: `which mlx_lm.server` on
+    /// PATH, then the per-version Python user-install bin dirs from newest
+    /// to oldest. Returns the first hit, or a sensible 3.14 fallback so the
+    /// Settings field is never empty (the user can still override it).
+    static func discoverMLXServerPath() -> String {
+        let home = NSHomeDirectory()
+        // 1. PATH lookup via `which` (covers Homebrew, pipx, venvs on PATH).
+        let which = Process()
+        which.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        which.arguments = ["which", "mlx_lm.server"]
+        let pipe = Pipe()
+        which.standardOutput = pipe
+        which.standardError = FileHandle.nullDevice
+        if (try? which.run()) != nil {
+            which.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let out = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines),
+               !out.isEmpty, FileManager.default.isExecutableFile(atPath: out) {
+                return out
+            }
+        }
+        // 2. Probe Python user-install bin dirs, newest version first.
+        let versions = ["3.14", "3.13", "3.12", "3.11", "3.10"]
+        for v in versions {
+            let p = "\(home)/Library/Python/\(v)/bin/mlx_lm.server"
+            if FileManager.default.isExecutableFile(atPath: p) {
+                return p
+            }
+        }
+        // 3. Fallback — keep the field populated; user can override.
+        return "\(home)/Library/Python/3.14/bin/mlx_lm.server"
     }
 
     /// Shared helper for finding companion GGUF files (e.g. mmproj) that
@@ -2673,14 +2820,16 @@ class ServerManager {
 
         // Step 1: name-based matching — strip quantization, look for
         // `<prefix>-<stripped>*`.
+        // L-3 fix: strip ALL quant suffixes via regex instead of a handful
+        // of hardcoded ones. Covers -Q2_K…-Q8_0, K-quants, I-quants
+        // (-IQ4_NL), and float types (-F16/-F32/-BF16). Matches the CLI's
+        // `sed -E 's/-Q[0-9]+(_[0-9]+)?(_K)?(_[A-Z]+)?$//'` behavior.
         let base = modelURL.deletingPathExtension().lastPathComponent
-        let stripped = base
-            .replacingOccurrences(of: "-Q4_K_M", with: "")
-            .replacingOccurrences(of: "-Q4_K_S", with: "")
-            .replacingOccurrences(of: "-Q5_K_M", with: "")
-            .replacingOccurrences(of: "-Q5_K_S", with: "")
-            .replacingOccurrences(of: "-Q6_K", with: "")
-            .replacingOccurrences(of: "-Q8_0", with: "")
+        let stripped = base.replacingOccurrences(
+            of: #"-(Q\d+(_\d+)?(_K)?(_[A-Z]+)?|IQ\d+(_[A-Z]+)+|F16|F32|BF16)$"#,
+            with: "",
+            options: .regularExpression
+        )
 
         let pattern = "\(prefix)-\(stripped)"
         let nameMatches = entries.filter {
@@ -2713,8 +2862,17 @@ class ServerManager {
         var args: [String] = []
         var current = ""
         var inQuote = false
+        var escaped = false
         for ch in s {
-            if ch == "\"" || ch == "'" {
+            // M-8 fix: honor backslash escapes. A `\` makes the next char
+            // literal (so `\"` is a literal quote, `\ ` a literal space)
+            // instead of toggling quote state or splitting the token.
+            if escaped {
+                current.append(ch)
+                escaped = false
+            } else if ch == "\\" {
+                escaped = true
+            } else if ch == "\"" || ch == "'" {
                 inQuote.toggle()
             } else if ch == " " && !inQuote {
                 if !current.isEmpty { args.append(current); current = "" }
@@ -2722,6 +2880,8 @@ class ServerManager {
                 current.append(ch)
             }
         }
+        // A trailing lone backslash is kept literally rather than dropped.
+        if escaped { current.append("\\") }
         if !current.isEmpty { args.append(current) }
         return args
     }
@@ -2900,7 +3060,7 @@ class ServerManager {
         settings.llamaServerPath = d.string(forKey: "llamaServerPath")
             ?? "/opt/homebrew/bin/llama-server"
         settings.mlxServerPath = d.string(forKey: "mlxServerPath")
-            ?? (NSHomeDirectory() + "/Library/Python/3.14/bin/mlx_lm.server")
+            ?? Self.discoverMLXServerPath()
         // Global extra args default to empty.
         settings.globalExtraArgs = d.string(forKey: "globalExtraArgs") ?? ""
         // Chat template override: empty = use built-in template.
