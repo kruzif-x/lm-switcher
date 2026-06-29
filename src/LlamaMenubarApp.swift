@@ -288,6 +288,12 @@ struct ModelState {
     /// Context size (in tokens) the server was started with.
     var ctxSize: Int = 0
 
+    /// Last spawn/runtime error for this model, if any. Set when
+    /// `Process.run()` throws (e.g. wrong binary path). Surfaced in the
+    /// menu so the user gets feedback instead of a silent no-op. Cleared
+    /// on a successful load. `nil` when there's nothing to report.
+    var lastError: String? = nil
+
     /// Reserved for future per-model extra args. Currently unused — the
     /// global `AppSettings.globalExtraArgs` covers most use cases.
     var extraArgs: String = ""
@@ -499,7 +505,9 @@ struct MenuView: View {
                     .foregroundStyle(.secondary)
 
                 // Status indicator: green filled dot + port if running,
-                // hollow gray dot if not.
+                // hollow gray dot if not. If the last load attempt failed
+                // (C-1), show a red warning triangle with the error as a
+                // help tooltip so the user knows *why* it didn't start.
                 if state.isRunning {
                     Image(systemName: "circle.fill")
                         .foregroundColor(.green)
@@ -507,6 +515,11 @@ struct MenuView: View {
                     Text(":\(String(state.port))")
                         .font(.caption.monospaced())
                         .foregroundColor(.secondary)
+                } else if let err = state.lastError {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                        .imageScale(.small)
+                        .help("Failed to load: \(err)")
                 } else {
                     Image(systemName: "circle")
                         .foregroundColor(.secondary)
@@ -1271,7 +1284,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Per-Model Overrides")
                         .font(.headline)
-                    Text("The Per-Model tab lets you override global settings for individual models. This is useful when different models need different sampling parameters, cache settings, or extra arguments.\n\nHow it works:\n• Each model has an 'Override Global Settings' toggle\n• When OFF: the model inherits all global settings (shown as read-only gray text)\n• When ON: editable fields appear for all overridable settings\n• 'Reset to Global' clears all per-model overrides for that model\n• 'Reset to Default' resets per-model values to factory defaults (always visible)\n• Restore Defaults (global) does NOT affect per-model overrides\n\n⚠️ IMPORTANT: Per-model settings only take effect when a model is (re)loaded. If a model is already running, you must unload it and load it again for the new settings to apply. Changing settings while a model is running does NOT hot-reload — the running process keeps its original launch arguments until restarted.")
+                    Text("The Per-Model tab lets you override global settings for individual models. This is useful when different models need different sampling parameters, cache settings, or extra arguments.\n\nHow it works:\n• Each model has an 'Override Global Settings' toggle\n• When OFF: the model inherits all global settings (shown as read-only gray text)\n• When ON: editable fields appear for all overridable settings\n• 'Reset to Global' clears all per-model overrides for that model\n• 'Reset to Default' (override ON) sets per-model values to factory defaults; (override OFF) purges any stored per-model values\n• Restore Defaults (global) does NOT affect per-model overrides\n\n⚠️ IMPORTANT: Per-model settings only take effect when a model is (re)loaded. If a model is already running, you must unload it and load it again for the new settings to apply. Changing settings while a model is running does NOT hot-reload — the running process keeps its original launch arguments until restarted.")
                         .font(.body)
                         .foregroundColor(.secondary)
                         .padding(.bottom, 4)
@@ -1688,24 +1701,33 @@ struct SettingsView: View {
                 }
             }
 
-            // Reset per-model values to defaults — always visible (works
-            // whether override is ON or OFF). When OFF, this also clears
-            // any stale per-model values so they don't leak into launch.
+            // Reset button — always visible. Behavior depends on override
+            // state to avoid leaking stale per-model keys into UserDefaults:
+            //   • Override ON  → write the factory defaults as this model's
+            //     per-model values (so the editable fields show defaults).
+            //   • Override OFF → there's nothing to edit; clear ALL per-model
+            //     keys so no stale values linger and the model cleanly
+            //     inherits global settings on next load.
             HStack {
                 Spacer()
                 Button("Reset to Default") {
-                    let d = AppSettings()
-                    manager.setPerModelPort(d.defaultPort, for: model)
-                    manager.setPerModelCtxSize(d.defaultCtxSize, for: model)
-                    manager.setPerModelSetting(d.temperature, for: model, key: "temperature")
-                    manager.setPerModelSetting(d.topP, for: model, key: "topP")
-                    manager.setPerModelSetting(d.topK, for: model, key: "topK")
-                    manager.setPerModelSetting(d.repeatPenalty, for: model, key: "repeatPenalty")
-                    manager.setPerModelSetting(d.kvCacheTypeK, for: model, key: "kvCacheTypeK")
-                    manager.setPerModelSetting(d.kvCacheTypeV, for: model, key: "kvCacheTypeV")
-                    manager.setPerModelSetting(d.thinkingEnabled, for: model, key: "thinkingEnabled")
-                    manager.setPerModelSetting(d.enableMtp, for: model, key: "enableMtp")
-                    manager.setPerModelSetting(d.globalExtraArgs, for: model, key: "extraArgs")
+                    if manager.perModelOverrideEnabled(for: model) {
+                        let d = AppSettings()
+                        manager.setPerModelPort(d.defaultPort, for: model)
+                        manager.setPerModelCtxSize(d.defaultCtxSize, for: model)
+                        manager.setPerModelSetting(d.temperature, for: model, key: "temperature")
+                        manager.setPerModelSetting(d.topP, for: model, key: "topP")
+                        manager.setPerModelSetting(d.topK, for: model, key: "topK")
+                        manager.setPerModelSetting(d.repeatPenalty, for: model, key: "repeatPenalty")
+                        manager.setPerModelSetting(d.kvCacheTypeK, for: model, key: "kvCacheTypeK")
+                        manager.setPerModelSetting(d.kvCacheTypeV, for: model, key: "kvCacheTypeV")
+                        manager.setPerModelSetting(d.thinkingEnabled, for: model, key: "thinkingEnabled")
+                        manager.setPerModelSetting(d.enableMtp, for: model, key: "enableMtp")
+                        manager.setPerModelSetting(d.globalExtraArgs, for: model, key: "extraArgs")
+                    } else {
+                        // Override OFF: purge any stale per-model keys.
+                        manager.resetPerModel(for: model)
+                    }
                     manager.refreshTrigger += 1
                 }
                 .controlSize(.small)
@@ -1793,6 +1815,38 @@ class ServerManager {
     @ObservationIgnored
     private var wakeObserver: Any?
 
+    // MARK:   Single-instance guard
+
+    /// File descriptor holding the single-instance advisory lock. Static so
+    /// it lives for the whole process and the lock is never released early.
+    /// `@ObservationIgnored` is unnecessary on a `static`.
+    private static var singleInstanceFD: Int32 = -1
+
+    /// Attempt to take an exclusive, non-blocking advisory lock on a
+    /// well-known file. Returns `true` if this process got the lock (it's
+    /// the only instance), `false` if another instance already holds it.
+    ///
+    /// Uses `flock(LOCK_EX | LOCK_NB)`. The lock is associated with the
+    /// open file description and is released automatically when the process
+    /// exits (clean quit, crash, or kill), so a stale lock file never
+    /// blocks a future launch. We keep the fd in a static to avoid closing
+    /// it — closing would drop the lock.
+    static func acquireSingleInstanceLock() -> Bool {
+        let lockPath = NSTemporaryDirectory() + "llm-switcher.lock"
+        let fd = open(lockPath, O_CREAT | O_RDWR, 0o644)
+        guard fd != -1 else {
+            // If we can't even open the lock file, fail open (allow launch)
+            // rather than locking the user out of their own app.
+            return true
+        }
+        if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+            singleInstanceFD = fd   // hold the lock for the process lifetime
+            return true
+        }
+        close(fd)
+        return false
+    }
+
     // MARK:   Init / setup
 
     /// On construction:
@@ -1806,6 +1860,20 @@ class ServerManager {
     ///    `ps` (large process table, sleep/wake races) must not block the
     ///    main run loop, since that would freeze the menu bar UI.
     init() {
+        // H-5 fix: single-instance guard. The LaunchAgent (RunAtLoad=true)
+        // and a manual Launchpad/Spotlight open can both start the app,
+        // producing two instances that fight over ports, both run the 3s
+        // `ps` timer, and both write the same UserDefaults domain. Take an
+        // exclusive advisory lock on a well-known file; if another instance
+        // already holds it, terminate immediately. The fd is intentionally
+        // leaked for the process lifetime so the lock is held until exit
+        // (the kernel releases it automatically on process death).
+        if !Self.acquireSingleInstanceLock() {
+            NSApp.terminate(nil)
+            // terminate() is async; hard-exit so we don't continue init.
+            exit(0)
+        }
+
         loadSettings()
         refreshModels()
         startWatching()
@@ -1876,7 +1944,13 @@ class ServerManager {
         // timer tick). The ps scan + `kill(pid, 0)` checks run off the
         // main thread; only the final `mergeExternalStates` mutation
         // hops back to main, so the UI stays responsive.
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        // H-1 fix: route the wake-time reconcile through the SAME serial
+        // `syncQueue` the periodic timer uses, instead of a fresh
+        // `DispatchQueue.global` worker. Two concurrent `ps` scans mutating
+        // the shared `modelStates`/`processes` dicts is a data race; the
+        // serial queue guarantees they never overlap. The final state
+        // mutation still hops to main inside `syncWithRunningProcesses`.
+        syncQueue.async { [weak self] in
             self?.syncWithRunningProcesses()
         }
     }
@@ -2479,9 +2553,20 @@ class ServerManager {
             s.pid = task.processIdentifier
             s.port = port
             s.ctxSize = ctx
+            s.lastError = nil   // clear any stale error from a prior failed load
             modelStates[model.id] = s
         } catch {
-
+            // C-1 fix: don't swallow the failure. The most common cause is
+            // a wrong/missing binary path (llama-server / mlx_lm.server),
+            // which previously produced ZERO feedback — the model just
+            // never appeared to load. Record the error in model state so
+            // the menu can show it, and beep so the user notices.
+            var s = modelStates[model.id] ?? ModelState()
+            s.isRunning = false
+            s.pid = nil
+            s.lastError = "\(error.localizedDescription)"
+            modelStates[model.id] = s
+            NSSound.beep()
         }
     }
 
@@ -2537,9 +2622,18 @@ class ServerManager {
                 unloadModel(m)
             } else {
                 // No matching `ModelEntry` — just kill the PID.
+                // H-4 fix: also clear the state here. Previously the
+                // `modelStates[id]` entry kept `isRunning = true` until the
+                // next 3s sync, so the "⏹ Unload All" button left stale
+                // rows in the menu for up to 3 seconds when the model file
+                // had been deleted out from under us.
                 if let pid = state.pid {
                     kill(pid, SIGTERM)
                 }
+                var s = state
+                s.isRunning = false
+                s.pid = nil
+                modelStates[id] = s
             }
         }
     }
@@ -2741,10 +2835,22 @@ class ServerManager {
             let mPattern: String
             let dropLen: Int
             if s.contains("llama-server") {
-                mPattern = #"-m (\/[^\s]+\.gguf)"#
+                // H-3 fix: allow spaces inside the path. The old pattern
+                // `-m (\/[^\s]+\.gguf)` stopped at the first space, so a
+                // model at "/Users/x/My Models/g.gguf" captured only
+                // "/Users/x/My" and never matched a known ModelEntry.
+                // GGUF paths always end in `.gguf`, so match lazily up to
+                // the LAST `.gguf` on the argument (the path can't contain
+                // a literal `.gguf ` mid-string in practice). `.*?` is
+                // lazy; anchoring on `\.gguf` keeps it from swallowing
+                // trailing flags.
+                mPattern = #"-m (\/.+?\.gguf)"#
                 dropLen = 3
             } else {
-                mPattern = #"--model (\/[^\s]+)"#
+                // MLX `--model` points at a directory (no extension). Match
+                // everything up to the next ` --` flag boundary or end of
+                // line, so spaces in the directory name are preserved.
+                mPattern = #"--model (\/.+?)(?= --|$)"#
                 dropLen = 8
             }
             guard let m = s.range(of: mPattern, options: .regularExpression) else { continue }

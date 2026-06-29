@@ -42,3 +42,4 @@ dist/
 # Logs
 *.log
 logs/
+.understand-anything/

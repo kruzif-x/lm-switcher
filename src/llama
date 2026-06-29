@@ -88,6 +88,7 @@ MODELS_DIR="${LLAMA_MODELS_DIR:-$HOME/models}"   # scanned recursively
 PORT="${LLAMA_PORT:-8080}"                       # default port
 CTX_SIZE="${LLAMA_CTX_SIZE:-4096}"               # default ctx size (tokens)
 CHAT_TEMPLATE="${LLAMA_CHAT_TEMPLATE:-}"          # optional chat template path
+ENABLE_MTP="${LLAMA_ENABLE_MTP:-false}"            # enable MTP (off by default, net loss on Metal)
 
 
 # -----------------------------------------------------------------------------
@@ -382,11 +383,20 @@ load_model() {
         fi
         shopt -u nullglob
         # Bind to localhost, set the ctx size, then any global extras.
-        args+=("--host" "127.0.0.1" "--port" "$port" "--ctx-size" "$ctx")
+        args+=("--host" "127.0.0.1" "--port" "$port")
+        # All GPU layers on Metal — unified memory, no VRAM split.
+        args+=("-ngl" "99")
+        args+=("--ctx-size" "$ctx")
         # Gemma 4 emits a `reasoning_content` field that breaks
         # OpenAI-compatible clients (opencode, pi, OpenClaw). Suppress it.
         # See docs/GEMMA4_LOADING_DETAILS.md §3.2.
         args+=("--reasoning" "off" "--reasoning-format" "none")
+
+        # MTP: opt-in only. Net loss on Apple Silicon Metal.
+        # https://github.com/ggerganov/llama.cpp/issues/23752
+        if [[ "$ENABLE_MTP" == "true" || "$ENABLE_MTP" == "1" ]]; then
+            args+=("--spec-type" "draft-mtp")
+        fi
     else
         # MLX: invoke mlx_lm.server. No mmproj, no explicit ctx (mlx
         # uses the model's own config).
@@ -395,8 +405,13 @@ load_model() {
     fi
 
     # Append any user-provided extra args (split on whitespace).
+    # C-2 fix: use `read -ra` instead of unquoted `$LLAMA_EXTRA_ARGS`.
+    # Unquoted expansion also performs pathname/glob expansion and is
+    # word-split unpredictably; `read -ra` splits on IFS only (no globbing),
+    # producing a clean argv array.
     if [[ -n "$LLAMA_EXTRA_ARGS" ]]; then
-        args+=($LLAMA_EXTRA_ARGS)
+        read -ra _extra_args <<< "$LLAMA_EXTRA_ARGS"
+        args+=("${_extra_args[@]}")
     fi
 
     echo "Loading [$type] $name on :$port ..."

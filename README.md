@@ -67,6 +67,14 @@ mtp-Q4_K_M.gguf                  ← MTP head, loaded automatically
 gemma-3-mtp-Q4_K_M.gguf          ← a model with "mtp" in its name
 ```
 
+### MTP Toggle (Settings → Global)
+
+Since MTP is a **net loss on Apple Silicon Metal** (11-92% slower — see [llama.cpp#23752](https://github.com/ggerganov/llama.cpp/issues/23752)), the app opts out by default.
+
+If you want to experiment with MTP on your own hardware, toggle "Enable MTP" in **Settings → Global**. This passes `--spec-type draft-mtp` to llama-server. It persists across restarts via UserDefaults.
+
+The companion `llama` CLI also supports this via `LLAMA_ENABLE_MTP=true`.
+
 ### Chat Template Override
 
 `llama-server` includes built-in chat templates for each model family, but **agentic coding harnesses** (opencode, pi, OpenClaw, etc.) need custom templates to handle tool-calling correctly.
