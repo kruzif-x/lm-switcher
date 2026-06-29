@@ -48,13 +48,17 @@ set -e
 # Default: ~/bin
 BIN_DIR="${1:-$HOME/bin}"
 
-# Path to the Swift source.
-SWIFT_FILE="$BIN_DIR/llama-menubar.swift"
+# Directory holding the Swift sources. install.sh copies all of src/*.swift
+# into $BIN_DIR before compiling (the app is split across several files since
+# audit A-1; they're compiled together as one module).
+# Resolve the repo's src/ relative to this script so a fresh clone works.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC_DIR="$SCRIPT_DIR/../src"
 
 # Compiled binary (intermediate; copied into the .app bundle).
 COMPILED_BIN="$BIN_DIR/llama-menubar"
 
-# The `llama` CLI script.
+# The `llama` CLI script (installed from the repo's src/llama).
 CLI_SCRIPT="$BIN_DIR/llama"
 
 # LaunchAgent plist (auto-start on login).
@@ -85,10 +89,15 @@ mkdir -p "$APP_DIR"
 #   - SwiftUI: declarative UI.
 #   - AppKit: NSWindow, NSOpenPanel, NSApplication.
 
-echo "==> Compiling llama-menubar..."
+echo "==> Compiling llama-menubar (multi-file module)..."
+# Copy all Swift sources from the repo into $BIN_DIR so the build is
+# self-contained and reproducible from a fresh clone (audit L-8 + A-1).
+cp "$SRC_DIR"/*.swift "$BIN_DIR"/
+# Compile every .swift file together as one module. Swift's
+# whole-module optimization requires all sources in one invocation.
 swiftc -parse-as-library -o "$COMPILED_BIN" -O \
     -framework SwiftUI -framework AppKit \
-    "$SWIFT_FILE"
+    "$BIN_DIR"/*.swift
 
 
 # -----------------------------------------------------------------------------
@@ -211,8 +220,9 @@ fi
 # identical, no copy). Then we make it executable.
 
 echo "==> Installing CLI script..."
-if ! cmp -s "$CLI_SCRIPT" "$BIN_DIR/llama" 2>/dev/null; then
-    cp "$CLI_SCRIPT" "$BIN_DIR/llama"
+# Copy the CLI from the repo source (audit L-8). Idempotent: skip if identical.
+if ! cmp -s "$SRC_DIR/llama" "$BIN_DIR/llama" 2>/dev/null; then
+    cp "$SRC_DIR/llama" "$BIN_DIR/llama"
 fi
 chmod +x "$BIN_DIR/llama"
 

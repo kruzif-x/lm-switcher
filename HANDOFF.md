@@ -15,32 +15,43 @@ macOS menu bar app for managing local LLM models (GGUF + MLX). Single Swift file
 ```
 llm-switcher/
 ├── src/
-│   ├── LlamaMenubarApp.swift   # entire app (~3000 lines)
-│   └── llama                    # bash CLI companion (~680 lines)
+│   ├── LlamaMenubarApp.swift   # @main entry + SettingsWindowHost (~205 lines)
+│   ├── DomainTypes.swift        # ModelBackend, ModelEntry, ModelState, AppSettings
+│   ├── MenuView.swift           # menu bar dropdown content
+│   ├── SettingsView.swift       # 4-tab settings window (Global/Per-Model/Help/About)
+│   ├── ServerManager.swift      # the brain: discovery, lifecycle, persistence, sync
+│   └── llama                    # bash CLI companion (~710 lines)
 ├── scripts/
-│   └── install.sh               # build + .app bundle + LaunchAgent
-├── AUDIT_REPORT.md              # scout audit (30 findings)
+│   └── install.sh               # build (multi-file) + .app bundle + LaunchAgent
+├── AUDIT_REPORT.md              # scout audit (30 findings — all actionable ones fixed)
 ├── HANDOFF_PERMODEL_FIX.md      # per-model override fix history
-└── HANDOFF_MODEL_SWITCHING.md   # switch feature design options
+└── HANDOFF_MODEL_SWITCHING.md   # switch feature design options (implemented)
 ```
+
+The Swift app was split from a single ~3250-line file into 5 files (audit A-1, 2026-06-29). They compile together as one module.
 
 ## Build & Deploy
 
-**Critical:** `install.sh` compiles from `~/bin/llama-menubar.swift`, NOT from `src/`. You must copy the source first.
+`install.sh` now copies all `src/*.swift` into `~/bin/` and compiles them
+together — no manual copy step needed (audit L-8 fixed). The CLI is copied
+from `src/llama` too.
 
 ```bash
-# Edit source
-vim ~/Projects/llm-switcher/src/LlamaMenubarApp.swift
-
-# Copy to ~/bin (install.sh compiles from here)
-cp src/LlamaMenubarApp.swift ~/bin/llama-menubar.swift
+# Edit any source file in src/
+vim ~/Projects/llm-switcher/src/ServerManager.swift
 
 # Kill running instance
 pkill -f llama-menubar; sleep 1
 
-# Build + install
+# Build + install (copies src/*.swift → ~/bin, compiles as one module)
 cd ~/Projects/llm-switcher && bash scripts/install.sh
+```
 
+> If you previously had a single-file `~/bin/llama-menubar.swift`, delete it
+> (`rm ~/bin/llama-menubar.swift`) — leaving it causes duplicate-symbol errors
+> since install.sh now compiles every `~/bin/*.swift`.
+
+```bash
 # Launch
 open ~/Applications/LLM\ Switcher.app
 
@@ -48,7 +59,7 @@ open ~/Applications/LLM\ Switcher.app
 strings ~/Applications/LLM\ Switcher.app/Contents/MacOS/llama-menubar | grep "your string"
 
 # Push to Gitea
-git add -A && git commit -m "msg" && git push
+cd ~/Projects/llm-switcher && git add -A && git commit -m "msg" && git push origin main && git push arrakis main
 ```
 
 ## Architecture
