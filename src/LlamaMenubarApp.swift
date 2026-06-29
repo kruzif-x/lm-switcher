@@ -117,7 +117,16 @@ struct LlamaMenubarApp: App {
             // running but no status item is shown. The simpler
             // `Image(systemName:)` form is reliably picked up by the
             // NSStatusItem machinery across macOS versions.
-            Image(systemName: manager.anyRunning ? "bolt.fill" : "bolt")
+            let runCount = manager.models.filter { manager.state(for: $0).isRunning }.count
+            if runCount == 0 {
+                Image(systemName: "bolt")
+            } else if runCount == 1 {
+                Image(systemName: "bolt.fill")
+                    .foregroundStyle(Color.green)
+            } else {
+                Image(systemName: "bolt.fill")
+                    .foregroundStyle(Color.blue)
+            }
         }
         // Window-based style keeps the panel open after each selection.
         // The panel closes on click-outside or Escape (standard macOS
