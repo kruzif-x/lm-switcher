@@ -1065,6 +1065,12 @@ struct SettingsView: View {
                     if let url = URL(string: "mailto:z3r09er@gmail.com") {
                         Link("z3r09er@gmail.com", destination: url).font(.caption)
                     }
+                    if let url = URL(string: "https://github.com/kruzif-x") {
+                        Link("github.com/kruzif-x", destination: url).font(.caption)
+                    }
+                    if let url = URL(string: "https://x.com/rolandchia65") {
+                        Link("x.com/rolandchia65", destination: url).font(.caption)
+                    }
                 }
                 .padding(.bottom, 14)
 
