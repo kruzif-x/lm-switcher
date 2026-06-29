@@ -93,40 +93,20 @@ import CryptoKit
 //  - `settingsHost` — keeps the settings NSWindow alive across re-renders.
 @main
 struct LlamaMenubarApp: App {
-    /// All model state, settings, server processes. See `ServerManager` below.
     @State private var manager = ServerManager()
-
-    /// Retains the settings NSWindow so it isn't released when SwiftUI
-    /// re-evaluates the body. See `SettingsWindowHost` for details.
     @State private var settingsHost = SettingsWindowHost()
 
-    /// The single scene: a menu bar extra (no dock icon, no main window).
-    /// `LSUIElement=true` in Info.plist hides the app from the Dock and
-    /// from the Cmd-Tab app switcher; only the menu bar item is visible.
     var body: some Scene {
         MenuBarExtra {
-            // The dropdown menu content shown when the user clicks our
-            // menu bar icon.
             MenuView(manager: manager, settingsHost: settingsHost)
         } label: {
-            // The menu bar icon. We use the `Image(systemName:)` overload
-            // rather than a custom `View` body (which previously held an
-            // `HStack` with a gradient and a conditional `Text`). On
-            // macOS 26/Tahoe, custom `View` labels for `MenuBarExtra`
-            // can fail to register with the status bar — the app stays
-            // running but no status item is shown. The simpler
-            // `Image(systemName:)` form is reliably picked up by the
-            // NSStatusItem machinery across macOS versions.
-            let runCount = manager.models.filter { manager.state(for: $0).isRunning }.count
-            if runCount == 0 {
-                Image(systemName: "bolt")
-            } else if runCount == 1 {
-                Image(systemName: "bolt.fill")
-                    .foregroundStyle(Color.green)
-            } else {
-                Image(systemName: "bolt.fill")
-                    .foregroundStyle(Color.blue)
-            }
+            // MenuBarExtra always renders the label as a template image when
+            // using Image(systemName:) or foregroundStyle — macOS strips colour.
+            // Using Image(nsImage:) with isTemplate=false bypasses this: SwiftUI
+            // passes the NSImage directly to NSStatusBarButton.image without
+            // re-templating it, so our tint colour is preserved.
+            let count = manager.models.filter { manager.state(for: $0).isRunning }.count
+            Image(nsImage: menuBarIcon(runCount: count))
         }
         // Window-based style keeps the panel open after each selection.
         // The panel closes on click-outside or Escape (standard macOS
@@ -212,3 +192,35 @@ final class SettingsWindowHost: ObservableObject {
     }
 }
 
+
+// MARK: - Menu bar icon helper
+// -----------------------------------------------------------------------------
+//  Returns a coloured, non-template NSImage for the status bar bolt icon.
+//  isTemplate=false tells NSStatusBarButton not to re-render it monochrome.
+
+private func menuBarIcon(runCount: Int) -> NSImage {
+    let symbolName = runCount == 0 ? "bolt" : "bolt.fill"
+    let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+
+    guard let base = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg) else {
+        let fallback = NSImage(systemSymbolName: "bolt", accessibilityDescription: nil)!
+        fallback.isTemplate = true
+        return fallback
+    }
+
+    if runCount == 0 {
+        base.isTemplate = true   // monochrome, adapts to light/dark menu bar
+        return base
+    }
+
+    let color: NSColor = runCount == 1 ? .systemGreen : .systemBlue
+    let img = NSImage(size: base.size, flipped: false) { rect in
+        base.draw(in: rect)
+        color.set()
+        rect.fill(using: .sourceAtop)
+        return true
+    }
+    img.isTemplate = false
+    return img
+}
