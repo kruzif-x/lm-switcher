@@ -8,7 +8,7 @@ macOS menu bar app for managing local LLM models (GGUF + MLX). Single Swift file
 
 - **Local:** `/Users/rolandchia/Projects/llm-switcher`
 - **Gitea:** `http://localhost:3000/admin/llm-switcher.git` (origin)
-- **Arrakis:** `192.168.1.244:3000` (push here too if available)
+- **Arrakis:** `http://192.168.1.244:3000/polaris/llm-switcher.git` (remote: `arrakis`, push here too)
 
 ## File Structure
 
@@ -113,10 +113,11 @@ UI: when override OFF → read-only global values. When ON → editable fields +
 
 ## Pending Work
 
-1. **Fix audit findings** — C-1 (empty catch) and H-5 (single-instance) are quick wins
+1. ~~**Fix audit findings** — C-1, C-2, H-1, H-3, H-4, H-5~~ ✅ DONE (commit e0c6568, 2026-06-29). H-5 verified live (2nd instance self-terminates). Per-model "Reset to Default" override-aware fix also landed.
 2. **Model switching** — menu bar app has no "switch" (unload A, load B atomically). CLI has `llama switch` but it's sequential with a gap. See `HANDOFF_MODEL_SWITCHING.md` for design options
 3. **File splitting** — 3000 lines in one file is borderline. Suggested split in audit report section A-1
-4. **Dead code cleanup** — `pendingCtxEdit`, `statusText`, `ModelState.extraArgs` are unused
+4. **Dead code cleanup** — `pendingCtxEdit`, `statusText`, `ModelState.extraArgs` are unused (M-2, M-3, L-11)
+5. **Remaining MEDIUM/LOW** — M-1 (port bind check), M-6 (scan depth limit), L-3 (quant strip regex), L-7 (hardcoded Python 3.14 path)
 
 ## User Preferences
 
