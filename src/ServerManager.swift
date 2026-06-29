@@ -1018,35 +1018,57 @@ class ServerManager {
         // Step 1: load the target. `loadModel` picks a fresh port via
         // `nextAvailablePort()` which now (M-1) also probes the port with
         // a real bind() — since the old models still hold their ports, the
-        // new model gets a different one automatically.
+        // new model gets a different one automatically. Runs on main (it
+        // mutates @Observable state).
         loadModel(model)
 
-        // Step 2: wait for the new server to confirm it's listening.
-        let deadline = Date().addingTimeInterval(5.0)
-        var isReady = false
-        pollLoop: while Date() < deadline {
-            guard let s = modelStates[model.id], s.isRunning, let pid = s.pid else {
-                break  // process died → loadModel already recorded the error
-            }
-            if kill(pid, 0) == 0 && !Self.portIsFree(s.port) {
-                // Process alive AND port is bound (not free) → ready.
-                isReady = true
-                break pollLoop
-            }
-            Thread.sleep(forTimeInterval: 0.25)
-        }
+        // Capture the chosen port now (on main) so the background poll never
+        // has to read `modelStates` for it.
+        let targetPort = modelStates[model.id]?.port ?? 0
 
-        if isReady {
-            // Step 3: swap complete — unload old models.
-            for entry in oldRunning {
-                unloadModel(entry.model)
+        // Step 2: poll for readiness OFF the main thread. The previous
+        // implementation ran this `Thread.sleep` poll loop (up to 5s) on the
+        // calling thread — which is main, since `switchModel` is invoked from
+        // a SwiftUI button — freezing the entire menu bar for the duration of
+        // the switch. Run the poll on the shared serial `syncQueue` (the same
+        // queue the `ps` reconciler uses, so the two can never overlap and
+        // race on the shared dictionaries) and hop the final mutation back to
+        // main.
+        syncQueue.async { [weak self] in
+            guard let self = self else { return }
+            let deadline = Date().addingTimeInterval(5.0)
+            var isReady = false
+            while Date() < deadline {
+                // Snapshot the PID on main each iteration (the dictionaries are
+                // main-thread state). Cheap, and keeps the heavy waiting off main.
+                let pid: Int32? = DispatchQueue.main.sync {
+                    let s = self.modelStates[model.id]
+                    return (s?.isRunning == true) ? s?.pid : nil
+                }
+                guard let livePid = pid else {
+                    break  // process died → loadModel already recorded the error
+                }
+                if kill(livePid, 0) == 0 && targetPort > 0 && !Self.portIsFree(targetPort) {
+                    // Process alive AND port is bound (not free) → ready.
+                    isReady = true
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.25)
             }
-        } else {
-            // Step 4: rollback — new model failed, unload it.
-            unloadModel(model)
-        }
 
-        switchingTo = nil
+            DispatchQueue.main.async {
+                if isReady {
+                    // Step 3: swap complete — unload old models.
+                    for entry in oldRunning {
+                        self.unloadModel(entry.model)
+                    }
+                } else {
+                    // Step 4: rollback — new model failed, unload it.
+                    self.unloadModel(model)
+                }
+                self.switchingTo = nil
+            }
+        }
     }
 
     /// Find the smallest unused port starting at `defaultPort`.
@@ -1239,14 +1261,17 @@ class ServerManager {
         // with the observed PID/port/ctx.
         for (id, ext) in externalStates {
             var s = modelStates[id] ?? ModelState()
+            let wasRunning = s.isRunning
             s.isRunning = true
             s.pid = ext.pid
             s.port = ext.port
             s.ctxSize = ext.ctx
             modelStates[id] = s
-            // Externally-launched (CLI) models are running → reflect them as
-            // checked in the menu so "Unload Selected" can target them too.
-            selected.insert(id)
+            // Only auto-check on transition to running (newly discovered).
+            // Don't re-insert on every poll — that would override a user uncheck.
+            if !wasRunning {
+                selected.insert(id)
+            }
         }
         // Clear stale state: any model we previously thought was
         // running but that doesn't show up in `ps` anymore is now
@@ -1339,9 +1364,6 @@ class ServerManager {
         for line in output.split(separator: "\n") {
             let s = String(line)
             guard s.contains("llama-server") || s.contains("mlx_lm.server") else { continue }
-            // Skip our own `ps` invocation. Without this, we'd detect the
-            // `ps` command's own grep matches.
-            if s.contains("syncWithRunning") { continue }
 
             let mPattern: String
             let dropLen: Int

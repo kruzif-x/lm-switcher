@@ -128,9 +128,10 @@ logfile_for() {
 #
 # This format is easy to parse downstream with `cut` or `IFS='|' read`.
 #
-# Hidden files are skipped. Specific prefixes are excluded:
-#   - mmproj-*.gguf         (vision projection, paired automatically)
-#   - chat_template.json    (chat template override for agentic harnesses)
+# Hidden files are skipped. Specific .gguf prefixes are excluded (see the
+# `case` in the loop below — must stay in sync with the Swift `ggufEntry`):
+#   - mmproj-*.gguf           (vision projection, paired automatically)
+#   - mtp-*.gguf              (multi-token-prediction head, loaded automatically)
 #   - modernbert-embed-*.gguf (embedding model, not for chat)
 
 list_all_models() {
@@ -274,8 +275,32 @@ per_model_ctx() {
 # for per-model settings and PID files. md5 is used because it's a
 # stable, widely-available hash.
 id_hash() {
-    local h; h=$(md5 -q <<< "$1")
+    # IMPORTANT: hash the path bytes with NO trailing newline so this
+    # matches the Swift app's `Insecure.MD5.hash(data: Data(model.id.utf8))`.
+    # A here-string (`<<<`) appends a newline and would produce a DIFFERENT
+    # digest, breaking cross-tool per-model settings (model.<hash>.port/ctx).
+    # `md5 -s` hashes the literal string argument with no added newline.
+    local h; h=$(md5 -q -s "$1")
     echo "${h:0:12}"
+}
+
+# Read a global setting from the shared UserDefaults domain (the same domain
+# the Swift app writes), falling back to a default when unset. This keeps the
+# CLI and the menu bar app applying the SAME llama-server flags, instead of the
+# CLI hardcoding a small subset and silently diverging from the app.
+#   pref <key> <default>
+pref() {
+    defaults read local.llama-menubar "$1" 2>/dev/null || echo "$2"
+}
+
+# Bool variant: defaults stores booleans as 1/0. Normalize to true/false.
+#   pref_bool <key> <default(true|false)>
+pref_bool() {
+    local v; v=$(defaults read local.llama-menubar "$1" 2>/dev/null || echo "$2")
+    case "$v" in
+        1|true|YES|yes) echo true ;;
+        *)              echo false ;;
+    esac
 }
 
 
@@ -354,7 +379,12 @@ load_model() {
         # any mmproj-*.gguf in the directory (handles QAT/generic naming).
         local dir; dir=$(dirname "$path")
         local base; base=$(basename "$path" .gguf)
-        local stripped; stripped=$(echo "$base" | sed -E 's/-Q[0-9]+(_[0-9]+)?(_K)?(_[A-Z]+)?$//' | sed -E 's/-Q[0-9]+_[A-Z0-9_]+$//')
+        # Strip ALL quant suffixes to mirror the Swift `findCompanion` regex
+        # exactly (K-quants, I-quants like -IQ4_NL, and float types
+        # -F16/-F32/-BF16) so name-based mmproj pairing behaves identically in
+        # both tools. Previously the CLI only stripped -Q* and diverged on
+        # IQ/BF16-named models.
+        local stripped; stripped=$(echo "$base" | sed -E 's/-(Q[0-9]+(_[0-9]+)?(_K)?(_[A-Z]+)?|IQ[0-9]+(_[A-Z]+)+|F16|F32|BF16)$//')
         shopt -s nullglob
         local f
 
@@ -387,14 +417,55 @@ load_model() {
         # All GPU layers on Metal — unified memory, no VRAM split.
         args+=("-ngl" "99")
         args+=("--ctx-size" "$ctx")
-        # Gemma 4 emits a `reasoning_content` field that breaks
-        # OpenAI-compatible clients (opencode, pi, OpenClaw). Suppress it.
-        # See docs/GEMMA4_LOADING_DETAILS.md §3.2.
-        args+=("--reasoning" "off" "--reasoning-format" "none")
 
-        # MTP: opt-in only. Net loss on Apple Silicon Metal.
+        # --- Parity with the menu bar app (read shared UserDefaults) ---------
+        # The app and CLI share the `local.llama-menubar` domain, so a model
+        # loaded from the terminal now gets the same KV-cache, flash-attention,
+        # sampling, thinking, and performance flags the app would apply.
+
+        # KV cache quantization (app defaults: q8_0 K / q4_0 V).
+        local _kvk _kvv
+        _kvk=$(pref kvCacheTypeK q8_0)
+        _kvv=$(pref kvCacheTypeV q4_0)
+        args+=("--cache-type-k" "$_kvk" "--cache-type-v" "$_kvv")
+
+        # Flash attention (app default: on).
+        [[ "$(pref_bool flashAttention true)" == "true" ]] && args+=("-fa" "on")
+
+        # Reasoning suppression — Gemma 4 emits a `reasoning_content` field
+        # that breaks OpenAI-compatible clients (opencode, pi, OpenClaw).
+        # Gated behind the same `suppressReasoning` setting the app uses
+        # (default on) instead of being applied unconditionally to every model.
+        # See docs/GEMMA4_LOADING_DETAILS.md §3.2.
+        [[ "$(pref_bool suppressReasoning true)" == "true" ]] && \
+            args+=("--reasoning" "off" "--reasoning-format" "none")
+
+        # Thinking mode (app default: on). When off, disable via chat-template
+        # kwargs, matching the app.
+        if [[ "$(pref_bool thinkingEnabled true)" != "true" ]]; then
+            args+=("--chat-template-kwargs" '{"enable_thinking":false}')
+        fi
+
+        # Sampling defaults (shared with MLX in the app).
+        args+=("--temp"           "$(pref temperature 0.8)")
+        args+=("--top-p"          "$(pref topP 0.95)")
+        args+=("--top-k"          "$(pref topK 20)")
+        args+=("--repeat-penalty" "$(pref repeatPenalty 1.0)")
+        local _seed; _seed=$(pref seed 0)
+        [[ "$_seed" -gt 0 ]] 2>/dev/null && args+=("--seed" "$_seed")
+
+        # Performance (llama-server only).
+        local _threads; _threads=$(pref cpuThreads 0)
+        [[ "$_threads" -gt 0 ]] 2>/dev/null && args+=("-t" "$_threads")
+        args+=("-b" "$(pref batchSize 2048)")
+        [[ "$(pref_bool mlock false)"  == "true" ]] && args+=("--mlock")
+        [[ "$(pref_bool noMmap false)" == "true" ]] && args+=("--no-mmap")
+
+        # MTP: opt-in only. Net loss on Apple Silicon Metal. Honors either the
+        # LLAMA_ENABLE_MTP env var or the shared `enableMtp` setting.
         # https://github.com/ggerganov/llama.cpp/issues/23752
-        if [[ "$ENABLE_MTP" == "true" || "$ENABLE_MTP" == "1" ]]; then
+        if [[ "$ENABLE_MTP" == "true" || "$ENABLE_MTP" == "1" \
+              || "$(pref_bool enableMtp false)" == "true" ]]; then
             args+=("--spec-type" "draft-mtp")
         fi
     else
@@ -508,10 +579,21 @@ cmd_status() {
         local id_hash; id_hash=$(basename "$pf" .pid)
         local pid; pid=$(head -1 "$pf" 2>/dev/null)
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            local argline; argline=$(ps -o args= -p "$pid" 2>/dev/null)
             local port
-            port=$(ps -o args= -p "$pid" 2>/dev/null | grep -oE '\--port [0-9]+' | awk '{print $2}')
-            local mname
-            mname=$(ps -o args= -p "$pid" 2>/dev/null | grep -oE '(\-m|--model) [^ ]+\.gguf|--model [^ ]+' | head -1)
+            port=$(echo "$argline" | grep -oE '\--port [0-9]+' | awk '{print $2}')
+            # Extract the model file/dir name. Use bash regex (BASH_REMATCH)
+            # so paths containing spaces are captured intact — `-m` is greedy
+            # up to the last `.gguf` (matching the Swift H-3 fix), and
+            # `--model` is bounded by the trailing ` --host` the loader always
+            # appends.
+            local mpath="" mname
+            if [[ "$argline" =~ \ -m\ (.+\.gguf) ]]; then
+                mpath="${BASH_REMATCH[1]}"
+            elif [[ "$argline" =~ \ --model\ (.+)\ --host ]]; then
+                mpath="${BASH_REMATCH[1]}"
+            fi
+            [[ -n "$mpath" ]] && mname=$(basename "$mpath") || mname="$id_hash"
             echo "● $mname  :$port  (PID $pid)"
             any=1
         else
@@ -601,11 +683,13 @@ cmd_switch() {
     # Snapshot the currently-running PIDs before we do anything.
     local _old_pids=()
     local _pf
-    for _pf in "$PID_DIR"/*.pid; do
+    shopt -s nullglob
+    for _pf in "$PIDS_DIR"/*.pid; do
         [[ -f "$_pf" ]] || continue
         local _pid; _pid=$(head -1 "$_pf" 2>/dev/null)
         [[ -n "$_pid" ]] && _old_pids+=("$_pf:$_pid")
     done
+    shopt -u nullglob
 
     # Load the target on a NEW port (existing processes unaffected).
     cmd_load "$_target" || {

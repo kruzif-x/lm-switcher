@@ -248,7 +248,11 @@ LLAMA_CHAT_TEMPLATE=""       # optional chat template override
 ```
 ~/Projects/LLM-Switcher/
 ├── src/
-│   ├── LlamaMenubarApp.swift     # the menu bar app (Swift + SwiftUI)
+│   ├── LlamaMenubarApp.swift     # @main entry point + settings window host
+│   ├── ServerManager.swift       # the brain: discovery, process lifecycle, state
+│   ├── MenuView.swift            # menu bar dropdown UI
+│   ├── SettingsView.swift        # Global / Per-Model settings window
+│   ├── DomainTypes.swift         # ModelEntry, ModelState, AppSettings, ModelBackend
 │   └── llama                     # the CLI (bash)
 ├── scripts/
 │   ├── install.sh                # build & install
@@ -327,7 +331,7 @@ Because that's the lightest-weight way to keep a tool always available on macOS 
 
 ## Version
 
-Current: **v2.0** — MTP exclusion, mmproj fallback matching, chat template settings, layout overhaul.
+Current: **v1.1.0** — MTP exclusion, mmproj fallback matching, chat template settings, layout overhaul. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
 
 See `CHANGELOG.md` for full version history.
 

@@ -160,7 +160,11 @@ struct MenuView: View {
                     .font(.headline)
                     .padding(.horizontal, 4)
                 ForEach(running, id: \.id) { m in
-                    Text("  • \(m.name) [\(m.backend.rawValue)] :\(manager.state(for: m).port)")
+                    // Wrap the port in String(...) so SwiftUI's
+                    // LocalizedStringKey interpolation doesn't apply the
+                    // locale's number grouping (which renders 8080 as
+                    // "8,080"). Same guard the model rows use below.
+                    Text("  • \(m.name) [\(m.backend.rawValue)] :\(String(manager.state(for: m).port))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)

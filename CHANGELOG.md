@@ -5,6 +5,52 @@ All notable changes to LLM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-29
+
+### Added
+- **MTP file exclusion** — `mtp-*.gguf` multi-token-prediction heads are
+  excluded from the model list (loaded automatically by llama-server from
+  model metadata). Only the `mtp-` prefix is excluded; `-mtp-` as an infix
+  is treated as a normal model.
+- **mmproj fallback matching** — when name-based matching fails, pair with
+  any `mmproj-*.gguf` in the directory (handles QAT/generic naming like
+  `mmproj-BF16.gguf`).
+- **Chat Template Override** — configure a custom `.jinja`/`.json` template
+  (Settings → Global, or `LLAMA_CHAT_TEMPLATE` for the CLI) for agentic
+  harnesses that need custom tool-calling templates.
+- **Gemma 4 reasoning suppression** — auto-applies
+  `--reasoning off --reasoning-format none` (gated behind the
+  `suppressReasoning` setting).
+- Per-model port/context overrides, KV-cache quantization, flash attention,
+  sampling, and performance settings; menu layout overhaul.
+
+### Fixed
+- **CLI `switch` never unloaded old models** — `cmd_switch` referenced an
+  undefined `$PID_DIR` (typo for `$PIDS_DIR`), so the old-PID snapshot was
+  always empty and `switch` just stacked a new model on top of the running
+  ones.
+- **CLI and app computed different per-model hashes** — `id_hash` used a
+  here-string (`md5 -q <<< "$path"`), which appends a newline, so its digest
+  never matched the app's MD5 of the raw path bytes. Per-model port/ctx set
+  via the CLI were invisible to the app (and vice-versa). Switched to
+  `md5 -q -s`.
+- **App icon was never installed** — `install.sh` looked for the icon in
+  `$BIN_DIR`, where nothing ever placed it; now sourced from
+  `assets/AppIcon.icns`.
+- **`uninstall.sh` left stale Swift sources** — only removed the legacy
+  single-file `llama-menubar.swift`; now removes the whole multi-file module
+  copied into `$BIN_DIR`.
+- **`switchModel` froze the UI** — the readiness poll (up to 5s) ran on the
+  main thread; moved to the background `syncQueue` with the final state
+  mutation hopped back to main.
+
+### Changed
+- **CLI now matches the app's llama-server flags** — reads the shared
+  `local.llama-menubar` settings (KV cache, flash attention, sampling,
+  thinking, threads, batch, mlock/mmap) instead of hardcoding a small subset.
+- **CLI mmproj quant-stripping** aligned with the Swift regex (now also
+  strips I-quants and `F16/F32/BF16`).
+
 ## [1.0.1] - 2026-06-09
 
 ### Fixed

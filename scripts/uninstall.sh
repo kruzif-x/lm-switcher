@@ -178,11 +178,16 @@ if [[ -f "$BIN_DIR/llama" ]]; then
     echo "  ✓ llama CLI removed"
 fi
 
-# Swift source.
-if [[ -f "$BIN_DIR/llama-menubar.swift" ]]; then
-    rm -f "$BIN_DIR/llama-menubar.swift"
-    echo "  ✓ Source file removed"
-fi
+# Swift source. install.sh copies the whole multi-file module (audit A-1:
+# LlamaMenubarApp.swift, ServerManager.swift, MenuView.swift,
+# SettingsView.swift, DomainTypes.swift) into $BIN_DIR, plus older installs
+# left a single llama-menubar.swift. Remove all of them.
+shopt -s nullglob 2>/dev/null || setopt NULL_GLOB 2>/dev/null || true
+for swift_src in "$BIN_DIR"/*.swift; do
+    [[ -f "$swift_src" ]] || continue
+    rm -f "$swift_src"
+    echo "  ✓ $(basename "$swift_src") removed"
+done
 
 # Icon assets.
 if [[ -f "$BIN_DIR/AppIcon.icns" ]]; then
