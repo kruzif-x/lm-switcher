@@ -313,270 +313,344 @@ struct SettingsView: View {
 
     // MARK: - Global tab
 
+    // MARK: - Global tab
+
     private var globalPane: some View {
         ScrollView {
-            Form {
-                basicSection
-                backendsSection
-                DisclosureGroup("Advanced Settings") {
-                    kvCacheSection
-                    samplingSection
-                    performanceSection
-                    mlxSection
-                }
+            VStack(spacing: 12) {
+                modelsCard
+                backendsCard
+                inferenceCard
+                advancedCard
             }
-            .padding(.bottom, 8)
+            .padding(16)
         }
     }
 
-    private var basicSection: some View {
-        Section("Server Defaults") {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Models Directory:")
-                HStack {
-                    TextField("", text: $modelsDir)
-                        .help("Root directory containing your .gguf files and MLX model folders.")
-                    Button("Browse…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = false
-                        panel.canChooseDirectories = true
-                        panel.allowsMultipleSelection = false
-                        panel.directoryURL = URL(fileURLWithPath: modelsDir)
-                        if panel.runModal() == .OK, let url = panel.url {
-                            modelsDir = url.path
-                            manager.settings.modelsDir = url.path
-                            manager.refreshModels()
-                            manager.startWatching()
-                        }
-                    }
-                }
+    // MARK: - Models card
+
+    private var modelsCard: some View {
+        settingsCard(label: "Models", symbol: "folder") {
+            pathRow(
+                label: "Models directory",
+                hint: "Root directory scanned for .gguf files and MLX model folders",
+                text: $modelsDir,
+                isDir: true
+            ) { url in
+                modelsDir = url.path
+                manager.settings.modelsDir = url.path
+                manager.refreshModels()
+                manager.startWatching()
             }
-            HStack(spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Default Port:")
-                    TextField("8080", text: $defaultPort)
-                        .frame(width: 120)
-                        .help("TCP port for the first model. Subsequent models increment from here.")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Default Ctx Size:")
-                    TextField("4k", text: $defaultCtxSize)
-                        .frame(width: 120)
-                        .help("Context window in tokens. Accepts k-suffix (4k, 8k) or plain integers.")
-                }
+            Divider().padding(.leading, 14)
+            HStack(spacing: 0) {
+                shortFieldRow(label: "Default port", placeholder: "8080", text: $defaultPort)
+                    .help("Starting port. Additional models increment — 8080, 8081…")
+                Divider().frame(width: 1)
+                shortFieldRow(label: "Context size", placeholder: "4k", text: $defaultCtxSize)
+                    .help("Context window in tokens. Accepts k-suffix (4k, 8k) or plain integers.")
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Global Extra Args:")
-                TextField("--no-mmap", text: $globalExtraArgs)
-                    .help("Extra CLI arguments appended to every server launch.")
-            }
-            Toggle(isOn: $enableMtp) {
-                HStack(spacing: 6) {
-                    Text("MTP Enable")
-                    Text(enableMtp ? "ON" : "OFF")
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundStyle(enableMtp ? Color.orange : Color.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            .help("Multi-Token Prediction. OFF by default — net loss on Apple Silicon Metal.")
+            Divider().padding(.leading, 14)
+            inlineFieldRow(label: "Extra args", placeholder: "--no-mmap", text: $globalExtraArgs)
+                .help("Arguments appended to every server launch.")
         }
     }
 
-    private var backendsSection: some View {
-        Section("Backends") {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("llama-server:")
-                HStack {
-                    TextField("", text: $llamaServerPath)
-                        .help("Path to the llama-server binary for GGUF inference.")
-                    Button("Browse…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = true; panel.canChooseDirectories = false
-                        panel.allowsMultipleSelection = false
-                        if panel.runModal() == .OK, let url = panel.url {
-                            llamaServerPath = url.path
-                            manager.settings.llamaServerPath = url.path
-                        }
-                    }
-                }
+    // MARK: - Backends card
+
+    private var backendsCard: some View {
+        settingsCard(label: "Backends", symbol: "terminal") {
+            pathRow(
+                label: "llama-server",
+                hint: "Binary for GGUF inference",
+                text: $llamaServerPath,
+                isDir: false
+            ) { url in
+                llamaServerPath = url.path
+                manager.settings.llamaServerPath = url.path
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("mlx_lm.server:")
-                HStack {
-                    TextField("", text: $mlxServerPath)
-                        .help("Path to the mlx_lm.server binary for MLX inference.")
-                    Button("Browse…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = true; panel.canChooseDirectories = false
-                        panel.allowsMultipleSelection = false
-                        if panel.runModal() == .OK, let url = panel.url {
-                            mlxServerPath = url.path
-                            manager.settings.mlxServerPath = url.path
-                        }
-                    }
-                }
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "mlx_lm.server",
+                hint: "Binary for Apple MLX inference",
+                text: $mlxServerPath,
+                isDir: false
+            ) { url in
+                mlxServerPath = url.path
+                manager.settings.mlxServerPath = url.path
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Chat Template Override:")
-                HStack {
-                    TextField("Leave empty for built-in template", text: $chatTemplatePath)
-                        .help("Custom Jinja/JSON template for agentic harnesses. Leave empty for built-in.")
-                    Button("Browse…") {
-                        let panel = NSOpenPanel()
-                        panel.canChooseFiles = true; panel.canChooseDirectories = false
-                        panel.allowsMultipleSelection = false
-                        panel.allowedContentTypes = [
-                            UTType(filenameExtension: "jinja") ?? .data,
-                            UTType(filenameExtension: "json") ?? .data,
-                            .data
-                        ]
-                        if panel.runModal() == .OK, let url = panel.url {
-                            chatTemplatePath = url.path
-                            manager.settings.chatTemplatePath = url.path
-                        }
-                    }
-                }
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "Chat template",
+                hint: "Custom .jinja/.json override for agentic harnesses — leave empty for built-in",
+                text: $chatTemplatePath,
+                isDir: false,
+                placeholder: "Use built-in template",
+                allowedExts: ["jinja", "json"]
+            ) { url in
+                chatTemplatePath = url.path
+                manager.settings.chatTemplatePath = url.path
             }
         }
     }
 
-    private var kvCacheSection: some View {
-        Section("KV Cache & Attention") {
-            HStack(spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("K Cache Type:")
-                    Picker("", selection: $kvCacheTypeK) {
-                        Text("f16 (full)").tag("f16")
-                        Text("q8_0 (half)").tag("q8_0")
-                        Text("q4_0 (quarter)").tag("q4_0")
-                    }
-                    .pickerStyle(.menu).frame(width: 160)
-                    .help("Key cache quantization. Lower = less memory, slight quality loss.")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("V Cache Type:")
-                    Picker("", selection: $kvCacheTypeV) {
-                        Text("f16 (full)").tag("f16")
-                        Text("q8_0 (half)").tag("q8_0")
-                        Text("q4_0 (quarter)").tag("q4_0")
-                    }
-                    .pickerStyle(.menu).frame(width: 160)
-                    .help("Value cache quantization. q8_0 K + q4_0 V is the Mac default.")
-                }
-            }
-            Toggle(isOn: $flashAttention) {
-                HStack(spacing: 6) {
-                    Text("Flash Attention")
-                    Text(flashAttention ? "ON" : "OFF")
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundStyle(flashAttention ? Color.green : Color.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            .help("Hardware-accelerated attention. Improves speed and reduces memory on Apple Silicon.")
-            Toggle(isOn: $thinkingEnabled) {
-                HStack(spacing: 6) {
-                    Text("Thinking Mode")
-                    Text(thinkingEnabled ? "ON" : "OFF")
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundStyle(thinkingEnabled ? Color.blue : Color.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            .help("ON: model reasons before responding. OFF: faster, direct answers.")
-            Toggle(isOn: $suppressReasoning) {
-                HStack(spacing: 6) {
-                    Text("Suppress Reasoning Content")
-                    Text(suppressReasoning ? "ON" : "OFF")
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundStyle(suppressReasoning ? Color.green : Color.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            .help("Suppresses Gemma 4 reasoning_content that breaks OpenAI-compatible clients.")
+    // MARK: - Inference card
+
+    private var inferenceCard: some View {
+        settingsCard(label: "Inference", symbol: "slider.horizontal.3") {
+            toggleRow(
+                label: "Flash attention",
+                hint: "Reduces KV memory on Apple Silicon — no reason to disable",
+                isOn: $flashAttention
+            )
+            Divider().padding(.leading, 14)
+            toggleRow(
+                label: "Thinking mode",
+                hint: "Model reasons before responding — better for coding, slower",
+                isOn: $thinkingEnabled
+            )
+            Divider().padding(.leading, 14)
+            toggleRow(
+                label: "Suppress reasoning",
+                hint: "Hides Gemma 4 reasoning_content from clients that don't handle it",
+                isOn: $suppressReasoning
+            )
+            Divider().padding(.leading, 14)
+            toggleRow(
+                label: "MTP",
+                hint: "Multi-token prediction — net loss on Metal, for experimentation only",
+                isOn: $enableMtp,
+                tint: Color.orange
+            )
         }
     }
 
-    private var samplingSection: some View {
-        Section("Sampling") {
-            HStack(spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Temperature:")
-                    TextField("0.8", value: $temperature, format: .number).frame(width: 80)
-                        .help("0.6 coding / 0.8 chat / 1.0 research.")
+    // MARK: - Advanced card
+
+    private var advancedCard: some View {
+        DisclosureGroup {
+            VStack(spacing: 0) {
+                // KV Cache
+                advSubHeader(label: "KV cache", symbol: "memorychip")
+                HStack(spacing: 0) {
+                    pickerRow(label: "K cache type", selection: $kvCacheTypeK, options: [
+                        ("f16", "f16  (full)"), ("q8_0", "q8_0  (half)"), ("q4_0", "q4_0  (quarter)")
+                    ]).help("Key cache quantization. Lower = less memory, slight quality loss.")
+                    Divider().frame(width: 1)
+                    pickerRow(label: "V cache type", selection: $kvCacheTypeV, options: [
+                        ("f16", "f16  (full)"), ("q8_0", "q8_0  (half)"), ("q4_0", "q4_0  (quarter)")
+                    ]).help("Value cache quantization. q8_0 K + q4_0 V is the Mac default.")
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Top-P:")
-                    TextField("0.95", value: $topP, format: .number).frame(width: 80)
-                        .help("Nucleus sampling threshold. 1.0 = off.")
+
+                // Sampling
+                Divider()
+                advSubHeader(label: "Sampling", symbol: "dial.low")
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 0) {
+                    shortFieldRow(label: "Temperature", placeholder: "0.8", text: Binding(
+                        get: { String(format: "%.2f", temperature) },
+                        set: { if let v = Double($0) { temperature = v } }
+                    )).help("0.6 coding · 0.8 chat · 1.0 research")
+                    Divider().frame(width: 1)
+                    shortFieldRow(label: "Top-P", placeholder: "0.95", text: Binding(
+                        get: { String(format: "%.2f", topP) },
+                        set: { if let v = Double($0) { topP = v } }
+                    )).help("Nucleus sampling threshold. 1.0 = off.")
+                    Divider().frame(width: 1)
+                    shortFieldRow(label: "Top-K", placeholder: "20", text: Binding(
+                        get: { "\(topK)" },
+                        set: { if let v = Int($0) { topK = v } }
+                    )).help("Limits sampling to top K tokens. 0 = off.")
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Top-K:")
-                    TextField("20", value: $topK, format: .number).frame(width: 80)
-                        .help("Limits sampling to top K tokens. 0 = off.")
-                }
-            }
-            HStack(spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Repeat Penalty:")
-                    TextField("1.0", value: $repeatPenalty, format: .number).frame(width: 80)
-                        .help("Penalizes repeated tokens. 1.0 = off.")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Seed:")
-                    TextField("random", text: $seedStr).frame(width: 80)
+                HStack(spacing: 0) {
+                    shortFieldRow(label: "Repeat penalty", placeholder: "1.0", text: Binding(
+                        get: { String(format: "%.2f", repeatPenalty) },
+                        set: { if let v = Double($0) { repeatPenalty = v } }
+                    )).help("Penalizes repeated tokens. 1.0 = off.")
+                    Divider().frame(width: 1)
+                    shortFieldRow(label: "Seed", placeholder: "random", text: $seedStr)
                         .help("Fixed seed for reproducible output. Empty = random.")
                 }
-            }
-        }
-    }
 
-    private var performanceSection: some View {
-        Section("Performance (llama-server)") {
-            HStack(spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("CPU Threads:")
-                    TextField("auto", text: $cpuThreadsStr).frame(width: 100)
+                // Performance
+                Divider()
+                advSubHeader(label: "Performance  (llama-server)", symbol: "cpu")
+                HStack(spacing: 0) {
+                    shortFieldRow(label: "CPU threads", placeholder: "auto", text: $cpuThreadsStr)
                         .help("CPU threads for GGUF inference. Empty = auto-detect.")
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Batch Size:")
-                    TextField("2048", text: $batchSizeStr).frame(width: 100)
+                    Divider().frame(width: 1)
+                    shortFieldRow(label: "Batch size", placeholder: "2048", text: $batchSizeStr)
                         .help("Prompt processing batch size.")
                 }
+                toggleRow(label: "Mlock", hint: "Lock model in RAM to prevent swap", isOn: $mlock)
+                Divider().padding(.leading, 14)
+                toggleRow(label: "No-mmap", hint: "Disable memory-mapped file loading — GGUF only", isOn: $noMmap)
+
+                // MLX
+                Divider()
+                advSubHeader(label: "MLX", symbol: "apple.logo")
+                shortFieldRow(label: "Max KV size", placeholder: "unlimited", text: $mlxMaxKvSizeStr)
+                    .help("Caps KV cache memory for MLX. Empty = unlimited.")
             }
-            Toggle(isOn: $mlock) {
-                HStack(spacing: 6) {
-                    Text("Mlock")
-                    Text(mlock ? "ON" : "OFF")
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundStyle(mlock ? Color.green : Color.secondary)
-                }
+            .background(Color.secondary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 0.5)
+            )
+            .padding(.top, 6)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "slider.horizontal.below.square.filled.and.square")
+                    .imageScale(.small)
+                    .foregroundStyle(Color.secondary)
+                Text("Advanced settings")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.secondary)
+                Spacer()
+                Text("KV cache · Sampling · Performance · MLX")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.secondary.opacity(0.7))
             }
-            .toggleStyle(.switch)
-            .help("Lock model in RAM to prevent swapping.")
-            Toggle(isOn: $noMmap) {
-                HStack(spacing: 6) {
-                    Text("No-MMap")
-                    Text(noMmap ? "ON" : "OFF")
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundStyle(noMmap ? Color.green : Color.secondary)
-                }
-            }
-            .toggleStyle(.switch)
-            .help("Disable memory-mapped file loading. GGUF only.")
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.secondary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+        )
     }
 
-    private var mlxSection: some View {
-        Section("MLX") {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Max KV Size:")
-                TextField("0 = unlimited", text: $mlxMaxKvSizeStr).frame(width: 120)
-                    .help("Caps KV cache memory for MLX. 0 = use model default.")
+    // MARK: - Card building blocks
+
+    private func settingsCard<Content: View>(
+        label: String,
+        symbol: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 7) {
+                Image(systemName: symbol)
+                    .imageScale(.small)
+                    .foregroundStyle(Color.secondary)
+                Text(label.uppercased())
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.secondary)
+                    .tracking(0.4)
+                Spacer()
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(Color.secondary.opacity(0.06))
+
+            content()
         }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
+        )
+    }
+
+    private func advSubHeader(label: String, symbol: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol).imageScale(.small).foregroundStyle(Color.secondary)
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.secondary)
+                .tracking(0.4)
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(Color.secondary.opacity(0.05))
+    }
+
+    private func pathRow(
+        label: String,
+        hint: String,
+        text: Binding<String>,
+        isDir: Bool,
+        placeholder: String = "",
+        allowedExts: [String] = [],
+        onPick: @escaping (URL) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label).font(.system(size: 12))
+                Spacer()
+                Button("Browse…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = !isDir
+                    panel.canChooseDirectories = isDir
+                    panel.allowsMultipleSelection = false
+                    if isDir { panel.directoryURL = URL(fileURLWithPath: text.wrappedValue) }
+                    if !allowedExts.isEmpty {
+                        panel.allowedContentTypes = allowedExts.compactMap { UTType(filenameExtension: $0) }
+                    }
+                    if panel.runModal() == .OK, let url = panel.url { onPick(url) }
+                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+            }
+            TextField(placeholder.isEmpty ? (isDir ? "/Users/…/models" : "/usr/local/bin/…") : placeholder, text: text)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(text.wrappedValue.isEmpty ? Color.secondary : Color.primary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func inlineFieldRow(label: String, placeholder: String, text: Binding<String>) -> some View {
+        HStack(spacing: 10) {
+            Text(label).font(.system(size: 12)).fixedSize()
+            TextField(placeholder, text: text)
+                .font(.system(size: 12))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func shortFieldRow(label: String, placeholder: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 11)).foregroundStyle(Color.secondary)
+            TextField(placeholder, text: text)
+                .font(.system(size: 12))
+                .frame(maxWidth: .infinity)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+    }
+
+    private func toggleRow(label: String, hint: String, isOn: Binding<Bool>, tint: Color = Color.accentColor) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.system(size: 12))
+                Text(hint).font(.system(size: 11)).foregroundStyle(Color.secondary)
+            }
+            Spacer()
+            Toggle("", isOn: isOn).toggleStyle(.switch).labelsHidden()
+                .tint(tint)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private func pickerRow(label: String, selection: Binding<String>, options: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 11)).foregroundStyle(Color.secondary)
+            Picker("", selection: selection) {
+                ForEach(options, id: \.0) { tag, name in
+                    Text(name).tag(tag)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
     }
 
 
