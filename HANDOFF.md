@@ -2,142 +2,174 @@
 
 ## What This Is
 
-macOS menu bar app for managing local LLM models (GGUF + MLX). Single Swift file, ~3000 lines. Written by Roland Chia. Version 1.1.0.
+macOS menu bar app for managing local LLM models (GGUF + MLX). Swift (~5000 lines across 5 files) + bash CLI (~710 lines). Written by Roland Chia. Version 1.1.0.
+
+**What it does:** discovers `.gguf` files and MLX model directories under a configurable path, spawns `llama-server` (GGUF) or `mlx_lm.server` (MLX) processes — one per model on its own port — tracks PIDs/ports/context, reconciles with externally-launched processes via `ps`, persists settings to UserDefaults, watches the models directory for live changes, and handles macOS sleep/wake.
 
 ## Repo
 
 - **Local:** `/Users/rolandchia/Projects/llm-switcher`
-- **Gitea:** `http://localhost:3000/admin/llm-switcher.git` (origin)
-- **Arrakis:** `http://192.168.1.244:3000/polaris/llm-switcher.git` (remote: `arrakis`, push here too)
+- **Gitea origin:** `http://localhost:3000/admin/llm-switcher.git`
+- **Arrakis:** `http://192.168.1.244:3000/polaris/llm-switcher.git` (remote: `arrakis`)
 
 ## File Structure
 
 ```
 llm-switcher/
 ├── src/
-│   ├── LlamaMenubarApp.swift   # @main entry + SettingsWindowHost (~205 lines)
+│   ├── LlamaMenubarApp.swift   # @main MenuBarExtra + SettingsWindowHost ~205 lines
 │   ├── DomainTypes.swift        # ModelBackend, ModelEntry, ModelState, AppSettings
-│   ├── MenuView.swift           # menu bar dropdown content
-│   ├── SettingsView.swift       # 4-tab settings window (Global/Per-Model/Help/About)
-│   ├── ServerManager.swift      # the brain: discovery, lifecycle, persistence, sync
+│   ├── MenuView.swift           # menu bar dropdown ~280 lines
+│   ├── SettingsView.swift       # 4-tab settings window (~1250 lines)
+│   ├── ServerManager.swift      # the brain: discovery, lifecycle, sync (~1500 lines)
 │   └── llama                    # bash CLI companion (~710 lines)
 ├── scripts/
 │   └── install.sh               # build (multi-file) + .app bundle + LaunchAgent
-├── AUDIT_REPORT.md              # scout audit (30 findings — all actionable ones fixed)
-├── HANDOFF_PERMODEL_FIX.md      # per-model override fix history
-└── HANDOFF_MODEL_SWITCHING.md   # switch feature design options (implemented)
+├── AUDIT_REPORT.md              # scout audit (30 findings — all actionable fixed)
+├── HANDOFF_PERMODEL_FIX.md      # history
+├── HANDOFF_MODEL_SWITCHING.md   # design options (implemented)
+└── HANDOFF.md                   # this file
 ```
 
-The Swift app was split from a single ~3250-line file into 5 files (audit A-1, 2026-06-29). They compile together as one module.
+The Swift app was split from a single ~3250-line file into 5 files (commit b707b69). They compile together as one module via `swiftc src/*.swift`.
+
+## Architecture
+
+| Component | Role |
+|-----------|------|
+| `LlamaMenubarApp` | `@main` — MenuBarExtra scene, holds ServerManager + SettingsWindowHost |
+| `SettingsWindowHost` | Manages NSWindow lifecycle (MenuBarExtra can't use Settings scene) |
+| `MenuView` | Dropdown menu: model list (checkbox/status per row), bulk actions (Load/Unload Selected + Clear), status line, Settings/Help/About/Quit footer |
+| `SettingsView` | 4 tabs: Global, Per-Model, Help, About. `@State` mirrors + onChange → UserDefaults |
+| `ServerManager` | `@Observable` class — model discovery + scan, process lifecycle (load/unload/switch), UserDefaults persistence, per-model settings, 3s `ps` sync timer, DispatchSource file watcher, sleep/wake observers, port allocation with bind() probe |
+| `ModelEntry` | Value: id (abs path), name, path URL, backend (.gguf/.mlx) |
+| `ModelState` | Runtime: isRunning, pid, port, ctxSize, lastError |
+| `AppSettings` | Persisted global settings struct |
+| `ModelBackend` | Enum: .gguf or .mlx, each with sfSymbol + launch handler |
 
 ## Build & Deploy
 
-`install.sh` now copies all `src/*.swift` into `~/bin/` and compiles them
-together — no manual copy step needed (audit L-8 fixed). The CLI is copied
-from `src/llama` too.
-
 ```bash
-# Edit any source file in src/
+# Edit source in src/
 vim ~/Projects/llm-switcher/src/ServerManager.swift
+
+# Type-check all files (fast — returns in ~1s)
+swiftc -parse-as-library -typecheck -framework SwiftUI -framework AppKit src/*.swift
 
 # Kill running instance
 pkill -f llama-menubar; sleep 1
 
 # Build + install (copies src/*.swift → ~/bin, compiles as one module)
 cd ~/Projects/llm-switcher && bash scripts/install.sh
-```
 
-> If you previously had a single-file `~/bin/llama-menubar.swift`, delete it
-> (`rm ~/bin/llama-menubar.swift`) — leaving it causes duplicate-symbol errors
-> since install.sh now compiles every `~/bin/*.swift`.
-
-```bash
 # Launch
 open ~/Applications/LLM\ Switcher.app
 
-# Verify binary has your changes
-strings ~/Applications/LLM\ Switcher.app/Contents/MacOS/llama-menubar | grep "your string"
+# Verify symbol in binary
+nm ~/Applications/LLM\ Switcher.app/Contents/MacOS/llama-menubar \
+  | grep -i "switchModel\|portIsFree\|unloadSelected"
 
 # Push to Gitea
-cd ~/Projects/llm-switcher && git add -A && git commit -m "msg" && git push origin main && git push arrakis main
+cd ~/Projects/llm-switcher \
+  && git add -A && git commit -m "msg" \
+  && git push origin main && git push arrakis main
 ```
 
-## Architecture
-
-| Component | Description |
-|-----------|-------------|
-| `LlamaMenubarApp` | @main entry. MenuBarExtra scene, holds ServerManager + SettingsWindowHost |
-| `SettingsWindowHost` | Manages NSWindow lifecycle for settings (MenuBarExtra can't use Settings scene) |
-| `MenuView` | Dropdown menu: model list, load/unload buttons, status, settings/help/about/quit |
-| `SettingsView` | 4-tab window: Global, Per-Model, Help, About. Uses @State mirrors + onChange handlers |
-| `ServerManager` | God object: model discovery, process lifecycle, settings persistence, ps sync, file watching, sleep/wake |
-| `ModelEntry` | Value type: id (absolute path), name, path URL, backend (.gguf/.mlx) |
-| `ModelState` | Runtime state: isRunning, pid, port, ctxSize |
-| `AppSettings` | Persisted global settings (struct, saved to UserDefaults) |
+`install.sh` copies `src/*.swift` → `~/bin/`, compiles them together, wraps in `.app` bundle, signs (inner binary first, then bundle), registers with Launch Services, installs CLI from `src/llama`, and writes LaunchAgent.
 
 ## Key Patterns
 
-- **`@Observable`** on ServerManager — SwiftUI views auto-redraw on property changes
-- **UserDefaults** for all persistence — global settings under direct keys, per-model under `model.<md5hash>.<key>`
-- **`refreshTrigger: Int`** — bumped to force re-render of per-model UI (reads from UserDefaults don't trigger @Observable)
-- **`let _ = manager.refreshTrigger`** at top of `perModelOverrideFields()` — creates SwiftUI dependency so if/else re-evaluates on toggle/reset
-- **`[weak self]`** in all closures, timers, observers — no retain cycles
-- **`syncQueue`** (serial DispatchQueue) for background `ps` scanning
-- **Process spawning** uses `Process()` with arguments array — no shell, safe from injection
-- **`@State` mirrors** in SettingsView — local copies of settings synced via onChange handlers (verbose but works around SwiftUI type-checker limits)
+- **`@Observable`** on ServerManager — SwiftUI auto-redraws.
+- **UserDefaults** for all persistence. Global under direct keys, per-model under `model.<md5hash>.<key>`.
+- **`refreshTrigger: Int`** — bumped to force per-model UI re-render (UserDefaults writes don't trigger @Observable).
+- **`let _ = manager.refreshTrigger`** at top of `perModelOverrideFields()` — creates SwiftUI dependency.
+- **`[weak self]`** in all closures/timers/observers — no retain cycles. Verified by audit.
+- **`syncQueue`** (serial DispatchQueue) for background `ps` scanning. Also used by onWake (H-1 fix).
+- **`selected: Set<String>`** — the checkbox set. Running models auto-inserted on load/switch/external-discovery; removed on unload/stale-clear. Drives both Load Selected and Unload Selected.
+- **`switchingTo: String?`** — model ID being switched to (disabled UI during transition).
+- **`processes`** dict tracks `Process` objects we spawned; `modelStates` tracks all runtime state.
+- **Process spawn** uses `Process()` with arguments array — no shell injection.
+- **@State mirrors** in SettingsView — local copies of persisted settings, synced via onChange handlers. Now also debounced-on-receive of UserDefaults change notifications (M-4).
 
 ## Per-Model Override System
 
 ```
-perModelOverrideEnabled(for: model)  → Bool from UserDefaults
-perModelKey("port", model: model)    → "model.<12hex>.port"
-perModelSetting(key, default, model) → generic getter, falls back to global
-setPerModelSetting(value, model, key) → writes to UserDefaults
-resetPerModel(for: model)             → removes ALL per-model keys
+perModelOverrideEnabled(for:)     → Bool
+perModelKey("port", model:)       → "model.<12hex>.port"
+perModelSetting(key, default, model:) → generic getter
+setPerModelSetting(value, model, key:) → writes UserDefaults
+resetPerModel(for:)               → removes ALL per-model keys
 ```
 
-In `loadModel`, the `overrides` flag gates ALL per-model reads:
-```swift
-let overrides = perModelOverrideEnabled(for: model)
-let preferredPort = overrides ? perModelPort(for: model) : 0
-let port = preferredPort > 0 ? preferredPort : nextAvailablePort()
-let ctx = overrides ? perModelCtxSize(for: model) : settings.defaultCtxSize
-// Then pm() helper: if overrides && keyExists, use per-model; else global
+In `loadModel`: the `overrides` flag gates per-model reads. When OFF, `nextAvailablePort()` and global defaults are used. UI: OFF → read-only global values. ON → editable fields + "Reset to Global" + "Reset to Default" (override-aware — writes factory defaults when ON, purges keys when OFF).
+
+## Menu Bar Dropdown Controls
+
+| Control | What it does |
+|---------|-------------|
+| Load Selected (N) | Loads the stopped models you've ticked |
+| Unload Selected (N) | Stops the running models you've ticked (appears when 2+ loaded) |
+| Clear | Deselects everything |
+| ⏹ Unload All | Stops every running model |
+| ↻ Refresh | Re-scans the models directory |
+| Right-click a model | Load / Unload / Switch to (atomic) |
+| Per-model card Switch | Double-buffer switch (appears when any other model running) |
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `llama list` | List all discovered models |
+| `llama load <name>` | Load by fuzzy name match |
+| `llama unload <name...>|all` | Unload one/more/all |
+| `llama switch <name>` | Atomic switch (load first, verify, then unload old) |
+| `llama status` | Show running models with ports |
+| `llama ctx <size>` | Set per-model context size |
+| `llama port <num>` | Set per-model port |
+| `llama menubar` | Launch the menu bar app |
+
+## Fixed Bugs — All Sessions (Commit History)
+
+| Commit | What was fixed |
+|--------|---------------|
+| `e0c6568` | C-1 (empty catch → lastError + beep + warning triangle), C-2 (unquoted EXTRA_ARGS → read -ra), H-1 (concurrent ps → syncQueue), H-3 (ps regex paths with spaces), H-4 (unloadAll stale state), H-5 (flock single-instance guard), per-model reset override-aware |
+| `94eaed6` | M-1 (bind() port probe), M-2 (pendingCtxEdit), M-3 (statusText), M-5 (key filtering), M-6 (depth limit), M-8 (backslash escapes), L-2 (numeric sort), L-3 (regex quant strip), L-6 (@ObservationIgnored), L-7 (discoverMLXServerPath), L-11 (extraArgs) + atomic model switching (Swift switchModel + CLI cmd_switch double-buffer) |
+| `b707b69` | A-1 file split (3250→5 files), selectable multi-model unload (unloadSelected + runningCount + selected auto-tracking), install.sh multi-file build + L-8 fix (src copy) |
+| `6e91f8e` | M-4 (mirror drift → debounced UserDefaults observer), M-7 (file watcher debounce 0.3s), M-11 (CLI sleep → port poll 15s), L-9 (KeepAlive SuccessfulExit=false), L-10 (fake per-model Save removed), L-12 (cmd_unload all mname), B-3 (version 1.1.0 + NSHumanReadableCopyright), B-4 (--deep → binary-then-bundle sign) |
+| `5dd720d` | Checkbox won't uncheck (dropped `|| state.isRunning`), ~/models placeholder removed, **ps pipe deadlock** (read pipe before waitUntilExit — was blocking every 3s sync), symlink skip in scanDirectory |
+
+## CRITICAL: ps Sync Pipe Deadlock (found & fixed 2026-06-29)
+
+**Root cause of "running models show as stopped":** `collectExternalStatesFromPS()` called `task.waitUntilExit()` **before** `readDataToEndOfFile()`. `ps -ax` on a real system produces ~772 lines (>64KB), filling the kernel pipe buffer. `ps` blocks on `write(2)` waiting for the pipe to be drained. `waitUntilExit()` deadlocks waiting for `ps` to exit. Result: every 3s sync tick hangs; running models are never detected. **Do NOT revert the ordering.** 
+
+Proven with standalone test:
+```
+NEW (read-then-wait):  772 lines, 2 llama-server matches  ✓
+OLD (wait-then-read):  hung >8s — pipe-buffer deadlock      ✗
 ```
 
-UI: when override OFF → read-only global values. When ON → editable fields + "Reset to Global" + "Reset to Default". Both buttons always visible.
+## Single-Instance Guard (H-5)
 
-## Current Audit Findings (from AUDIT_REPORT.md)
+`ServerManager.acquireSingleInstanceLock()` uses `flock(LOCK_EX | LOCK_NB)` on `/tmp/llm-switcher.lock`. Second instance self-terminates. Verified live.
 
-30 findings total. The ones most likely to bite you:
+## Known Issues / Deferred
 
-| ID | Sev | File:Line | Issue |
-|----|-----|-----------|-------|
-| C-1 | CRITICAL | :2483 | Empty catch block — Process.run() failures silently swallowed (wrong binary path = no feedback) |
-| C-2 | CRITICAL | llama:408 | Unquoted $LLAMA_EXTRA_ARGS — command injection risk |
-| H-1 | HIGH | :1755,1879 | modelStates/processes dicts accessed from multiple threads without sync |
-| H-3 | HIGH | :2744 | ps regex fails on model paths with spaces |
-| H-4 | HIGH | :2528 | unloadAll leaves stale state for externally-launched processes |
-| H-5 | HIGH | install.sh | No single-instance check — two instances collide on ports |
-| M-6 | MEDIUM | :2181 | No recursion depth limit on model scan (symlink loops hang) |
-| L-8 | LOW | install.sh:52 | install.sh doesn't copy src→bin (must do manually, see Build section) |
+The 30-audit-finding report is fully resolved except for items the audit itself reclassified as non-defects:
+- **H-2** (informational: override gates correctly implemented for exposed settings)
+- **M-9** (MLX safetensors heuristic — reasonable)
+- **M-10** (CLI PID file check — bash `&&...||` idiom works correctly)
 
-## Pending Work
-
-1. ~~**Fix audit findings** — C-1, C-2, H-1, H-3, H-4, H-5~~ ✅ DONE (commit e0c6568, 2026-06-29).
-2. ~~**Model switching** — menu bar app has no "switch"~~ ✅ DONE (commit b707b69, 2026-06-29). Double-buffer atomic switch: loads new model on fresh port first, verifies readiness (5s timeout), then unloads old models. Rollback on failure. UI: "Switch" button in per-model card + "Switch to" in context menu. CLI: same double-buffer pattern.
-3. ~~**Dead code cleanup** — `pendingCtxEdit`, `statusText`, `ModelState.extraArgs`~~ ✅ DONE (M-2, M-3, L-11 removed).
-4. ~~**Remaining MEDIUM/LOW** — M-1 (port bind), M-5 (key filtering), M-6 (depth limit), M-8 (escape handling), L-2 (numeric sort), L-3 (regex quant), L-6 (@ObservationIgnored), L-7 (Python detect)~~ ✅ DONE.
-5. ~~**File splitting** — ~3250 lines → 5 files~~ ✅ DONE (commit b707b69, 2026-06-29). `LlamaMenubarApp.swift` + `DomainTypes.swift` + `MenuView.swift` + `SettingsView.swift` + `ServerManager.swift`.
-6. **Remaining audit items** — M-4 (settings mirror drift), M-7 (parent dir watch), M-11 (CLI sleep race), L-9 (crash recovery), L-10 (decorative Save), L-12 (name extraction), B-2/B-3/B-4, plus dead-code cleanup of M-4 already relevant.
+And these design-level items left untouched:
+- **M-7 approach** (parent-dir watch) — debounced (300ms) rather than switched to FSEvents. Functional but still fires on parent-dir noise.
+- **Settings `@State` mirror pattern** — verbose but works around SwiftUI type-checker limits. Documented.
 
 ## User Preferences
 
 - Prefers concise, table-formatted output
-- "Porting" not "stealing" when adopting patterns from external tools
-- Hands-on infra manager — does own reinstalls
-- SwiftUI type-checker limit: Form with >5 onChange or >8 sections times out. Fix: split into computed properties + ViewModifier structs
-- Toggle labels: short, no colons, ON/OFF colored indicator
-- Per-model: model.<hash>.<key> UserDefaults, String(format:%d) no commas, refreshTrigger for render
-- MTP off (Metal net loss). -ngl 99 auto. KV q8_0/q4_0 defaults
+- "Porting" not "stealing" when adopting patterns
+- Hands-on infra — does own reinstalls
+- SwiftUI type-checker limit: Form with >5 onChange or >8 sections times out. Fix: computed properties + ViewModifier structs
+- Toggle labels: short, no colons, ON/OFF colored
+- Per-model settings: `model.<hash>.<key>`, String(format:%d) no commas, refreshTrigger
+- MTP OFF (Metal net loss). -ngl 99 auto. KV q8_0/q4_0 defaults
 - Author: Roland Chia, z3r09er@gmail.com
