@@ -1186,7 +1186,7 @@ struct SettingsView: View {
                 }
                 .padding(.bottom, 16)
 
-                Text("© 2026 Roland Chia · MIT License")
+                Text("© 2026 Roland Chia · Free to use, no reselling")
                     .font(.caption2).foregroundStyle(.secondary)
                     .padding(.bottom, 20)
             }
