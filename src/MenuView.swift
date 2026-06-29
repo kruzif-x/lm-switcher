@@ -182,18 +182,28 @@ struct MenuView: View {
     /// One row of the model list: a checkbox toggle + a horizontal stack
     /// with the model's icon, name, backend badge, and a status indicator.
     ///
-    /// A model is "checked" in the UI if it's in the `selected` set. Running
-    /// models are auto-added to `selected` (on load, switch, or external
-    /// discovery) so they show checked; `|| state.isRunning` is a belt-and-
-    /// suspenders fallback for the brief window before the sync inserts them.
+    /// A model is "checked" iff it's in the `selected` set. Running models
+    /// are auto-added to `selected` (on load, switch, or external discovery),
+    /// so they appear checked — but the user can UNCHECK a running model to
+    /// exclude it from "Unload Selected" (the checkmark stays cleared because
+    /// `isChecked` reads `selected` only, never `state.isRunning`).
     ///
     /// The checkbox drives the `selected` set, which feeds both bulk actions:
     /// "Load Selected" (stopped models in the set) and "Unload Selected"
     /// (running models in the set). Per-model context menu offers direct
-    /// load/unload/switch.
+    /// load/unload/switch. The green status dot (rendered separately below)
+    /// always reflects the true running state regardless of the checkbox.
     private func modelRow(for model: ModelEntry) -> some View {
         let state = manager.state(for: model)
-        let isChecked = manager.selected.contains(model.id) || state.isRunning
+        // Checked == in the `selected` set. Running models are auto-added to
+        // `selected` (on load/switch/external-discovery), so they show
+        // checked. We deliberately do NOT OR in `state.isRunning` here:
+        // doing so made a running model impossible to UNCHECK (unchecking
+        // removed it from `selected`, but the getter still returned true
+        // because it was still running, so the checkmark snapped back). The
+        // checkbox is a selection control — unchecking a running model marks
+        // it to be spared by "Unload Selected", it doesn't stop it.
+        let isChecked = manager.selected.contains(model.id)
 
         return Toggle(isOn: Binding(
             get: { isChecked },

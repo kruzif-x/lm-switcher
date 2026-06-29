@@ -297,7 +297,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Models Directory:")
                 HStack {
-                    TextField("~/models", text: $modelsDir)
+                    TextField("", text: $modelsDir)
                         .help("Root directory containing your .gguf files and MLX model folders.")
                     Button("Browse…") {
                         let panel = NSOpenPanel()

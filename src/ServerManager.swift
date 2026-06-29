@@ -565,6 +565,19 @@ class ServerManager {
             // Belt-and-suspenders: skip hidden.
             if name.hasPrefix(".") { continue }
 
+            // Skip symlinks. A self-referential link (e.g. the common
+            // `models -> /Users/x/AI/models` inside the models dir) would
+            // otherwise (a) feed the recursion a duplicate subtree and
+            // (b) produce ModelEntry ids via the LINK path
+            // (".../models/models/gguf/x.gguf") that never match the real
+            // path llama-server reports in `ps` (".../models/gguf/x.gguf"),
+            // so running models would never show as loaded. The depth cap
+            // (M-6) stops infinite recursion, but skipping symlinks is the
+            // correct fix: the real files are always reachable via the
+            // non-symlink path during the same scan.
+            let vals = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+            if vals?.isSymbolicLink == true { continue }
+
             if isDir.boolValue {
                 // Directory: try to interpret as an MLX model first;
                 // if it doesn't look like one, recurse.
@@ -1305,13 +1318,20 @@ class ServerManager {
         }
         do {
             try task.run()
-            // Wait for `ps` to finish; the output is small.
-            task.waitUntilExit()
         } catch {
             // If `ps` itself failed (very unusual), bail out.
             return [:]
         }
+        // CRITICAL ordering: read the pipe to completion BEFORE
+        // `waitUntilExit()`. `ps -ax` on a busy system easily exceeds the
+        // ~64KB kernel pipe buffer; if we wait for exit first, `ps` blocks
+        // on `write(2)` once the buffer fills (because nobody is draining
+        // the read end) and `waitUntilExit()` deadlocks — the sync hangs and
+        // running models never get detected ("All stopped" even when they're
+        // up). `readDataToEndOfFile()` drains as `ps` writes, so the child
+        // never blocks; then the wait returns immediately.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
         let output = String(data: data, encoding: .utf8) ?? ""
 
         var externalStates: [String: (pid: Int32, port: Int, ctx: Int)] = [:]
