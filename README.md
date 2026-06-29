@@ -2,7 +2,7 @@
 
 A macOS menu bar app + CLI for managing local LLM models (GGUF and Apple MLX).
 
-![LLM Switcher icon](assets/AppIcon.icns)
+![LLM Switcher icon](assets/AppIcon.png)
 
 ## What is this?
 
@@ -129,29 +129,7 @@ Highlights:
 
 ## Screenshot
 
-The menu bar app looks like this:
-
-```
-┌─────────────────────────────────┐
-│  ◉ 2 models loaded              │
-│  • gemma-4-12B-it [GGUF] :8080  │
-│  • omnicoder-9b    [GGUF] :8081 │
-│  ─────────────────────────────  │
-│  ☐ cerebras_Qwen3...            │
-│  ☑ gemma-4-12B-it     [GGUF] ●8080│
-│  ☐ GLM-4.7-Flash...            │
-│  ☑ omnicoder-9b        [GGUF] ●8081│
-│  ─────────────────────────────  │
-│  [Load Selected (2)]  [Clear]   │
-│  ─────────────────────────────  │
-│  [⏹ Unload All]  [↻ Refresh]   │
-│  ─────────────────────────────  │
-│  ● 2 on :8080, 8081             │
-│  ─────────────────────────────  │
-│  ⚙ Settings…                    │
-│  Quit                            │
-└─────────────────────────────────┘
-```
+![LLM Switcher menu dropdown](assets/screenshot-menu.png)
 
 ## Quick start
 
@@ -278,23 +256,30 @@ LLAMA_CHAT_TEMPLATE=""       # optional chat template override
 
 ### How the pieces talk to each other
 
-```
-┌─────────────────────┐                  ┌─────────────────────┐
-│  Menu bar app       │   UserDefaults    │  llama CLI           │
-│  (Swift)            │ ◄──────────────► │  (bash)              │
-│                     │   (same domain)   │                      │
-└──────────┬──────────┘                  └──────────┬──────────┘
-           │                                        │
-           │  spawns  (each model = 1 process)      │
-           ▼                                        ▼
-   ┌───────────────┐                         ┌───────────────┐
-   │ llama-server  │                         │ llama-server  │
-   │ :8080  (PID)  │                         │ :8081  (PID)  │
-   └───────────────┘                         └───────────────┘
-           ▲                                        ▲
-           │                                        │
-           └────────── shared PID files in ─────────┘
-                    ~/.local/share/llama-menubar/pids/
+```mermaid
+graph TD
+    A["⚡ Menu bar app (Swift)"] <-->|"UserDefaults\n(shared domain)"| B["🖥 llama CLI (bash)"]
+
+    A -->|"spawns & monitors"| C["llama-server :8080\n(Model A)"]
+    A -->|"spawns & monitors"| D["llama-server :8081\n(Model B)"]
+    B -->|"spawns & monitors"| C
+    B -->|"spawns & monitors"| D
+
+    C -->|"PID file"| E[("~/.local/share/\nllama-menubar/pids/")]
+    D -->|"PID file"| E
+
+    A -->|"reads"| E
+    B -->|"reads"| E
+
+    A -->|"ps scan\n(external process detection)"| F["Any running\nllama-server"]
+    B -->|"ps scan"| F
+
+    style A fill:#1a1a2e,color:#4ade80,stroke:#4ade80
+    style B fill:#1a1a2e,color:#22d3ee,stroke:#22d3ee
+    style C fill:#1e3a5f,color:#93c5fd,stroke:#3b82f6
+    style D fill:#1e3a5f,color:#93c5fd,stroke:#3b82f6
+    style E fill:#27272a,color:#a1a1aa,stroke:#52525b
+    style F fill:#27272a,color:#a1a1aa,stroke:#52525b
 ```
 
 Both the menu bar app and the CLI can:
