@@ -247,6 +247,14 @@ class ServerManager {
     @ObservationIgnored
     private var directorySource: DispatchSourceFileSystemObject?
 
+    /// Pending debounced refresh work item (M-7). The watcher observes the
+    /// PARENT of the models dir (a DispatchSource limitation), so unrelated
+    /// changes anywhere in the parent fire events. Rather than re-scan on
+    /// every event, we coalesce a burst into a single refresh ~300ms after
+    /// the last event.
+    @ObservationIgnored
+    private var pendingRefresh: DispatchWorkItem?
+
     /// Start (or restart) watching the models directory.
     func startWatching() {
         // Cancel any prior watcher and close its file descriptor. Without
@@ -276,10 +284,19 @@ class ServerManager {
             queue: .main
         )
 
-        // On any event, re-scan. SwiftUI will re-render views that observe
-        // `manager.models` automatically.
+        // On any event, schedule a debounced re-scan (M-7). The parent-dir
+        // watch fires on unrelated changes too, so we cancel any pending
+        // refresh and reschedule — a burst of events collapses into one
+        // `refreshModels()` ~300ms after the last event. SwiftUI re-renders
+        // views observing `manager.models` automatically.
         src.setEventHandler { [weak self] in
-            self?.refreshModels()
+            guard let self = self else { return }
+            self.pendingRefresh?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                self?.refreshModels()
+            }
+            self.pendingRefresh = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
         }
 
         // On cancellation (e.g. when `startWatching` is called again), close
@@ -299,6 +316,7 @@ class ServerManager {
     /// Deinit: ensure the watcher and sync timer are torn down so we don't
     /// leak the FD or keep firing on a dead `self`.
     deinit {
+        pendingRefresh?.cancel()
         directorySource?.cancel()
         syncTimer?.cancel()
         // Explicitly remove block-based observers — the notification

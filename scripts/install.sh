@@ -165,9 +165,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
     <key>CFBundleDisplayName</key>
     <string>LLM Switcher</string>
     <key>CFBundleVersion</key>
-    <string>1.0</string>
+    <string>1.1.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
@@ -180,6 +180,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2026 Roland Chia. All rights reserved.</string>
 </dict>
 </plist>
 EOF
@@ -195,7 +197,10 @@ EOF
 # existing signature.
 
 echo "==> Ad-hoc codesigning app bundle..."
-codesign --force --deep --sign - "$APP_BUNDLE" 2>/dev/null || true
+# B-4 fix: `--deep` is deprecated. For this single-binary bundle (no nested
+# frameworks), sign the inner executable first, then the bundle.
+codesign --force --sign - "$APP_BUNDLE/Contents/MacOS/llama-menubar" 2>/dev/null || true
+codesign --force --sign - "$APP_BUNDLE" 2>/dev/null || true
 
 
 # -----------------------------------------------------------------------------
@@ -236,8 +241,10 @@ chmod +x "$BIN_DIR/llama"
 # the agent at the end of this script so the app starts now (no
 # need to log out and back in).
 #
-# `KeepAlive = false` means: if the app exits, don't restart it. This
-# is the right behavior for a menu bar app the user explicitly quits.
+# `KeepAlive = {SuccessfulExit: false}` (L-9 fix): restart the app only if
+# it exits NON-zero (a crash). A clean exit (the user picks Quit, which
+# calls NSApp.terminate → exit 0) is respected and the app stays closed.
+# This gives crash recovery without overriding the user's explicit quit.
 
 echo "==> Installing LaunchAgent..."
 cat > "$PLIST_FILE" <<EOF
@@ -255,7 +262,10 @@ cat > "$PLIST_FILE" <<EOF
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <false/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 </dict>
 </plist>
 EOF

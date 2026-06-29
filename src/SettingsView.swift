@@ -168,7 +168,6 @@ struct SettingsView: View {
     @State private var noMmap: Bool
     @State private var mlxMaxKvSizeStr: String
     @State private var savedFeedback: Bool = false
-    @State private var perModelSavedFeedback: Bool = false
 
     init(manager: ServerManager, initialTab: Int = 0) {
         self.manager = manager
@@ -207,6 +206,50 @@ struct SettingsView: View {
         }
         .padding()
         .frame(width: 580, height: 520)
+        // M-4 fix: re-sync the @State mirrors from UserDefaults whenever it
+        // changes externally (e.g. the companion `llama` CLI runs
+        // `llama ctx`/`llama port` while this window is open). Without this,
+        // the text fields show stale values until the window is reopened.
+        // Debounced (0.4s) because per-model field edits also write
+        // UserDefaults on every keystroke — coalescing avoids reloading the
+        // global mirrors (and the loadSettings disk read) on each keypress.
+        .onReceive(NotificationCenter.default.publisher(
+            for: UserDefaults.didChangeNotification)
+            .debounce(for: .milliseconds(400), scheduler: RunLoop.main)) { _ in
+            reloadMirrors()
+        }
+    }
+
+    /// Re-read every persisted setting from UserDefaults into the local
+    /// `@State` mirrors (M-4). Called when UserDefaults changes underneath an
+    /// open window. Reloads `manager.settings` from disk first so we mirror
+    /// the authoritative values, not whatever was last in memory.
+    private func reloadMirrors() {
+        manager.loadSettings()
+        let s = manager.settings
+        modelsDir = s.modelsDir
+        defaultPort = "\(s.defaultPort)"
+        defaultCtxSize = manager.formatCtxDisplay(s.defaultCtxSize)
+        llamaServerPath = s.llamaServerPath
+        mlxServerPath = s.mlxServerPath
+        globalExtraArgs = s.globalExtraArgs
+        chatTemplatePath = s.chatTemplatePath
+        enableMtp = s.enableMtp
+        kvCacheTypeK = s.kvCacheTypeK
+        kvCacheTypeV = s.kvCacheTypeV
+        flashAttention = s.flashAttention
+        thinkingEnabled = s.thinkingEnabled
+        suppressReasoning = s.suppressReasoning
+        temperature = s.temperature
+        topP = s.topP
+        topK = s.topK
+        repeatPenalty = s.repeatPenalty
+        seedStr = s.seed == 0 ? "" : "\(s.seed)"
+        cpuThreadsStr = s.cpuThreads == 0 ? "" : "\(s.cpuThreads)"
+        batchSizeStr = "\(s.batchSize)"
+        mlock = s.mlock
+        noMmap = s.noMmap
+        mlxMaxKvSizeStr = s.mlxMaxKvSize == 0 ? "" : "\(s.mlxMaxKvSize)"
     }
 
     /// "Global" tab: basic settings visible by default, advanced settings
@@ -927,19 +970,13 @@ struct SettingsView: View {
                 Text("Per-Model Settings")
                     .font(.headline)
                 Spacer()
-                Button("Save") {
-                    withAnimation { perModelSavedFeedback = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        withAnimation { perModelSavedFeedback = false }
-                    }
-                }
-                if perModelSavedFeedback {
-                    Text("✓ Saved")
-                        .foregroundColor(.green)
-                        .font(.caption)
-                }
             }
-            Text("Override global settings per model · Settings apply on next model (re)load")
+            // L-10 fix: removed the decorative "Save" button. Per-model
+            // settings write to UserDefaults immediately on each field edit
+            // (via the bindings' set: closures), so a Save button was a
+            // no-op that only showed fake "✓ Saved" feedback. The note below
+            // tells the user changes are auto-saved and when they take effect.
+            Text("Override global settings per model · Auto-saved · Applies on next model (re)load")
                 .font(.caption)
                 .foregroundColor(.secondary)
 

@@ -428,13 +428,38 @@ load_model() {
     # Second line is the port — for fast get_port_for() without ps.
     echo "$newpid --port $port" >> "$pf"
 
-    # Brief sleep to let the process either fail or start successfully.
-    # `kill -0` is the portable way to test "is this PID alive?".
-    sleep 1
-    if kill -0 "$newpid" 2>/dev/null; then
+    # M-11 fix: replace the fixed 1s `kill -0` heuristic with a readiness
+    # poll. A large GGUF can take several seconds to mmap; a fast-failing
+    # binary can die after 1s. Poll the port for up to ~15s: success when
+    # the port is listening, failure if the process dies first or we time
+    # out. `nc -z` is the primary probe; `lsof` is the fallback if nc is
+    # unavailable.
+    local _deadline=$(( $(date +%s) + 15 ))
+    local _ready=0
+    while (( $(date +%s) < _deadline )); do
+        # Process died → stop waiting (load failed).
+        if ! kill -0 "$newpid" 2>/dev/null; then
+            break
+        fi
+        # Port listening yet?
+        if command -v nc >/dev/null 2>&1; then
+            if nc -z 127.0.0.1 "$port" 2>/dev/null; then _ready=1; break; fi
+        elif command -v lsof >/dev/null 2>&1; then
+            if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then _ready=1; break; fi
+        else
+            # No probe tool — fall back to the old liveness check.
+            sleep 1
+            if kill -0 "$newpid" 2>/dev/null; then _ready=1; fi
+            break
+        fi
+        sleep 0.3
+    done
+
+    if (( _ready == 1 )); then
         echo "● [$type] $name loaded on :$port (PID $newpid)"
     else
-        echo "✗ Failed to start $name"
+        echo "✗ Failed to start $name (not listening on :$port)"
+        kill -TERM "$newpid" 2>/dev/null
         rm -f "$pf"
         return 1
     fi
@@ -544,8 +569,15 @@ cmd_unload() {
                 [[ -f "$pf" ]] || continue
                 local id_hash; id_hash=$(basename "$pf" .pid)
                 local pid; pid=$(head -1 "$pf")
+                # L-12 fix: the old sed `s/.*\(...\).*//` deleted everything,
+                # leaving mname empty so the user saw "○  stopped" with no
+                # name. Extract the model file/dir name from the process args
+                # for a useful display label (same approach as `cmd_status`).
                 local mname
-                mname=$(ps -o args= -p "$pid" 2>/dev/null | head -1 | sed 's/.*\(mlx_lm\.server\|llama-server\).*//')
+                mname=$(ps -o args= -p "$pid" 2>/dev/null \
+                    | grep -oE '(\-m|--model) [^ ]+' | head -1 \
+                    | awk '{print $2}' | xargs -I{} basename {} 2>/dev/null)
+                [[ -z "$mname" ]] && mname="$id_hash"
                 unload_model "$id_hash" "$mname"
             done
             shopt -u nullglob
