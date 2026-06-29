@@ -29,9 +29,31 @@ struct MenuView: View {
     private var modelScroll: some View {
         let running = manager.models.filter { manager.state(for: $0).isRunning }
         let stopped  = manager.models.filter { !manager.state(for: $0).isRunning }
+        let rowH: CGFloat = 28
+        let sectionH: CGFloat = 26
+        let bulkH: CGFloat = 32
+        let hintH: CGFloat = 26
+
+        // Compute natural height so the panel auto-sizes for short lists
+        // and scrolls for long ones (capped at 320).
+        let naturalH: CGFloat = {
+            var h: CGFloat = 0
+            if !running.isEmpty {
+                h += sectionH + CGFloat(running.count) * rowH
+                if running.count >= 2 { h += bulkH }
+                h += 10 // divider + padding
+            }
+            if manager.models.isEmpty {
+                h += rowH
+            } else if !stopped.isEmpty {
+                h += (running.isEmpty ? hintH : sectionH)
+                h += CGFloat(stopped.count) * rowH
+            }
+            return min(max(h, 60), 320)
+        }()
 
         ScrollView(.vertical) {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
 
                 // --- Running section ---
                 if !running.isEmpty {
@@ -69,8 +91,9 @@ struct MenuView: View {
                     }
                 }
             }
+            .frame(width: 300, alignment: .leading)
         }
-        .frame(maxHeight: 300)
+        .frame(width: 300, height: naturalH)
     }
 
     // MARK: - Section label
