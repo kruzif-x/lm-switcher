@@ -134,11 +134,10 @@ struct AppSettings {
     var chatTemplatePath: String = ""
 
     /// Enable MTP (Multi-Token Prediction) for GGUF models on macOS.
-    /// MTP is a net loss on Apple Silicon Metal (11–92% slower depending
-    /// on model size and draft ceiling). This toggle lets users opt in
-    /// for experimentation. Off by default.
-    /// See https://github.com/ggerganov/llama.cpp/issues/23752
-    var enableMtp: Bool = false
+    /// MTP was historically a net loss on Apple Silicon Metal, but recent
+    /// llama.cpp builds (9859+) have fixed the GPU memory duplication bug.
+    /// ON by default — silently skipped for models without MTP support.
+    var enableMtp: Bool = true
 
     /// KV cache type for K cache. q8_0 is the community default for Mac
     /// (halves KV memory with minimal quality loss). f16 is full precision.

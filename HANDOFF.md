@@ -171,5 +171,5 @@ And these design-level items left untouched:
 - SwiftUI type-checker limit: Form with >5 onChange or >8 sections times out. Fix: computed properties + ViewModifier structs
 - Toggle labels: short, no colons, ON/OFF colored
 - Per-model settings: `model.<hash>.<key>`, String(format:%d) no commas, refreshTrigger
-- MTP OFF (Metal net loss). -ngl 99 auto. KV q8_0/q4_0 defaults
+- MTP ON by default (auto-detected per model). -ngl 99 auto. KV q8_0/q4_0 defaults
 - Author: Roland Chia, z3r09er@gmail.com

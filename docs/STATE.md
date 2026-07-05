@@ -30,7 +30,7 @@ Stored under bundle domain `local.llama-menubar`.
 | `llamaServerPath` | String | `/opt/homebrew/bin/llama-server` | Path to GGUF backend binary |
 | `mlxServerPath` | String | `~/Library/Python/3.14/bin/mlx_lm.server` | Path to MLX backend entry script |
 | `globalExtraArgs` | String | `""` | Extra args passed to every server (parsed with quote handling) |
-| `enableMtp` | Bool | `false` | Enable MTP (`--spec-type draft-mtp`). Off by default — net loss on Metal |
+| `enableMtp` | Bool | `true` | Enable MTP (`--spec-type draft-mtp`). ON by default, auto-detected per model — only applies to models with MTP support |
 | `model.<hash>.port` | Int | — | Per-model port override |
 | `model.<hash>.ctx` | Int | — | Per-model context size override |
 

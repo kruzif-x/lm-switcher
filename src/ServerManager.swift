@@ -617,6 +617,11 @@ class ServerManager {
         if lname.hasPrefix("mmproj-") { return nil }
         if lname.hasPrefix("mtp-") { return nil }
         if lname.hasPrefix("modernbert-embed-") { return nil }
+        // Exclude MTP assistant heads (arch *-assistant) that are not
+        // standalone models. Quick GGUF header read to check architecture.
+        if let arch = readGgufArchitecture(url), arch.hasSuffix("-assistant") {
+            return nil
+        }
         return ModelEntry(
             id: url.path,
             name: url.lastPathComponent,
@@ -705,8 +710,9 @@ class ServerManager {
             if let mmproj = findMmproj(for: model.path) {
                 args += ["--mmproj", mmproj.path]
             }
-            // MTP heads are loaded automatically by llama-server from model
-            // metadata when --mmproj is attached. No --mtp flag needed.
+            // MTP: some models ship MTP built into the GGUF (infix -mtp- in name),
+            // while others carry a separate mtp-*.gguf companion. If a companion
+            // exists, pass --spec-draft-model explicitly.
 
             // Apply chat template override if configured in settings.
             // Agentic harnesses (opencode, pi) need custom templates to fix
@@ -748,12 +754,19 @@ class ServerManager {
                 args += ["--chat-template-kwargs", "{\"enable_thinking\":false}"]
             }
 
-            // MTP (Multi-Token Prediction): opt-in only. On Apple Silicon
-            // Metal, MTP is a proven net loss for every configuration
-            // tested (11-92% slower). Off by default.
-            // https://github.com/ggerganov/llama.cpp/issues/23752
+            // MTP (Multi-Token Prediction): ON by default. Check if the model
+            // actually supports MTP (companion mtp-*.gguf or built-in via
+            // filename infix -MTP-). If not, silently skip — no-op.
             if effMtp {
-                args += ["--spec-type", "draft-mtp"]
+                // Detect MTP support: companion file or built-in infix
+                let hasCompanion = findMtpDraftModel(for: model.path) != nil
+                let nameContainsMtp = model.name.range(of: "-MTP-", options: .caseInsensitive) != nil
+                if hasCompanion || nameContainsMtp {
+                    args += ["--spec-type", "draft-mtp"]
+                    if let draft = findMtpDraftModel(for: model.path) {
+                        args += ["--spec-draft-model", draft.path]
+                    }
+                }
             }
 
             // Sampling defaults — shared with MLX.
@@ -1208,9 +1221,115 @@ class ServerManager {
         return fallbackMatches.sorted { $0.lastPathComponent < $1.lastPathComponent }.first
     }
 
+    /// Read the architecture string from a GGUF file header.
+    /// Reads only the first ~8 KB which contains all metadata KV pairs.
+    /// Returns nil on any error (not a valid GGUF, file not found, etc.).
+    /// GGUF type codes: 0=uint8, 1=int8, 2=uint16, 3=int16, 4=uint32, 5=int32,
+    /// 6=float32, 7=bool, 8=string, 9=array, 10=uint64, 11=int64, 12=float64,
+    /// 13=float16, 14=bfloat16.
+    private func readGgufArchitecture(_ url: URL) -> String? {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { fh.closeFile() }
+        let data = fh.readData(ofLength: 8192)
+        guard data.count >= 24 else { return nil }
+        let bytes = [UInt8](data)
+        // Verify GGUF magic
+        guard bytes[0] == 0x47, bytes[1] == 0x47, bytes[2] == 0x55, bytes[3] == 0x46 else { return nil }
+        // Read GGUF version (uint32 little-endian at offset 4)
+        let version = UInt32(bytes[4]) | (UInt32(bytes[5]) << 8) | (UInt32(bytes[6]) << 16) | (UInt32(bytes[7]) << 24)
+        // Read kv_count — uint64 at offset 16
+        let kvCount: UInt64 = UInt64(bytes[16]) | (UInt64(bytes[17]) << 8) | (UInt64(bytes[18]) << 16) | (UInt64(bytes[19]) << 24) |
+                              (UInt64(bytes[20]) << 32) | (UInt64(bytes[21]) << 40) | (UInt64(bytes[22]) << 48) | (UInt64(bytes[23]) << 56)
+        // Start of KV pairs: skip magic(4) + version(4) + tensor_count(8) + kv_count(8) = 24
+        var offset = 24
+        for _ in 0..<min(Int(kvCount), 200) {
+            guard offset + 4 < data.count else { return nil }
+            // Key length: uint64 for v3+, uint32 for v1/v2
+            let keyLen: Int
+            if version >= 3 {
+                guard offset + 8 <= data.count else { return nil }
+                keyLen = Int(bytes[offset]) | (Int(bytes[offset+1]) << 8) | (Int(bytes[offset+2]) << 16) | (Int(bytes[offset+3]) << 24) |
+                        (Int(bytes[offset+4]) << 32) | (Int(bytes[offset+5]) << 40) | (Int(bytes[offset+6]) << 48) | (Int(bytes[offset+7]) << 56)
+                offset += 8
+            } else {
+                keyLen = Int(bytes[offset]) | (Int(bytes[offset+1]) << 8) | (Int(bytes[offset+2]) << 16) | (Int(bytes[offset+3]) << 24)
+                offset += 4
+            }
+            guard offset + keyLen + 4 <= data.count else { return nil }
+            let key = String(data: data[offset..<offset + keyLen], encoding: .utf8) ?? ""
+            offset += keyLen
+            // Value type (uint32)
+            let valType = UInt32(bytes[offset]) | (UInt32(bytes[offset+1]) << 8) | (UInt32(bytes[offset+2]) << 16) | (UInt32(bytes[offset+3]) << 24)
+            offset += 4
+            if key == "general.architecture" && valType == 8 {
+                // String value: read length + content
+                let strLen: Int
+                if version >= 3 {
+                    guard offset + 8 <= data.count else { return nil }
+                    strLen = Int(bytes[offset]) | (Int(bytes[offset+1]) << 8) | (Int(bytes[offset+2]) << 16) | (Int(bytes[offset+3]) << 24) |
+                            (Int(bytes[offset+4]) << 32) | (Int(bytes[offset+5]) << 40) | (Int(bytes[offset+6]) << 48) | (Int(bytes[offset+7]) << 56)
+                    offset += 8
+                } else {
+                    guard offset + 4 <= data.count else { return nil }
+                    strLen = Int(bytes[offset]) | (Int(bytes[offset+1]) << 8) | (Int(bytes[offset+2]) << 16) | (Int(bytes[offset+3]) << 24)
+                    offset += 4
+                }
+                guard offset + strLen <= data.count else { return nil }
+                return String(data: data[offset..<offset + strLen], encoding: .utf8)
+            } else {
+                // Skip value by type
+                if valType == 8 { // string
+                    let strLen: Int
+                    if version >= 3 {
+                        guard offset + 8 <= data.count else { return nil }
+                        strLen = Int(bytes[offset]) | (Int(bytes[offset+1]) << 8) | (Int(bytes[offset+2]) << 16) | (Int(bytes[offset+3]) << 24) |
+                                (Int(bytes[offset+4]) << 32) | (Int(bytes[offset+5]) << 40) | (Int(bytes[offset+6]) << 48) | (Int(bytes[offset+7]) << 56)
+                        offset += 8
+                    } else {
+                        guard offset + 4 <= data.count else { return nil }
+                        strLen = Int(bytes[offset]) | (Int(bytes[offset+1]) << 8) | (Int(bytes[offset+2]) << 16) | (Int(bytes[offset+3]) << 24)
+                        offset += 4
+                    }
+                    offset += strLen
+                } else if valType == 0 || valType == 1 || valType == 7 { offset += 1 } // uint8, int8, bool
+                else if valType == 2 || valType == 3 { offset += 2 } // uint16, int16
+                else if valType == 4 || valType == 5 || valType == 6 || valType == 13 || valType == 14 { offset += 4 } // uint32, int32, float32, float16, bfloat16
+                else if valType == 10 || valType == 11 || valType == 12 { offset += 8 } // uint64, int64, float64
+                else { return nil } // array (9) or unknown
+            }
+        }
+        return nil
+    }
+
     /// Find a matching `mmproj-*.gguf` vision projection file for a model.
     private func findMmproj(for modelURL: URL) -> URL? {
         findCompanion(for: modelURL, prefix: "mmproj")
+    }
+
+    /// Find a matching `mtp-*.gguf` draft model file for MTP speculation.
+    /// Checks both the model's own directory and a `MTP/` subdirectory
+    /// (HuggingFace convention). Returns nil if none found — the model
+    /// may have MTP built into the GGUF itself (infix -mtp- in name).
+    private func findMtpDraftModel(for modelURL: URL) -> URL? {
+        let dir = modelURL.deletingLastPathComponent()
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil
+        ) else { return nil }
+        // Step 1: look for mtp-*.gguf in the same directory
+        if let match = entries.filter({
+            $0.lastPathComponent.hasPrefix("mtp-") && $0.pathExtension == "gguf"
+        }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).first {
+            return match
+        }
+        // Step 2: check MTP/ subdirectory (HuggingFace convention)
+        let mtpDir = dir.appendingPathComponent("MTP", isDirectory: true)
+        guard let mtpEntries = try? fm.contentsOfDirectory(
+            at: mtpDir, includingPropertiesForKeys: nil
+        ) else { return nil }
+        return mtpEntries.filter {
+            $0.pathExtension == "gguf"
+        }.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).first
     }
 
 
@@ -1439,7 +1558,7 @@ class ServerManager {
         // Chat template override: empty = use built-in template.
         settings.chatTemplatePath = d.string(forKey: "chatTemplatePath") ?? ""
 
-        // MTP toggle: off by default (MTP is a net loss on Metal).
+        // MTP toggle: off by default (was historically a net loss on Metal).
         settings.enableMtp = d.bool(forKey: "enableMtp")
 
         // KV cache quantization.

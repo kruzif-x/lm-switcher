@@ -418,7 +418,7 @@ struct SettingsView: View {
             Divider().padding(.leading, 14)
             toggleRow(
                 label: "MTP",
-                hint: "Multi-token prediction — net loss on Metal, for experimentation only",
+                hint: "Multi-token prediction — ON by default, auto-disabled for models without MTP",
                 isOn: $enableMtp,
                 tint: Color.orange
             )
@@ -903,7 +903,7 @@ struct SettingsView: View {
                         helpEntry("Default port", "Starting port for model servers. Additional models increment — 8080, 8081, 8082…")
                         helpEntry("Default ctx size", "Context window in tokens. Accepts k-suffix (4k, 8k) or plain integers. Use 4k for 16 GB Macs, 64k for 32 GB+.")
                         helpEntry("Global extra args", "Free-form arguments passed to every server launch. Parsed with quote handling.")
-                        helpEntry("MTP", "Multi-Token Prediction. OFF by default — proven net loss on Apple Silicon Metal (11–92% slower). Experimentation only.")
+                        helpEntry("MTP", "Multi-Token Prediction. ON by default — auto-detected per model. Only applies to models with built-in MTP or a companion mtp-*.gguf head.")
                         helpEntry("Chat template override", "Custom .jinja or .json template for agentic harnesses (opencode, pi). Leave empty for the model's built-in template.")
                     }
 
@@ -1165,9 +1165,7 @@ struct SettingsView: View {
                     if let url = URL(string: "https://www.reddit.com/r/hermesagent/comments/1uc7rw5/mac_mlx_megathread_hermes_agent_on_apple_silicon/") {
                         Link("r/hermesagent macOS megathread", destination: url).font(.caption)
                     }
-                    if let url = URL(string: "https://github.com/ggml-org/llama.cpp/issues/23752") {
-                        Link("MTP on Metal: why it's off by default", destination: url).font(.caption)
-                    }
+                    // MTP issue link removed — fixed in llama.cpp b9859+
                 }
                 .padding(.bottom, 14)
 

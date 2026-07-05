@@ -69,7 +69,7 @@ gemma-3-mtp-Q4_K_M.gguf          ← a model with "mtp" in its name
 
 ### MTP Toggle (Settings → Global)
 
-Since MTP is a **net loss on Apple Silicon Metal** (11-92% slower — see [llama.cpp#23752](https://github.com/ggerganov/llama.cpp/issues/23752)), the app opts out by default.
+MTP is **ON by default** — the app auto-detects whether a model supports it (companion `mtp-*.gguf` file or built-in MTP), and silently skips it for models that don't.
 
 If you want to experiment with MTP on your own hardware, toggle "Enable MTP" in **Settings → Global**. This passes `--spec-type draft-mtp` to llama-server. It persists across restarts via UserDefaults.
 

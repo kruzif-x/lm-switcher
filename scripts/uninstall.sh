@@ -136,7 +136,7 @@ fi
 # delete the .app bundle underneath it.
 
 echo "==> Stopping menu bar app..."
-pkill -f "llama-menubar" 2>/dev/null || true
+pkill -f "llm-switcher" 2>/dev/null || true
 sleep 1
 
 
@@ -167,9 +167,9 @@ fi
 echo "==> Removing files from $BIN_DIR..."
 
 # Compiled binary.
-if [[ -f "$BIN_DIR/llama-menubar" ]]; then
-    rm -f "$BIN_DIR/llama-menubar"
-    echo "  ✓ llama-menubar binary removed"
+if [[ -f "$BIN_DIR/llm-switcher" ]]; then
+    rm -f "$BIN_DIR/llm-switcher"
+    echo "  ✓ llm-switcher binary removed"
 fi
 
 # CLI script.
