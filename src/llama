@@ -88,7 +88,7 @@ MODELS_DIR="${LLAMA_MODELS_DIR:-$HOME/models}"   # scanned recursively
 PORT="${LLAMA_PORT:-8080}"                       # default port
 CTX_SIZE="${LLAMA_CTX_SIZE:-4096}"               # default ctx size (tokens)
 CHAT_TEMPLATE="${LLAMA_CHAT_TEMPLATE:-}"          # optional chat template path
-ENABLE_MTP="${LLAMA_ENABLE_MTP:-false}"            # enable MTP (off by default, net loss on Metal)
+ENABLE_MTP="${LLAMA_ENABLE_MTP:-true}"             # enable MTP (on by default, auto-detected per model)
 
 
 # -----------------------------------------------------------------------------
@@ -400,8 +400,10 @@ load_model() {
             done
         fi
 
-        # MTP heads are loaded automatically by llama-server from
-        # model metadata when --mmproj is attached. No --mtp flag needed.
+        # MTP heads: some models ship MTP built into the GGUF (infix -mtp-),
+        # while others carry a separate mtp-*.gguf companion. If a companion
+        # exists, pass --spec-draft-model explicitly. Also check MTP/ subdir
+        # (HuggingFace convention).
         # Apply chat template override if configured via env var.
         # Agentic harnesses (opencode, pi) need custom templates to fix
         # tool-calling edge cases (broken arg formatting, dropped reasoning,
@@ -461,12 +463,37 @@ load_model() {
         [[ "$(pref_bool mlock false)"  == "true" ]] && args+=("--mlock")
         [[ "$(pref_bool noMmap false)" == "true" ]] && args+=("--no-mmap")
 
-        # MTP: opt-in only. Net loss on Apple Silicon Metal. Honors either the
-        # LLAMA_ENABLE_MTP env var or the shared `enableMtp` setting.
-        # https://github.com/ggerganov/llama.cpp/issues/23752
+        # MTP: ON by default. Checks if model has companion mtp-*.gguf or
+        # built-in MTP (filename infix -MTP-). Silently skipped if not.
+        local mtp_check; mtp_check=false
         if [[ "$ENABLE_MTP" == "true" || "$ENABLE_MTP" == "1" \
-              || "$(pref_bool enableMtp false)" == "true" ]]; then
-            args+=("--spec-type" "draft-mtp")
+              || "$(pref_bool enableMtp true)" == "true" ]]; then
+            mtp_check=true
+        fi
+        if [[ "$mtp_check" == "true" ]]; then
+            # Check for companion mtp-*.gguf
+            local dir; dir="$(dirname "$path")"
+            local bn; bn="$(basename "$path")"
+            local draft_file=""
+            for f in "$dir/mtp-"*.gguf; do
+                [[ -f "$f" ]] && draft_file="$f" && break
+            done
+            if [[ -z "$draft_file" && -d "$dir/MTP" ]]; then
+                for f in "$dir/MTP/"*.gguf; do
+                    [[ -f "$f" ]] && draft_file="$f" && break
+                done
+            fi
+            # Check for built-in MTP (filename infix -MTP- or -mtp-)
+            local has_infix=false
+            if [[ "$bn" =~ [-_]MTP[-_] || "$bn" =~ [-_]mtp[-_] ]]; then
+                has_infix=true
+            fi
+            if [[ -n "$draft_file" || "$has_infix" == "true" ]]; then
+                args+=("--spec-type" "draft-mtp")
+                if [[ -n "$draft_file" ]]; then
+                    args+=("--spec-draft-model" "$draft_file")
+                fi
+            fi
         fi
     else
         # MLX: invoke mlx_lm.server. No mmproj, no explicit ctx (mlx
@@ -746,11 +773,11 @@ cmd_menubar() {
     else
         # Fall back to the legacy location, in case the user hasn't
         # re-run install.sh since the move to ~/Applications/.
-        app="$HOME/bin/llama-menubar.app"
+        app="$HOME/bin/llm-switcher.app"
         if [[ -d "$app" ]]; then
             open "$app"
         else
-            echo "llama-menubar not found. Run install.sh first."
+            echo "llm-switcher not found. Run install.sh first."
             return 1
         fi
     fi
