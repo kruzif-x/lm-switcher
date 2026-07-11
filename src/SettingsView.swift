@@ -1162,9 +1162,6 @@ struct SettingsView: View {
                     if let url = URL(string: "https://github.com/ml-explore/mlx-examples") {
                         Link("MLX Examples", destination: url).font(.caption)
                     }
-                    if let url = URL(string: "https://www.reddit.com/r/hermesagent/comments/1uc7rw5/mac_mlx_megathread_hermes_agent_on_apple_silicon/") {
-                        Link("r/hermesagent macOS megathread", destination: url).font(.caption)
-                    }
                     // MTP issue link removed — fixed in llama.cpp b9859+
                 }
                 .padding(.bottom, 14)
