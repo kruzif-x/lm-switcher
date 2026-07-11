@@ -39,7 +39,10 @@ Phase 1 ships alone and is verified before Phase 2 starts.
 ### 3.1 Components
 
 New standalone executable: `llm-switcher-mcp`, installed to `~/bin`.
-**Shares no source files with the app.** Compiled as a second `swiftc`
+**Shares no source files with the app**, with one deliberate exception:
+`src/SystemMetrics.swift` (read-only RAM/pressure/swap/RSS reads, no side
+effects, no protocol surface) is compiled into both targets — the app uses
+it for the menu footer memory line. Compiled as a second `swiftc`
 target in `install.sh`. If the MCP build fails, the app install still
 completes (build app first, MCP second, warn on failure).
 

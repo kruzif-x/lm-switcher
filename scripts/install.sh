@@ -104,7 +104,7 @@ swiftc -parse-as-library -o "$COMPILED_BIN" -O \
 # can never block the app install — the `if` also keeps `set -e` from
 # aborting on failure.
 echo "==> Compiling llm-switcher-mcp (agent access server)..."
-if swiftc -O -o "$BIN_DIR/llm-switcher-mcp" "$SRC_DIR"/mcp/*.swift 2>"$BIN_DIR/.mcp-build.log"; then
+if swiftc -O -o "$BIN_DIR/llm-switcher-mcp" "$SRC_DIR"/mcp/*.swift "$SRC_DIR/SystemMetrics.swift" 2>"$BIN_DIR/.mcp-build.log"; then
     rm -f "$BIN_DIR/.mcp-build.log"
     echo "  ✓ MCP server: $BIN_DIR/llm-switcher-mcp"
 else

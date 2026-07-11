@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the MCP for per-call overrides).
 - Help section 9 "Agent access (MCP)"; Mlock and No-mmap toggles surfaced
   in the Inference card; Help tab audited against the current UI.
+- **Memory footer** — the menu dropdown shows "N GB free of M · pressure"
+  (swap appears only when in use or pressure is elevated), refreshed every
+  3 s while the panel is open, zero cost while closed. Hovering a running
+  model's port shows that server's resident memory. `SystemMetrics.swift`
+  is compiled into both the app and the MCP (the one deliberate exception
+  to the no-shared-sources rule — read-only, no side effects).
 
 ### Removed
 - r/hermesagent Reddit megathread link from the About page.

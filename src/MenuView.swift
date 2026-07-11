@@ -7,6 +7,14 @@ import SwiftUI
 import AppKit
 
 
+/// "6.3 GB" / "21 GB" — base-1024, one decimal below 10 (matches the MCP's
+/// formatting so agent responses and the menu read the same).
+func gbText(_ bytes: UInt64) -> String {
+    let gb = Double(bytes) / 1_073_741_824
+    return gb < 10 ? String(format: "%.1f GB", gb) : String(format: "%.0f GB", gb)
+}
+
+
 // MARK: - Menu View
 
 struct MenuView: View {
@@ -14,13 +22,86 @@ struct MenuView: View {
     @ObservedObject var settingsHost: SettingsWindowHost
     @State private var loadingIDs: Set<String> = []
 
+    // System memory shown in the footer. Computed only while the panel is
+    // open (onAppear + 3 s timer, torn down onDisappear) — zero idle cost.
+    @State private var metrics: SystemMetrics? = nil
+    @State private var rssByPid: [Int32: String] = [:]
+    @State private var metricsTimer: Timer? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             modelScroll
             Divider()
+            memoryRow
             footerRow
         }
         .frame(width: 300)
+        .onAppear {
+            refreshMetrics()
+            let t = Timer(timeInterval: 3, repeats: true) { _ in refreshMetrics() }
+            t.tolerance = 1
+            RunLoop.main.add(t, forMode: .common)
+            metricsTimer = t
+        }
+        .onDisappear {
+            metricsTimer?.invalidate()
+            metricsTimer = nil
+        }
+    }
+
+    /// Read metrics off-main (RSS spawns one `ps` per running model),
+    /// publish on main.
+    private func refreshMetrics() {
+        let pids = manager.models.compactMap { manager.state(for: $0).pid }
+        DispatchQueue.global(qos: .utility).async {
+            let m = SystemMetrics.read()
+            var rss: [Int32: String] = [:]
+            for pid in pids {
+                if let bytes = SystemMetrics.rssBytes(pid: pid) { rss[pid] = gbText(bytes) }
+            }
+            DispatchQueue.main.async {
+                metrics = m
+                rssByPid = rss
+            }
+        }
+    }
+
+    // MARK: - Memory line
+
+    /// "11 GB free of 32 · normal" — swap appears only when something is
+    /// actually wrong (swap in use or pressure above normal).
+    private var memoryRow: some View {
+        HStack(spacing: 4) {
+            if let m = metrics {
+                let unwell = m.memoryPressure != "normal" || m.swapUsed > 0
+                Text("\(gbText(m.ramAvailable)) free of \(gbText(m.ramTotal))")
+                    .foregroundStyle(.secondary)
+                Text("·").foregroundStyle(.secondary)
+                Text(m.memoryPressure)
+                    .foregroundStyle(pressureColor(m.memoryPressure))
+                if unwell, m.swapUsed > 0 {
+                    Text("·").foregroundStyle(.secondary)
+                    Text("swap \(gbText(m.swapUsed))")
+                        .foregroundStyle(m.memoryPressure == "critical" ? Color.red : Color.orange)
+                }
+            } else {
+                Text(" ")   // reserve the row height before the first read
+            }
+            Spacer()
+        }
+        .font(.system(size: 10))
+        .padding(.horizontal, 12)
+        .padding(.top, 5)
+        .padding(.bottom, 1)
+    }
+
+    private func pressureColor(_ level: String) -> Color {
+        switch level {
+        case "normal":   return .green
+        case "warning":  return .orange
+        case "critical": return .red
+        default:         return .secondary
+        }
     }
 
     // MARK: - Scrollable model list
@@ -59,7 +140,8 @@ struct MenuView: View {
                 if !running.isEmpty {
                     sectionLabel("Running")
                     ForEach(running) { model in
-                        RunningRow(model: model, manager: manager)
+                        RunningRow(model: model, manager: manager,
+                                   rss: manager.state(for: model).pid.flatMap { rssByPid[$0] })
                     }
                     if running.count >= 2 {
                         bulkBar(running: running)
@@ -179,6 +261,9 @@ struct MenuView: View {
 private struct RunningRow: View {
     let model: ModelEntry
     @Bindable var manager: ServerManager
+    /// Resident memory of this server process, refreshed by MenuView's
+    /// metrics tick. Shown as a hover tooltip — the 300 px row is full.
+    let rss: String?
 
     var body: some View {
         let _        = manager.refreshTrigger
@@ -222,6 +307,7 @@ private struct RunningRow: View {
             Text(":\(String(state.port))")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Color.green)
+                .help(rss.map { "Using \($0) of RAM" } ?? "")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
