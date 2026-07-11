@@ -899,22 +899,24 @@ struct SettingsView: View {
                     }
 
                     helpSection(number: "3", title: "Global settings", id: "s3", proxy: proxy) {
-                        helpEntry("Models directory", "Scanned for .gguf files and MLX model folders.")
+                        helpEntry("Models directory", "Scanned for .gguf files and MLX model folders. (Models card)")
                         helpEntry("Default port", "Starting port for model servers. Additional models increment — 8080, 8081, 8082…")
-                        helpEntry("Default ctx size", "Context window in tokens. Accepts k-suffix (4k, 8k) or plain integers. Use 4k for 16 GB Macs, 64k for 32 GB+.")
-                        helpEntry("Global extra args", "Free-form arguments passed to every server launch. Parsed with quote handling.")
+                        helpEntry("Context size", "Context window in tokens. Accepts k-suffix (4k, 8k) or plain integers. Use 4k for 16 GB Macs, 64k for 32 GB+.")
+                        helpEntry("Extra args", "Free-form arguments appended to every server launch. Parsed with quote handling.")
+                        helpEntry("Backend paths", "Paths to the llama-server (GGUF) and mlx_lm.server (MLX) binaries. (Backends card)")
+                        helpEntry("Chat template", "Custom .jinja or .json template for agentic harnesses (opencode, pi). Leave empty for the model's built-in template. (Backends card)")
+                        helpEntry("Flash attention", "Hardware-accelerated attention via Metal. No downside on Apple Silicon — leave ON. (Inference card)")
+                        helpEntry("Thinking mode", "Model generates reasoning tokens before responding. Better for coding and tool loops. Qwen recommends ON for coding, OFF for speed-constrained Macs.")
+                        helpEntry("Suppress reasoning", "Suppresses Gemma 4's reasoning_content field that crashes OpenAI-compatible clients (opencode, pi, OpenClaw). Leave ON unless your client handles it natively.")
                         helpEntry("MTP", "Multi-Token Prediction. ON by default — auto-detected per model. Only applies to models with built-in MTP or a companion mtp-*.gguf head.")
-                        helpEntry("Chat template override", "Custom .jinja or .json template for agentic harnesses (opencode, pi). Leave empty for the model's built-in template.")
                     }
 
                     helpSection(number: "4", title: "Advanced settings", id: "s4", proxy: proxy) {
                         helpEntry("K / V cache type", "KV cache quantization — separate from model weight quantization. q8_0 K + q4_0 V halves memory with minimal quality loss. f16 = full precision (spare RAM only).")
-                        helpEntry("Flash attention", "Hardware-accelerated attention via Metal. No downside on Apple Silicon — leave ON.")
-                        helpEntry("Thinking mode", "Model generates reasoning tokens before responding. Better for coding and tool loops. Qwen recommends ON for coding, OFF for speed-constrained Macs.")
-                        helpEntry("Suppress reasoning content", "Suppresses Gemma 4's reasoning_content field that crashes OpenAI-compatible clients (opencode, pi, OpenClaw). Leave ON unless your client handles it natively.")
                         helpEntry("Temperature", "0.6 for coding, 0.8 for chat, 1.0 for research.")
                         helpEntry("Top-P / Top-K", "Qwen-recommended defaults: top-p 0.95, top-k 20 for all workloads.")
                         helpEntry("Repeat penalty", "1.0 = off. Increase to 1.1–1.5 if the model repeats itself.")
+                        helpEntry("Seed", "Fixed seed for reproducible output. Empty = random.")
                         helpEntry("CPU threads", "Empty = auto-detect all cores. Limit on 8 GB Macs to reduce contention. GGUF only.")
                         helpEntry("Batch size", "Prompt processing batch. Default 2048 is the llama.cpp standard. GGUF only.")
                         helpEntry("Mlock", "Locks model in RAM to prevent swap. Only enable with spare RAM.")
@@ -931,13 +933,15 @@ struct SettingsView: View {
 
                     helpSection(number: "6", title: "CLI commands", id: "s6", proxy: proxy) {
                         helpEntry("llama list", "List all discovered models with load status.")
-                        helpEntry("llama load <name>", "Load a model by fuzzy name match.")
+                        helpEntry("llama load <name…>", "Load one or more models by fuzzy name match.")
                         helpEntry("llama unload <name…> | all", "Unload one or more named models, or all at once.")
-                        helpEntry("llama switch <name>", "Atomic switch: load new model, verify it started, then unload everything else.")
+                        helpEntry("llama switch <name…>", "Atomic switch: load new model(s), verify they started, then unload everything else.")
                         helpEntry("llama status", "Show running models with ports and PIDs.")
-                        helpEntry("llama ctx <size>", "Set per-model context size override.")
-                        helpEntry("llama port <num>", "Set per-model port override.")
+                        helpEntry("llama ctx <model> <size>", "Set per-model context size override.")
+                        helpEntry("llama port <model> <port>", "Set per-model port override.")
                         helpEntry("llama menubar", "Launch the menu bar app.")
+                        helpEntry("llama uninstall", "Remove the app, CLI, and launch agent.")
+                        helpEntry("llama help", "Show CLI usage.")
                     }
 
                     helpSection(number: "7", title: "Vision models (Gemma 4 / Qwen2-VL)", id: "s7", proxy: proxy) {
@@ -988,15 +992,15 @@ struct SettingsView: View {
                         .padding(.leading, 16)
                         .padding(.bottom, 8)
 
-                        helpEntry("mtp-*.gguf exclusion", "MTP encoder heads are excluded from the model list — they are not standalone models. llama-server loads them from model metadata automatically when present in the same folder.")
+                        helpEntry("mtp-*.gguf exclusion", "MTP encoder heads are excluded from the model list — they are not standalone models. When MTP is ON, the app finds the head (same folder or MTP/ subfolder) and attaches it via --spec-type draft-mtp automatically.")
                         helpEntry("Reasoning suppression (Gemma 4)", "Applied automatically via --reasoning off --reasoning-format none. Turn OFF in Settings only if your client handles reasoning_content natively.")
-                        helpEntry("Chat template bugs (Gemma 4)", "The standard Gemma 4 template has 4 bugs that break multi-turn tool calling. Use a custom .jinja template via Settings → Backends → Chat template override for agentic harnesses.")
+                        helpEntry("Chat template bugs (Gemma 4)", "The standard Gemma 4 template has 4 bugs that break multi-turn tool calling. Use a custom .jinja template via Global → Backends → Chat template for agentic harnesses.")
                     }
 
                     helpSection(number: "8", title: "Quantization guide", id: "s8", proxy: proxy) {
                         helpEntry("Model quant vs KV cache quant", "Model quantization (Q4_K_M, Q8, etc.) is baked into the .gguf file. KV cache quant (the settings here) controls how the context window is stored in RAM during inference. They're independent — any combination works.")
                         helpEntry("8 GB",  "Qwen3.5-4B Q4_K_M — simple chat only, not for agent work.")
-                        helpEntry("16 GB", "Qwen3.5-9B Q4_K_M — practical floor for Hermes tool calling.")
+                        helpEntry("16 GB", "Qwen3.5-9B Q4_K_M — practical floor for agentic tool calling.")
                         helpEntry("24 GB", "Qwen3.6-27B Q4_K_M — dense, stronger coding.")
                         helpEntry("32 GB+", "Qwen3.6-35B-A3B MLX 4-bit — MoE sweet spot (~3B active per token).")
                         helpEntry("48 GB+", "Qwen3.6-27B Q6_K — the 'serious agent' quant. Q4 drifts on long tool traces.")
