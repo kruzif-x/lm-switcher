@@ -1561,6 +1561,10 @@ class ServerManager {
         // MTP toggle: off by default (was historically a net loss on Metal).
         settings.enableMtp = d.bool(forKey: "enableMtp")
 
+        // MCP agent access: off by default — absent key reads as false.
+        settings.mcpEnabled = d.bool(forKey: "mcpEnabled")
+        settings.allowSwapLoads = d.bool(forKey: "allowSwapLoads")
+
         // KV cache quantization.
         settings.kvCacheTypeK = d.string(forKey: "kvCacheTypeK") ?? "q8_0"
         settings.kvCacheTypeV = d.string(forKey: "kvCacheTypeV") ?? "q4_0"
@@ -1607,6 +1611,8 @@ class ServerManager {
         d.set(settings.globalExtraArgs, forKey: "globalExtraArgs")
         d.set(settings.chatTemplatePath, forKey: "chatTemplatePath")
         d.set(settings.enableMtp, forKey: "enableMtp")
+        d.set(settings.mcpEnabled, forKey: "mcpEnabled")
+        d.set(settings.allowSwapLoads, forKey: "allowSwapLoads")
         d.set(settings.kvCacheTypeK, forKey: "kvCacheTypeK")
         d.set(settings.kvCacheTypeV, forKey: "kvCacheTypeV")
         d.set(settings.flashAttention, forKey: "flashAttention")

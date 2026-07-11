@@ -17,6 +17,8 @@ private struct GlobalSettingsModifier: ViewModifier {
     @Binding var defaultCtxSize: String
     @Binding var globalExtraArgs: String
     @Binding var enableMtp: Bool
+    @Binding var mcpEnabled: Bool
+    @Binding var allowSwapLoads: Bool
     @Binding var kvCacheTypeK: String
     @Binding var kvCacheTypeV: String
     @Binding var flashAttention: Bool
@@ -38,7 +40,7 @@ private struct GlobalSettingsModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .modifier(ServerDefaultsModifier(manager: manager, modelsDir: $modelsDir, defaultPort: $defaultPort, defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs, enableMtp: $enableMtp))
+            .modifier(ServerDefaultsModifier(manager: manager, modelsDir: $modelsDir, defaultPort: $defaultPort, defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs, enableMtp: $enableMtp, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads))
             .modifier(KvCacheModifier(manager: manager, kvCacheTypeK: $kvCacheTypeK, kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention, thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning, llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath, chatTemplatePath: $chatTemplatePath))
             .modifier(PerfSamplingModifier(manager: manager, temperature: $temperature, topP: $topP, topK: $topK, repeatPenalty: $repeatPenalty, seedStr: $seedStr, cpuThreadsStr: $cpuThreadsStr, batchSizeStr: $batchSizeStr, mlock: $mlock, noMmap: $noMmap, mlxMaxKvSizeStr: $mlxMaxKvSizeStr))
     }
@@ -51,6 +53,8 @@ private struct ServerDefaultsModifier: ViewModifier {
     @Binding var defaultCtxSize: String
     @Binding var globalExtraArgs: String
     @Binding var enableMtp: Bool
+    @Binding var mcpEnabled: Bool
+    @Binding var allowSwapLoads: Bool
     func body(content: Content) -> some View {
         content
             .onChange(of: modelsDir)      { _, v in manager.settings.modelsDir = v; manager.refreshModels(); manager.startWatching() }
@@ -58,6 +62,8 @@ private struct ServerDefaultsModifier: ViewModifier {
             .onChange(of: defaultCtxSize) { _, v in if let c = manager.parseCtxInput(v) { manager.settings.defaultCtxSize = c } }
             .onChange(of: globalExtraArgs){ _, v in manager.settings.globalExtraArgs = v }
             .onChange(of: enableMtp)      { _, v in manager.settings.enableMtp = v }
+            .onChange(of: mcpEnabled)     { _, v in manager.settings.mcpEnabled = v }
+            .onChange(of: allowSwapLoads) { _, v in manager.settings.allowSwapLoads = v }
     }
 }
 
@@ -141,6 +147,8 @@ struct SettingsView: View {
     @State private var globalExtraArgs: String
     @State private var chatTemplatePath: String
     @State private var enableMtp: Bool
+    @State private var mcpEnabled: Bool
+    @State private var allowSwapLoads: Bool
     @State private var kvCacheTypeK: String
     @State private var kvCacheTypeV: String
     @State private var flashAttention: Bool
@@ -168,6 +176,8 @@ struct SettingsView: View {
         _globalExtraArgs  = State(initialValue: manager.settings.globalExtraArgs)
         _chatTemplatePath = State(initialValue: manager.settings.chatTemplatePath)
         _enableMtp        = State(initialValue: manager.settings.enableMtp)
+        _mcpEnabled       = State(initialValue: manager.settings.mcpEnabled)
+        _allowSwapLoads   = State(initialValue: manager.settings.allowSwapLoads)
         _kvCacheTypeK     = State(initialValue: manager.settings.kvCacheTypeK)
         _kvCacheTypeV     = State(initialValue: manager.settings.kvCacheTypeV)
         _flashAttention   = State(initialValue: manager.settings.flashAttention)
@@ -225,7 +235,7 @@ struct SettingsView: View {
             manager: manager,
             modelsDir: $modelsDir, defaultPort: $defaultPort,
             defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs,
-            enableMtp: $enableMtp, kvCacheTypeK: $kvCacheTypeK,
+            enableMtp: $enableMtp, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, kvCacheTypeK: $kvCacheTypeK,
             kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention,
             thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning,
             llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath,
@@ -256,6 +266,8 @@ struct SettingsView: View {
         globalExtraArgs = d.globalExtraArgs
         chatTemplatePath = d.chatTemplatePath
         enableMtp       = d.enableMtp
+        mcpEnabled      = d.mcpEnabled
+        allowSwapLoads  = d.allowSwapLoads
         kvCacheTypeK    = d.kvCacheTypeK
         kvCacheTypeV    = d.kvCacheTypeV
         flashAttention  = d.flashAttention
@@ -293,6 +305,8 @@ struct SettingsView: View {
         globalExtraArgs = s.globalExtraArgs
         chatTemplatePath = s.chatTemplatePath
         enableMtp       = s.enableMtp
+        mcpEnabled      = s.mcpEnabled
+        allowSwapLoads  = s.allowSwapLoads
         kvCacheTypeK    = s.kvCacheTypeK
         kvCacheTypeV    = s.kvCacheTypeV
         flashAttention  = s.flashAttention
@@ -422,6 +436,30 @@ struct SettingsView: View {
                 isOn: $enableMtp,
                 tint: Color.orange
             )
+            Divider().padding(.leading, 14)
+            toggleRow(
+                label: "Agent access (MCP)",
+                hint: "Lets MCP-connected agents list, load, and unload models — OFF blocks all agent control",
+                isOn: $mcpEnabled,
+                tint: Color.purple
+            )
+            if mcpEnabled {
+                Divider().padding(.leading, 14)
+                toggleRow(
+                    label: "Allow swap for agent loads",
+                    hint: "OFF: agent loads that don't fit in free RAM are refused instead of swapping",
+                    isOn: $allowSwapLoads
+                )
+                HStack {
+                    Text("Register:  claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 8)
+            }
             Divider().padding(.leading, 14)
             toggleRow(label: "Mlock", hint: "Lock model in RAM to prevent swap — GGUF only", isOn: $mlock)
             Divider().padding(.leading, 14)
@@ -1006,6 +1044,14 @@ struct SettingsView: View {
                         helpEntry("48 GB+", "Qwen3.6-27B Q6_K — the 'serious agent' quant. Q4 drifts on long tool traces.")
                         helpEntry("64 GB+", "Qwen3.6-27B Q8 — near-full precision.")
                     }
+
+                    helpSection(number: "9", title: "Agent access (MCP)", id: "s9", proxy: proxy) {
+                        helpEntry("What it is", "An MCP stdio server (llm-switcher-mcp) that lets agents (Claude Code, Hermes, opencode…) list, load, unload, and switch models. Register with: claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp")
+                        helpEntry("Agent access (MCP) toggle", "Master switch, OFF by default. While OFF every agent tool call is refused. Turning it OFF never unloads models — it revokes control, not servers.")
+                        helpEntry("Allow swap for agent loads", "OFF: agent loads that don't fit in free RAM are refused with an explanation and the largest context that would fit. ON: the load proceeds and the agent gets a swap warning.")
+                        helpEntry("Pinning", "Right-click a running model → Pin. Agents cannot unload pinned models; the menu bar Unload buttons are unaffected — pins protect against agents, not you.")
+                        helpEntry("Agent settings access", "Read-only. Agents can never change ports, context sizes, sampling, or any other setting. Per-call ctx/port requests are ephemeral and never persisted.")
+                    }
                 }
                 .padding(.bottom, 16)
             }
@@ -1029,6 +1075,7 @@ struct SettingsView: View {
                 ("6", "s6", "CLI commands"),
                 ("7", "s7", "Vision models"),
                 ("8", "s8", "Quantization guide"),
+                ("9", "s9", "Agent access (MCP)"),
             ]
 
             let cols = [GridItem(.flexible()), GridItem(.flexible())]
@@ -1113,7 +1160,7 @@ struct SettingsView: View {
                     }
                     Text("LLM Switcher")
                         .font(.title2).fontWeight(.medium)
-                    Text("Version 1.1.0")
+                    Text("Version 1.2.0")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.top, 24)

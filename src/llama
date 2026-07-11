@@ -84,7 +84,10 @@ mkdir -p "$LOGS_DIR"
 
 # User-overridable settings. Each is a `:- default` expression: if the
 # variable is unset or empty, use the default.
-MODELS_DIR="${LLAMA_MODELS_DIR:-$HOME/models}"   # scanned recursively
+# Models directory precedence: LLAMA_MODELS_DIR env, then the app's saved
+# setting (same UserDefaults domain — keeps CLI and app scanning the SAME
+# tree, as the settings-sync design intends), then ~/models.
+MODELS_DIR="${LLAMA_MODELS_DIR:-$(defaults read local.llama-menubar modelsDir 2>/dev/null || echo "$HOME/models")}"
 PORT="${LLAMA_PORT:-8080}"                       # default port
 CTX_SIZE="${LLAMA_CTX_SIZE:-4096}"               # default ctx size (tokens)
 CHAT_TEMPLATE="${LLAMA_CHAT_TEMPLATE:-}"          # optional chat template path
@@ -358,16 +361,25 @@ load_model() {
         return 0
     fi
 
-    # Pick a port: prefer the per-model saved port; otherwise the next
-    # free port starting from $PORT.
+    # Pick a port: an explicit `load --port N` flag wins (ephemeral, never
+    # persisted — used by the MCP for per-call overrides); then the
+    # per-model saved port; otherwise the next free port from $PORT.
     local preferred; preferred=$(per_model_port "$id_hash")
     local port
-    if [[ "$preferred" -gt 0 ]]; then
+    if [[ -n "$FORCE_PORT" && "$FORCE_PORT" -gt 0 ]]; then
+        port=$FORCE_PORT
+    elif [[ "$preferred" -gt 0 ]]; then
         port=$preferred
     else
         port=$(next_port)
     fi
-    local ctx; ctx=$(per_model_ctx "$id_hash")
+    # Ctx: same precedence — `load --ctx N` flag, then per-model, then default.
+    local ctx
+    if [[ -n "$FORCE_CTX" && "$FORCE_CTX" -gt 0 ]]; then
+        ctx=$FORCE_CTX
+    else
+        ctx=$(per_model_ctx "$id_hash")
+    fi
 
     # Build the command line, depending on the backend.
     local -a args=()
@@ -655,8 +667,20 @@ cmd_list() {
 
 # `llama load <m1> [m2 ...]` — load one or more models.
 cmd_load() {
+    # Ephemeral per-invocation overrides (MCP_SPEC §3.3): `--ctx N` and
+    # `--port N` beat per-model saved settings for THIS launch only and
+    # are never persisted. Globals consumed by load_model.
+    FORCE_CTX=""
+    FORCE_PORT=""
+    while [[ "${1:-}" == --* ]]; do
+        case "$1" in
+            --ctx)  FORCE_CTX="$2";  shift 2 ;;
+            --port) FORCE_PORT="$2"; shift 2 ;;
+            *) echo "Unknown flag: $1 (supported: --ctx N, --port N)"; return 1 ;;
+        esac
+    done
     if [[ $# -eq 0 ]]; then
-        echo "Usage: llama load <model> [model2 ...]"
+        echo "Usage: llama load [--ctx N] [--port N] <model> [model2 ...]"
         return 1
     fi
     for q in "$@"; do

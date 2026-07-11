@@ -99,6 +99,19 @@ swiftc -parse-as-library -o "$COMPILED_BIN" -O \
     -framework SwiftUI -framework AppKit \
     "$BIN_DIR"/*.swift
 
+# MCP agent-access server (MCP_SPEC.md Phase 1). A separate binary that
+# shares no source files with the app. Built SECOND so a broken MCP build
+# can never block the app install — the `if` also keeps `set -e` from
+# aborting on failure.
+echo "==> Compiling llm-switcher-mcp (agent access server)..."
+if swiftc -O -o "$BIN_DIR/llm-switcher-mcp" "$SRC_DIR"/mcp/*.swift 2>"$BIN_DIR/.mcp-build.log"; then
+    rm -f "$BIN_DIR/.mcp-build.log"
+    echo "  ✓ MCP server: $BIN_DIR/llm-switcher-mcp"
+else
+    echo "  ⚠ MCP server build FAILED — app install continues."
+    echo "    Log: $BIN_DIR/.mcp-build.log"
+fi
+
 
 # -----------------------------------------------------------------------------
 # Step 2: Create the .app bundle
@@ -294,6 +307,9 @@ echo "  - From Launchpad: search 'LLM Switcher'"
 echo "  - From Spotlight: ⌘+Space then 'LLM Switcher'"
 echo "  - From CLI:       llama menubar"
 echo "  - Direct:         open '$APP_BUNDLE'"
+echo ""
+echo "Agent access (MCP) — OFF by default; enable in Settings → Global:"
+echo "  claude mcp add llm-switcher -- $BIN_DIR/llm-switcher-mcp"
 echo ""
 echo "To use the CLI:"
 echo "  llama list"

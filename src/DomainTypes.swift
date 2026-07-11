@@ -139,6 +139,16 @@ struct AppSettings {
     /// ON by default — silently skipped for models without MTP support.
     var enableMtp: Bool = true
 
+    /// Master toggle for MCP agent access (MCP_SPEC §3.9). The external
+    /// llm-switcher-mcp server re-reads this key on every tools/call and
+    /// refuses all tools while OFF. The app itself never acts on it.
+    var mcpEnabled: Bool = false
+
+    /// Permit agent-initiated loads that exceed free RAM (MCP_SPEC §3.7).
+    /// OFF (default): the MCP swap guard refuses loads that would swap.
+    /// Consumed only by llm-switcher-mcp; the app itself never acts on it.
+    var allowSwapLoads: Bool = false
+
     /// KV cache type for K cache. q8_0 is the community default for Mac
     /// (halves KV memory with minimal quality loss). f16 is full precision.
     var kvCacheTypeK: String = "q8_0"

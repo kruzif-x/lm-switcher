@@ -5,6 +5,30 @@ All notable changes to LLM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-07-12
+
+### Added
+- **Agent access (MCP)** — new standalone `llm-switcher-mcp` stdio server
+  (MCP over newline-delimited JSON-RPC 2.0) lets agents (Claude Code,
+  Hermes, opencode…) list, load, unload, and switch models. Gated by the
+  new **Agent access (MCP)** toggle (Settings → Global → Inference card,
+  below MTP; OFF by default — every tool call is refused while OFF).
+  Register with: `claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp`.
+- **Swap guard** — agent loads that would exceed free RAM (minus a fixed
+  OS headroom) are refused with the largest context size that would fit,
+  unless the new **Allow swap for agent loads** toggle is ON. Footprint is
+  estimated from the GGUF header / MLX config.json plus KV-cache math.
+- **Model pinning** — right-click a running model → Pin. Agents cannot
+  unload pinned models; the user's own Unload buttons are unaffected.
+- **Ephemeral CLI overrides** — `llama load --ctx N --port N` beat saved
+  per-model settings for that launch only and are never persisted (used
+  by the MCP for per-call overrides).
+- Help section 9 "Agent access (MCP)"; Mlock and No-mmap toggles surfaced
+  in the Inference card; Help tab audited against the current UI.
+
+### Removed
+- r/hermesagent Reddit megathread link from the About page.
+
 ## [1.1.0] - 2026-06-29
 
 ### Added

@@ -181,9 +181,11 @@ private struct RunningRow: View {
     @Bindable var manager: ServerManager
 
     var body: some View {
+        let _        = manager.refreshTrigger
         let state    = manager.state(for: model)
         let multiRun = manager.models.filter { manager.state(for: $0).isRunning }.count >= 2
         let checked  = manager.selected.contains(model.id)
+        let pinned   = manager.perModelSetting("pinned", default: false, for: model)
 
         HStack(spacing: 8) {
             if multiRun {
@@ -204,6 +206,15 @@ private struct RunningRow: View {
                 .lineLimit(1)
                 .font(.system(size: 13))
 
+            // Pin protects against agent unloads only (MCP_SPEC §3.10);
+            // the user's Unload buttons ignore it.
+            if pinned {
+                Image(systemName: "pin.fill")
+                    .imageScale(.small)
+                    .foregroundStyle(Color.secondary)
+                    .help("Pinned — agents cannot unload this model")
+            }
+
             Spacer()
 
             backendBadge(model)
@@ -218,6 +229,10 @@ private struct RunningRow: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button("Unload") { manager.unloadModel(model) }
+            Button(pinned ? "Unpin" : "Pin") {
+                manager.setPerModelSetting(!pinned, for: model, key: "pinned")
+                manager.refreshTrigger += 1
+            }
         }
     }
 }
