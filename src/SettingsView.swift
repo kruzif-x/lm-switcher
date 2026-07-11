@@ -422,6 +422,10 @@ struct SettingsView: View {
                 isOn: $enableMtp,
                 tint: Color.orange
             )
+            Divider().padding(.leading, 14)
+            toggleRow(label: "Mlock", hint: "Lock model in RAM to prevent swap — GGUF only", isOn: $mlock)
+            Divider().padding(.leading, 14)
+            toggleRow(label: "No-mmap", hint: "Disable memory-mapped file loading — GGUF only", isOn: $noMmap)
         }
     }
 
@@ -481,10 +485,6 @@ struct SettingsView: View {
                     shortFieldRow(label: "Batch size", placeholder: "2048", text: $batchSizeStr)
                         .help("Prompt processing batch size.")
                 }
-                toggleRow(label: "Mlock", hint: "Lock model in RAM to prevent swap", isOn: $mlock)
-                Divider().padding(.leading, 14)
-                toggleRow(label: "No-mmap", hint: "Disable memory-mapped file loading — GGUF only", isOn: $noMmap)
-
                 // MLX
                 Divider()
                 advSubHeader(label: "MLX", symbol: "m.square")
@@ -909,6 +909,8 @@ struct SettingsView: View {
                         helpEntry("Thinking mode", "Model generates reasoning tokens before responding. Better for coding and tool loops. Qwen recommends ON for coding, OFF for speed-constrained Macs.")
                         helpEntry("Suppress reasoning", "Suppresses Gemma 4's reasoning_content field that crashes OpenAI-compatible clients (opencode, pi, OpenClaw). Leave ON unless your client handles it natively.")
                         helpEntry("MTP", "Multi-Token Prediction. ON by default — auto-detected per model. Only applies to models with built-in MTP or a companion mtp-*.gguf head.")
+                        helpEntry("Mlock", "Locks model in RAM to prevent swap. Only enable with spare RAM. GGUF only.")
+                        helpEntry("No-MMap", "Disables memory-mapped file loading. Can improve speed on NVMe. GGUF only.")
                     }
 
                     helpSection(number: "4", title: "Advanced settings", id: "s4", proxy: proxy) {
@@ -919,8 +921,6 @@ struct SettingsView: View {
                         helpEntry("Seed", "Fixed seed for reproducible output. Empty = random.")
                         helpEntry("CPU threads", "Empty = auto-detect all cores. Limit on 8 GB Macs to reduce contention. GGUF only.")
                         helpEntry("Batch size", "Prompt processing batch. Default 2048 is the llama.cpp standard. GGUF only.")
-                        helpEntry("Mlock", "Locks model in RAM to prevent swap. Only enable with spare RAM.")
-                        helpEntry("No-MMap", "Disables memory-mapped file loading. Can improve speed on NVMe. GGUF only.")
                         helpEntry("Max KV size (MLX)", "Caps KV cache for MLX. 0 = unlimited. Set 4096–8192 on 16 GB Macs to avoid OOM.")
                     }
 
