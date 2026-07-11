@@ -487,7 +487,7 @@ struct SettingsView: View {
 
                 // MLX
                 Divider()
-                advSubHeader(label: "MLX", symbol: "apple.logo")
+                advSubHeader(label: "MLX", symbol: "m.square")
                 shortFieldRow(label: "Max KV size", placeholder: "unlimited", text: $mlxMaxKvSizeStr)
                     .help("Caps KV cache memory for MLX. Empty = unlimited.")
             }
