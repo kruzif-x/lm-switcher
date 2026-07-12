@@ -103,6 +103,9 @@ struct MenuView: View {
                 if let t = toastText {
                     Text(t)
                         .font(.system(size: 11))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 260)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -258,9 +261,18 @@ struct MenuView: View {
                 Text("won't fit — needs \(gbText(proj)), \(gbText(m.ramAvailable)) free")
                     .foregroundStyle(Color.red)
             }
-        } else if let m = metrics, m.swapUsed > 0 || m.memoryPressure != "normal" {
-            Text("swap \(gbText(m.swapUsed)) in use — unload something")
+        } else if let m = metrics, m.memoryPressure != "normal" {
+            // Pressure elevated: actively churning — unloading now helps.
+            Text("swap \(gbText(m.swapUsed)) — unload something")
                 .foregroundStyle(m.memoryPressure == "critical" ? Color.red : Color.orange)
+        } else if let m = metrics, m.swapUsed > 0 {
+            // Normal pressure with leftover swap: this is OTHER apps'
+            // memory macOS displaced while something big was loaded —
+            // not the unloaded model's (that's freed immediately on
+            // exit). Nothing to unload here; it drains passively as
+            // those apps touch their memory again, or clears on reboot.
+            Text("swap \(gbText(m.swapUsed)) left over — clears as apps wake, or on reboot")
+                .foregroundStyle(.secondary)
         } else {
             Text(" ")
         }
@@ -275,9 +287,9 @@ struct MenuView: View {
         }
     }
 
-    private func showToast(_ text: String) {
+    private func showToast(_ text: String, duration: Double = 1.8) {
         withAnimation(.easeOut(duration: 0.15)) { toastText = text }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
             if toastText == text {
                 withAnimation(.easeIn(duration: 0.25)) { toastText = nil }
             }
@@ -505,12 +517,17 @@ struct MenuView: View {
                         sectionLabel("Available")
                     }
                     ForEach(stopped) { model in
+                        let wontFit = unlikelyToFit(model)
                         StoppedRow(model: model, manager: manager, loadingIDs: $loadingIDs,
-                                   unlikelyToFit: unlikelyToFit(model),
+                                   unlikelyToFit: wontFit,
+                                   swapWarning: wontFit ? projectedBytes(model).map {
+                                       "Loading will push ~\(gbText($0)) to swap — expect slowdown"
+                                   } : nil,
                                    onHoverChange: { h in
                                        if h { ghostModel = model }
                                        else if ghostModel?.id == model.id { ghostModel = nil }
-                                   })
+                                   },
+                                   onToast: { showToast($0, duration: 3.2) })
                     }
                 }
             }
@@ -797,9 +814,15 @@ private struct StoppedRow: View {
     /// True when the model's weights likely exceed current free RAM —
     /// the row dims as a hint (loading stays allowed; it's not a guard).
     let unlikelyToFit: Bool
+    /// Precomputed "will push ~X GB to swap" message, non-nil only when
+    /// unlikelyToFit — shown as a toast the moment Load is pressed, so
+    /// the consequence is visible before it happens (no confirm dialog).
+    let swapWarning: String?
     /// Reports hover to MenuView so the memory spine can ghost this
     /// model's projected footprint (Phase 3).
     let onHoverChange: (Bool) -> Void
+    /// Parent toast trigger, shared with RunningRow's clipboard feedback.
+    let onToast: (String) -> Void
 
     @State private var hovering = false
 
@@ -891,6 +914,7 @@ private struct StoppedRow: View {
     }
 
     private func startLoading() {
+        if let warning = swapWarning { onToast(warning) }
         loadingIDs.insert(model.id)
         manager.loadModel(model)
         // Safety timeout: clear spinner if server never reports back.

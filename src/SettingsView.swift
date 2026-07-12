@@ -1090,6 +1090,9 @@ struct SettingsView: View {
                                   "A stacked bar at the TOP of the menu — grey for other apps, colored segments for your running models, empty track for free RAM. Green normal = all is well. Orange warning or red critical = your Mac is running out of memory: unload something.",
                                   detail: "Refreshed every 3 s while the menu is open, same formula as Activity Monitor. Hover any segment for its name and size; hover a running model's port for that model's RAM use.",
                                   mono: false)
+                        helpEntry("\"Swap left over\" ≠ unload anything.",
+                                  "If you see this with a green normal state, it's memory OTHER apps got displaced while a big model was loaded — not the model you just unloaded (that memory is freed the instant it exits). It drains on its own as those apps wake up, or clears fully on reboot. Nothing to do here.",
+                                  mono: false)
                         helpEntry("Hover a stopped model to preview it.",
                                   "The memory bar previews what loading that model WOULD do — a translucent segment appended to the bar, with a line underneath saying how much would be left, or that it won't fit.",
                                   mono: false)
