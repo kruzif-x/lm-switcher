@@ -1084,17 +1084,26 @@ struct SettingsView: View {
                                   "\"Switch to\" loads the new model first, checks it's healthy, THEN stops the others. If the new one fails, the old one keeps running.",
                                   mono: false)
                         helpEntry("Running 2+ models shows checkboxes.",
-                                  "Untick the ones you want to keep, then \"Unload selected\". The ⏹ footer button stops everything at once; ↻ re-scans your models folder.",
+                                  "Untick the ones you want to keep, then \"Unload selected\". The ⏹ footer button stops everything at once — no confirmation dialog; you get a few seconds to Undo instead if that was a mistake. ↻ re-scans your models folder.",
                                   mono: false)
-                        helpEntry("The memory line is your dashboard.",
-                                  "\"11 GB free of 32 · normal\" at the bottom of the menu. Green normal = all is well. Orange warning or red critical (with a swap figure) = your Mac is running out of memory: unload something.",
-                                  detail: "Refreshed every 3 s while the menu is open, same formula as Activity Monitor. Hover a running model's port to see that model's RAM use.",
+                        helpEntry("The memory bar is your dashboard.",
+                                  "A stacked bar at the TOP of the menu — grey for other apps, colored segments for your running models, empty track for free RAM. Green normal = all is well. Orange warning or red critical = your Mac is running out of memory: unload something.",
+                                  detail: "Refreshed every 3 s while the menu is open, same formula as Activity Monitor. Hover any segment for its name and size; hover a running model's port for that model's RAM use.",
+                                  mono: false)
+                        helpEntry("Hover a stopped model to preview it.",
+                                  "The memory bar previews what loading that model WOULD do — a translucent segment appended to the bar, with a line underneath saying how much would be left, or that it won't fit.",
                                   mono: false)
                         helpEntry("Dimmed models probably won't fit.",
-                                  "A greyed-out model is bigger than your current free memory. You can still load it, but expect serious slowdown (hover its badge for details).",
+                                  "A greyed-out model, tagged \"won't fit\", is bigger than your current free memory. You can still load it, but expect serious slowdown.",
                                   mono: false)
                         helpEntry("Pin anything that must stay up.",
                                   "Pinning protects a model from automation — AI agents and idle auto-unload can't stop it. Your own Unload buttons always work.",
+                                  mono: false)
+                        helpEntry("Type to filter.",
+                                  "Once your library gets large, a search field appears below the memory bar — type any part of a model's name to narrow the list.",
+                                  mono: false)
+                        helpEntry("Clock icon = agent activity.",
+                                  "Shows what MCP-connected agents have loaded or unloaded while you weren't looking. Click again (now an ✕) to go back to your models.",
                                   mono: false)
                     }
 

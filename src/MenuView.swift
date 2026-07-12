@@ -67,25 +67,50 @@ struct MenuView: View {
     /// Transient confirmation shown after clipboard actions ("Copied …").
     @State private var toastText: String? = nil
 
+    /// Type-to-filter text (Phase 5) — the field only appears once the
+    /// library is large enough for scanning to matter.
+    @State private var filterText: String = ""
+    /// Toggled by the footer clock button: swaps the model list for a
+    /// history of MCP agent actions, in the same 300pt surface rather
+    /// than a system popover (this app avoids .popover/.sheet inside the
+    /// MenuBarExtra window — they've been unreliable there).
+    @State private var showingAgentFeed: Bool = false
+
+    /// Models captured just before "Unload all", offered back via Undo.
+    @State private var undoStash: [ModelEntry] = []
+    @State private var undoSecondsLeft: Int = 0
+    @State private var undoTimer: Timer? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             memorySpine
             Divider()
-            modelScroll
+            if showingAgentFeed {
+                agentFeedView
+            } else {
+                if manager.models.count > 10 { filterField }
+                modelScroll
+            }
             Divider()
             footerRow
         }
         .frame(width: 300)
         .overlay(alignment: .bottom) {
-            if let t = toastText {
-                Text(t)
-                    .font(.system(size: 11))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                    .padding(.bottom, 38)
-                    .transition(.opacity)
+            VStack(spacing: 6) {
+                if !undoStash.isEmpty {
+                    undoSnackbar
+                }
+                if let t = toastText {
+                    Text(t)
+                        .font(.system(size: 11))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .transition(.opacity)
+                }
             }
+            .padding(.bottom, 38)
+            .padding(.horizontal, 12)
         }
         .onAppear {
             refreshMetrics()
@@ -259,12 +284,160 @@ struct MenuView: View {
         }
     }
 
+    // MARK: - Type-to-filter (Phase 5 — appears once the library is
+    // large enough that scanning by eye stops being the fastest option)
+
+    private var filterField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            TextField("Filter models…", text: $filterText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+            if !filterText.isEmpty {
+                Button { filterText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+    }
+
+    // MARK: - Undo, not confirm (Phase 5)
+    //
+    //  "Unload all" has no confirmation dialog by design — the recovery
+    //  path is a 5 s Undo instead of a click-through prompt that trains
+    //  users to dismiss it without reading.
+
+    private func performUnloadAllWithUndo() {
+        let running = manager.models.filter { manager.state(for: $0).isRunning }
+        guard !running.isEmpty else { return }
+        manager.unloadAll()
+        undoStash = running
+        undoSecondsLeft = 5
+        undoTimer?.invalidate()
+        let t = Timer(timeInterval: 1, repeats: true) { _ in
+            undoSecondsLeft -= 1
+            if undoSecondsLeft <= 0 {
+                undoTimer?.invalidate()
+                undoTimer = nil
+                withAnimation { undoStash = [] }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        undoTimer = t
+    }
+
+    private func undoUnloadAll() {
+        for m in undoStash { manager.loadModel(m) }
+        undoTimer?.invalidate()
+        undoTimer = nil
+        withAnimation { undoStash = [] }
+    }
+
+    private var undoSnackbar: some View {
+        HStack(spacing: 10) {
+            Text("Unloaded \(undoStash.count) model\(undoStash.count == 1 ? "" : "s")")
+                .font(.system(size: 11.5))
+            Spacer()
+            Button("Undo (\(undoSecondsLeft))") { undoUnloadAll() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .transition(.opacity)
+    }
+
+    // MARK: - Agent activity feed (Phase 5)
+    //
+    //  Toggled by the footer clock button in place of the model list
+    //  (kept inline rather than a system .popover/.sheet — those have
+    //  been unreliable inside this app's MenuBarExtra window).
+
+    private var agentFeedView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("AGENT ACTIVITY")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .tracking(0.4)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+
+            if manager.recentAgentEvents.isEmpty {
+                Text("No agent activity yet — nothing has loaded or unloaded a model.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(manager.recentAgentEvents.reversed()) { ev in
+                            agentEventRow(ev)
+                            Divider().padding(.leading, 12)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(width: 300, height: 220)
+    }
+
+    private func agentEventRow(_ ev: AgentEvent) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: ev.action == "loaded" ? "arrow.down.circle" : "arrow.up.circle")
+                .font(.system(size: 11))
+                .foregroundStyle(ev.action == "loaded" ? Color.green : Color.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(ev.action == "loaded" ? "Loaded" : "Unloaded") \(parseModelName(ev.model).display)\(ev.port.map { " on :\($0)" } ?? "")")
+                    .font(.system(size: 11.5))
+                    .lineLimit(2)
+                Text(relativeTime(ev.timestamp))
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func relativeTime(_ date: Date) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f.localizedString(for: date, relativeTo: Date())
+    }
+
     // MARK: - Scrollable model list
+
+    private func matchesFilter(_ model: ModelEntry, _ q: String) -> Bool {
+        guard !q.isEmpty else { return true }
+        return parseModelName(model.name).display.lowercased().contains(q)
+            || model.name.lowercased().contains(q)
+    }
 
     @ViewBuilder
     private var modelScroll: some View {
-        let running = manager.models.filter { manager.state(for: $0).isRunning }
-        let stopped  = manager.models.filter { !manager.state(for: $0).isRunning }
+        let q = filterText.trimmingCharacters(in: .whitespaces).lowercased()
+        let running = manager.models.filter { manager.state(for: $0).isRunning && matchesFilter($0, q) }
+        let stopped  = manager.models.filter { !manager.state(for: $0).isRunning && matchesFilter($0, q) }
         let rowH: CGFloat = 28
         let sectionH: CGFloat = 26
         let bulkH: CGFloat = 32
@@ -287,6 +460,8 @@ struct MenuView: View {
                 // Inline error captions add a line under failed rows.
                 let errCount = stopped.filter { manager.state(for: $0).lastError != nil }.count
                 h += CGFloat(errCount) * 18
+            } else if running.isEmpty {
+                h += rowH   // "no models match" line
             }
             return min(max(h, 60), 320)
         }()
@@ -312,6 +487,12 @@ struct MenuView: View {
                 // --- Available section ---
                 if manager.models.isEmpty {
                     firstRunView
+                } else if stopped.isEmpty && running.isEmpty {
+                    Text("No models match “\(filterText)”")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                 } else if !stopped.isEmpty {
                     if running.isEmpty {
                         Text("Click a model to load it")
@@ -469,9 +650,14 @@ struct MenuView: View {
             }
 
             footerIconButton(symbol: "stop.fill", help: "Unload all") {
-                manager.unloadAll()
+                performUnloadAllWithUndo()
             }
             .disabled(!manager.anyRunning)
+
+            footerIconButton(symbol: showingAgentFeed ? "xmark" : "clock",
+                              help: showingAgentFeed ? "Back to models" : "Agent activity") {
+                showingAgentFeed.toggle()
+            }
 
             Spacer()
 

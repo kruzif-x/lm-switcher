@@ -159,6 +159,20 @@ struct ModelState {
 }
 
 
+/// One MCP-agent action (load/unload), drained from events.jsonl and
+/// retained for the menu's Agent Activity view (redesign Phase 5).
+/// Independent of the "Notify on agent actions" toggle — that controls
+/// whether a macOS notification is also POSTED, not whether history is
+/// kept for this on-demand feed.
+struct AgentEvent: Identifiable {
+    let id = UUID()
+    let action: String     // "loaded" | "unloaded"
+    let model: String      // raw filename, as the MCP wrote it
+    let port: Int?
+    let timestamp: Date
+}
+
+
 // MARK:   AppSettings
 // -----------------------------------------------------------------------------
 //  Plain data type for global app settings. Mutated in place by both

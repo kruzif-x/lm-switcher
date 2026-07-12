@@ -40,6 +40,11 @@ class ServerManager {
     /// Bumped to force SwiftUI view refresh for per-model override toggles.
     var refreshTrigger: Int = 0
 
+    /// Rolling history of MCP agent actions, newest last, capped at 20.
+    /// Populated by `consumeAgentEvents()`; read by the menu's Agent
+    /// Activity view (redesign Phase 5).
+    var recentAgentEvents: [AgentEvent] = []
+
     /// Set to the model ID being switched to, or nil when idle. Used by UI
     /// to disable buttons during the transition and show a "Switching…"
     /// indicator instead of Load. The atomic double-buffer switch spawns
@@ -1550,19 +1555,34 @@ class ServerManager {
         guard let fh = FileHandle(forUpdatingAtPath: path) else { return }
         defer { try? fh.close() }
         let data = fh.readDataToEndOfFile()
-        guard !data.isEmpty else { return }
+        guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
         try? fh.truncate(atOffset: 0)
 
-        let notify = UserDefaults.standard.object(forKey: "notifyAgentActions") as? Bool ?? true
-        guard notify, let text = String(data: data, encoding: .utf8) else { return }
+        // Parse first, regardless of the notify toggle — the Agent
+        // Activity feed is pull-based history and must not depend on
+        // whether push notifications are also enabled.
+        var parsed: [AgentEvent] = []
         for line in text.split(separator: "\n") {
             guard let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
                   let action = obj["action"] as? String,
                   let model = obj["model"] as? String else { continue }
-            var body = "Agent \(action) \(model)"
-            if let port = obj["port"] as? Int { body += " on :\(port)" }
-            DispatchQueue.main.async { [weak self] in
-                self?.postNotification(title: "LLM Switcher", body: body)
+            let ts = (obj["ts"] as? Double).map { Date(timeIntervalSince1970: $0) } ?? Date()
+            parsed.append(AgentEvent(action: action, model: model, port: obj["port"] as? Int, timestamp: ts))
+        }
+        guard !parsed.isEmpty else { return }
+
+        let notify = UserDefaults.standard.object(forKey: "notifyAgentActions") as? Bool ?? true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.recentAgentEvents.append(contentsOf: parsed)
+            if self.recentAgentEvents.count > 20 {
+                self.recentAgentEvents.removeFirst(self.recentAgentEvents.count - 20)
+            }
+            guard notify else { return }
+            for ev in parsed {
+                var body = "Agent \(ev.action) \(ev.model)"
+                if let port = ev.port { body += " on :\(port)" }
+                self.postNotification(title: "LLM Switcher", body: body)
             }
         }
     }
