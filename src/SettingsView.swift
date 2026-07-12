@@ -1018,14 +1018,18 @@ struct SettingsView: View {
                         Group {
                             helpSub("Inference card")
                             helpEntry("Flash attention", "Faster and leaner on Apple Silicon. Leave ON.")
-                            helpEntry("Thinking mode", "The model reasons before answering: better code and tool use, slower replies. ON for quality, OFF for speed.",
+                            helpEntry("Thinking mode", "Whether the model reasons before answering: better code and tool use, slower replies. ON for quality, OFF for speed. Not the same as Suppress reasoning — this decides if thinking happens at all.",
                                       detail: "OFF sends --chat-template-kwargs {\"enable_thinking\":false}.")
-                            helpEntry("Suppress reasoning", "Hides the model's internal \"thinking\" from chat apps that would otherwise crash or print it. Leave ON unless your app displays reasoning natively.",
-                                      detail: "Gemma 4's reasoning_content field; applied as --reasoning off --reasoning-format none.")
+                            helpEntry("Suppress reasoning", "Whether the thinking is SHOWN to your chat app. The model still reasons (if Thinking mode is ON); this just hides the internal monologue from apps that would crash or print it. Leave ON unless your app displays reasoning natively.",
+                                      detail: "Strips Gemma 4's reasoning_content field; applied as --reasoning off --reasoning-format none.")
                             helpEntry("MTP (speed boost)", "Lets supported models write several words at a time. Leave ON; models without MTP simply ignore it.",
                                       detail: "Detected via companion mtp-*.gguf (same folder or MTP/ subfolder) or -MTP- in the filename; attached with --spec-type draft-mtp.")
-                            helpEntry("Agent access (MCP)", "The master switch that lets AI assistants manage your models. OFF = agents are completely blocked. See section 7.")
-                            helpEntry("Mlock", "Pins the model into RAM so macOS can never move it to disk. Only enable with plenty of spare memory. GGUF only.")
+                            helpEntry("Agent access (MCP)", "The master switch that lets AI assistants manage your models. OFF = agents are completely blocked. Turning it ON reveals the two toggles below. See section 7.")
+                            helpEntry("Allow swap for agent loads", "Shown when Agent access is ON. OFF: an agent load that doesn't fit in free RAM is refused, and the agent is told the largest context size that WOULD fit. ON: the load proceeds and the agent gets a swap warning.",
+                                      detail: "An admission policy for agent requests only — it never changes how a loaded model is kept in memory (that's Mlock) and never affects loads you start yourself.")
+                            helpEntry("Notify on agent actions", "Shown when Agent access is ON. Posts a macOS notification whenever an agent loads or unloads a model — nothing happens behind your back. ON by default.")
+                            helpEntry("Mlock", "Pins the model into RAM so macOS can never move it to disk. Only enable with plenty of spare memory. GGUF only.",
+                                      detail: "Not related to \"Allow swap for agent loads\": Mlock governs the OS's treatment of a model already in memory, for every load, agent or not.")
                             helpEntry("No-mmap", "Loads the model into memory up front instead of streaming from disk. Can help on some setups; fine to ignore. GGUF only.")
                         }
                         Group {
