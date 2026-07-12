@@ -14,6 +14,25 @@ func gbText(_ bytes: UInt64) -> String {
     return gb < 10 ? String(format: "%.1f GB", gb) : String(format: "%.0f GB", gb)
 }
 
+func copyToClipboard(_ s: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(s, forType: .string)
+}
+
+/// Small icon button revealed on row hover (Phase 1: the top actions stop
+/// hiding behind right-click; the context menu keeps the full set).
+func rowActionButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        Image(systemName: symbol)
+            .font(.system(size: 9, weight: .semibold))
+            .frame(width: 20, height: 18)
+            .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(.secondary)
+    .help(help)
+}
+
 
 // MARK: - Menu View
 
@@ -31,6 +50,9 @@ struct MenuView: View {
     /// for the fit hint on stopped rows.
     @State private var sizeById: [String: UInt64] = [:]
 
+    /// Transient confirmation shown after clipboard actions ("Copied …").
+    @State private var toastText: String? = nil
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             modelScroll
@@ -39,6 +61,17 @@ struct MenuView: View {
             footerRow
         }
         .frame(width: 300)
+        .overlay(alignment: .bottom) {
+            if let t = toastText {
+                Text(t)
+                    .font(.system(size: 11))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 38)
+                    .transition(.opacity)
+            }
+        }
         .onAppear {
             refreshMetrics()
             let t = Timer(timeInterval: 3, repeats: true) { _ in refreshMetrics() }
@@ -130,6 +163,15 @@ struct MenuView: View {
         }
     }
 
+    private func showToast(_ text: String) {
+        withAnimation(.easeOut(duration: 0.15)) { toastText = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+            if toastText == text {
+                withAnimation(.easeIn(duration: 0.25)) { toastText = nil }
+            }
+        }
+    }
+
     // MARK: - Scrollable model list
 
     @ViewBuilder
@@ -151,10 +193,13 @@ struct MenuView: View {
                 h += 10 // divider + padding
             }
             if manager.models.isEmpty {
-                h += rowH
+                h += 288   // first-run onboarding view
             } else if !stopped.isEmpty {
                 h += (running.isEmpty ? hintH : sectionH)
                 h += CGFloat(stopped.count) * rowH
+                // Inline error captions add a line under failed rows.
+                let errCount = stopped.filter { manager.state(for: $0).lastError != nil }.count
+                h += CGFloat(errCount) * 18
             }
             return min(max(h, 60), 320)
         }()
@@ -167,7 +212,8 @@ struct MenuView: View {
                     sectionLabel("Running")
                     ForEach(running) { model in
                         RunningRow(model: model, manager: manager,
-                                   rss: manager.state(for: model).pid.flatMap { rssByPid[$0] })
+                                   rss: manager.state(for: model).pid.flatMap { rssByPid[$0] },
+                                   onToast: { showToast($0) })
                     }
                     if running.count >= 2 {
                         bulkBar(running: running)
@@ -178,11 +224,7 @@ struct MenuView: View {
 
                 // --- Available section ---
                 if manager.models.isEmpty {
-                    Text("No models found")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                    firstRunView
                 } else if !stopped.isEmpty {
                     if running.isEmpty {
                         Text("Click a model to load it")
@@ -203,6 +245,92 @@ struct MenuView: View {
             .frame(width: 300, alignment: .leading)
         }
         .frame(width: 300, height: naturalH)
+    }
+
+    // MARK: - First run (empty models list)
+
+    private var engineFound: Bool {
+        let p = manager.settings.llamaServerPath
+        let path = p.isEmpty ? "/opt/homebrew/bin/llama-server" : p
+        return FileManager.default.isExecutableFile(atPath: path)
+    }
+
+    /// Shown when no models are discovered: Help section 1, condensed
+    /// into the moment it's needed.
+    private var firstRunView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Welcome to LLM Switcher")
+                .font(.system(size: 13, weight: .bold))
+            Text("Run AI models entirely on this Mac. Three steps and you're chatting.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            stepRow(n: "1", done: engineFound, text: "Install the engine") {
+                Button {
+                    copyToClipboard("brew install llama.cpp")
+                    showToast("Copied — paste it in Terminal")
+                } label: {
+                    Text("brew install llama.cpp  ⧉")
+                        .font(.system(size: 10, design: .monospaced))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+                .help("Click to copy")
+            }
+            stepRow(n: "2", done: false, text: "Download a model") {
+                Group {
+                    if let url = URL(string: "https://huggingface.co/models?library=gguf") {
+                        Link("Free files from Hugging Face — with 16 GB RAM, grab a 9B Q4_K_M.gguf", destination: url)
+                            .font(.system(size: 10))
+                    }
+                }
+            }
+            stepRow(n: "3", done: false, text: "Point the app at your downloads") {
+                Text("It watches the folder — new models appear automatically")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+
+            Button {
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = true
+                panel.canChooseFiles = false
+                panel.allowsMultipleSelection = false
+                panel.prompt = "Choose"
+                if panel.runModal() == .OK, let url = panel.url {
+                    manager.settings.modelsDir = url.path
+                    manager.saveSettings()
+                    manager.refreshModels()
+                    manager.startWatching()
+                }
+            } label: {
+                Text("Choose Models Folder…")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 4)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private func stepRow<Content: View>(n: String, done: Bool, text: String,
+                                        @ViewBuilder detail: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Text(done ? "✓" : n)
+                .font(.system(size: 10, weight: .bold))
+                .frame(width: 18, height: 18)
+                .background(done ? Color.green : Color.secondary.opacity(0.15), in: Circle())
+                .foregroundStyle(done ? Color.white : Color.primary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(text).font(.system(size: 12, weight: .medium))
+                detail()
+            }
+        }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Section label
@@ -291,6 +419,10 @@ private struct RunningRow: View {
     /// Resident memory of this server process, refreshed by MenuView's
     /// metrics tick. Shown as a hover tooltip — the 300 px row is full.
     let rss: String?
+    /// Parent toast trigger for clipboard feedback.
+    let onToast: (String) -> Void
+
+    @State private var hovering = false
 
     var body: some View {
         let _        = manager.refreshTrigger
@@ -329,6 +461,25 @@ private struct RunningRow: View {
 
             Spacer()
 
+            // Hover-revealed quick actions (full set stays in the
+            // context menu; this fixes its discoverability).
+            if hovering {
+                HStack(spacing: 1) {
+                    rowActionButton("doc.on.doc", help: "Copy endpoint") {
+                        copyToClipboard("http://127.0.0.1:\(state.port)/v1")
+                        onToast("Copied http://127.0.0.1:\(state.port)/v1")
+                    }
+                    rowActionButton(pinned ? "pin.slash" : "pin",
+                                    help: pinned ? "Unpin" : "Pin — agents can't unload") {
+                        manager.setPerModelSetting(!pinned, for: model, key: "pinned")
+                        manager.refreshTrigger += 1
+                    }
+                    rowActionButton("stop.fill", help: "Unload") {
+                        manager.unloadModel(model)
+                    }
+                }
+            }
+
             backendBadge(model)
 
             Text(":\(String(state.port))")
@@ -340,6 +491,7 @@ private struct RunningRow: View {
         .padding(.vertical, 5)
         .background(Color.green.opacity(0.07))
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .contextMenu {
             Button("Unload") { manager.unloadModel(model) }
             Button("Copy endpoint") {
@@ -365,42 +517,68 @@ private struct StoppedRow: View {
     /// the row dims as a hint (loading stays allowed; it's not a guard).
     let unlikelyToFit: Bool
 
+    @State private var hovering = false
+
     var body: some View {
         let state     = manager.state(for: model)
         let isLoading = loadingIDs.contains(model.id) && !state.isRunning
 
-        HStack(spacing: 8) {
-            if isLoading {
-                ProgressView()
-                    .scaleEffect(0.55)
-                    .frame(width: 10, height: 10)
-            } else {
-                Circle()
-                    .stroke(Color.secondary.opacity(0.4), lineWidth: 1.5)
-                    .frame(width: 7, height: 7)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(0.55)
+                        .frame(width: 10, height: 10)
+                } else {
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.4), lineWidth: 1.5)
+                        .frame(width: 7, height: 7)
+                }
+
+                Text(model.name)
+                    .lineLimit(1)
+                    .font(.system(size: 13))
+                    .foregroundStyle(state.lastError != nil ? Color.red : Color.secondary)
+
+                Spacer()
+
+                if hovering && !isLoading {
+                    rowActionButton("play.fill", help: "Load") { startLoading() }
+                }
+
+                // Visible tag beats opacity alone — dimming without a
+                // label just reads as a broken row.
+                if unlikelyToFit {
+                    Text("won't fit")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(Color.orange)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .overlay(RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.orange.opacity(0.5), lineWidth: 0.5))
+                        .help("Larger than current free RAM — loading it will likely swap")
+                }
+
+                backendBadge(model)
             }
+            .opacity(unlikelyToFit ? 0.55 : 1.0)
 
-            Text(model.name)
-                .lineLimit(1)
-                .font(.system(size: 13))
-                .foregroundStyle(state.lastError != nil ? Color.red : Color.secondary)
-
-            Spacer()
-
-            backendBadge(model)
-                .help(unlikelyToFit ? "Larger than current free RAM — loading it will likely swap" : "")
-
+            // Inline error: failures explain themselves under the row
+            // instead of hiding behind a hover-only icon.
             if let err = state.lastError {
-                Image(systemName: "exclamationmark.triangle.fill")
+                Text("⚠ \(err)")
+                    .font(.system(size: 10))
                     .foregroundStyle(Color.red)
-                    .imageScale(.small)
-                    .help("Failed to load: \(err)")
+                    .lineLimit(2)
+                    .padding(.leading, 15)
+                    .padding(.top, 1)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .opacity(unlikelyToFit ? 0.45 : 1.0)
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .onTapGesture {
             guard !isLoading else { return }
             startLoading()
