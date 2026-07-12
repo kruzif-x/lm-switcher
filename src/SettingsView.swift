@@ -1077,8 +1077,8 @@ struct SettingsView: View {
                         helpEntry("Click a model to load it; Unload to stop it.",
                                   "Each model gets its own port, so several can run at once — if they fit in memory.",
                                   mono: false)
-                        helpEntry("Right-click for the good stuff.",
-                                  "Running models: Unload · Copy endpoint · Pin. Stopped models: Load · Switch to.",
+                        helpEntry("Hover a row for quick actions.",
+                                  "Hovering a running model reveals small copy / pin / unload buttons right there — no menu needed. Hovering a stopped model reveals a load button. Right-click still gives the full list, including \"Switch to\".",
                                   mono: false)
                         helpEntry("Switch = swap safely.",
                                   "\"Switch to\" loads the new model first, checks it's healthy, THEN stops the others. If the new one fails, the old one keeps running.",
@@ -1097,7 +1097,7 @@ struct SettingsView: View {
                                   "The memory bar previews what loading that model WOULD do — a translucent segment appended to the bar, with a line underneath saying how much would be left, or that it won't fit.",
                                   mono: false)
                         helpEntry("Dimmed models probably won't fit.",
-                                  "A greyed-out model, tagged \"won't fit\", is bigger than your current free memory. You can still load it, but expect serious slowdown.",
+                                  "A greyed-out model, tagged \"won't fit\", is bigger than your current free memory. You can still load it — clicking Load shows a quick warning first (roughly how much will go to swap), then proceeds.",
                                   mono: false)
                         helpEntry("Pin anything that must stay up.",
                                   "Pinning protects a model from automation — AI agents and idle auto-unload can't stop it. Your own Unload buttons always work.",
@@ -1107,6 +1107,7 @@ struct SettingsView: View {
                                   mono: false)
                         helpEntry("Clock icon = agent activity.",
                                   "Shows what MCP-connected agents have loaded or unloaded while you weren't looking. Click again (now an ✕) to go back to your models.",
+                                  detail: "This history is kept whether or not \"Notify on agent actions\" is on — that toggle only controls the macOS notification, not what the clock icon can show you.",
                                   mono: false)
                     }
 
@@ -1162,10 +1163,13 @@ struct SettingsView: View {
 
                     helpSection(number: "4", title: "Per-model overrides", id: "s4", proxy: proxy) {
                         helpEntry("Pick a model on the left, then flip \"Override Global Settings\".",
-                                  "The grey inherited values on the right become editable for that model only. A number badge in the sidebar shows how many fields you've actually customized.",
+                                  "The list shows every model with a running-state dot, same as the menu bar. The grey inherited values on the right become editable for that model only. A number badge shows how many fields you've actually customized.",
                                   mono: false)
                         helpEntry("OVERRIDE vs GLOBAL",
                                   "Each row is tagged: OVERRIDE means this field has its own value; GLOBAL means it's still inheriting from the Global tab, even with overrides turned on.",
+                                  mono: false)
+                        helpEntry("Load, Unload, or Switch right from here.",
+                                  "The header has the same buttons as the menu bar dropdown — no need to close Settings to start a model.",
                                   mono: false)
                         helpEntry("Changes apply on the next load.",
                                   "Already running? Unload and load again.",
@@ -1178,7 +1182,7 @@ struct SettingsView: View {
 
                     helpSection(number: "5", title: "Performance & memory", id: "s5", proxy: proxy) {
                         helpEntry("The one rule: models must fit in RAM.",
-                                  "When they don't, macOS moves data to disk (\"swap\") and everything crawls. The memory line (section 2) warns you before that happens.",
+                                  "When they don't, macOS moves data to disk (\"swap\") and things can slow down. The memory bar (section 2) warns you before that happens — and tells you when leftover swap is actually nothing to worry about.",
                                   mono: false)
                         helpEntry("What to download for your Mac",
                                   "Model names below are examples — any similar-sized model works the same way.",
@@ -1303,16 +1307,19 @@ struct SettingsView: View {
                     helpSection(number: "9", title: "Troubleshooting & glossary", id: "s9", proxy: proxy) {
                         Group {
                             helpEntry("The list is empty",
-                                      "Set the Models directory (section 1, step 2), then click ↻ Refresh. Note: mmproj-* and mtp-* files are hidden on purpose — they're companions, not models.",
+                                      "The panel shows a 3-step setup guide automatically — follow it, or set Models directory yourself in the Global tab, then click ↻ Refresh. Note: mmproj-* and mtp-* files are hidden on purpose — they're companions, not models.",
                                       mono: false)
-                            helpEntry("A model shows a red ⚠",
-                                      "Hover it for the error. Most common: the engine isn't installed — run brew install llama.cpp (GGUF) or pip install mlx-lm (MLX).",
+                            helpEntry("A model's name turns red with an error underneath",
+                                      "The message under the row says exactly what went wrong — no need to hover anything. Most common: the engine isn't installed — run brew install llama.cpp (GGUF) or pip install mlx-lm (MLX).",
                                       mono: false)
                             helpEntry("It loads, then disappears",
                                       "Usually a port collision or out-of-memory. The last lines of the log say why: ~/.local/share/llama-menubar/logs/. Give the model its own port in Per-Model settings.",
                                       mono: false)
                             helpEntry("My Mac got very slow",
-                                      "You're swapping. Check the memory line in the menu; unload a model or use a smaller quant (section 5).",
+                                      "Check the memory bar. Orange or red means real memory pressure — unload something or use a smaller quant (section 5). Green with \"swap left over\" is NOT the cause — that's normal after a big model, clears on its own, and isn't slowing anything down.",
+                                      mono: false)
+                            helpEntry("I clicked Unload All by mistake",
+                                      "Click \"Undo\" in the bar that appears at the bottom of the menu — you have about 5 seconds to bring everything back.",
                                       mono: false)
                             helpEntry("The model repeats itself forever",
                                       "Advanced settings → Repeat penalty → 1.1.",
@@ -1337,7 +1344,7 @@ struct SettingsView: View {
                                 glossaryLine("Context", "how much conversation the model can keep in mind at once.")
                                 glossaryLine("KV cache", "the RAM your conversation occupies while the model runs.")
                                 glossaryLine("Endpoint", "the local web address chat apps use to reach a loaded model.")
-                                glossaryLine("Swap", "macOS spilling memory to disk when RAM runs out — the slowness you feel.")
+                                glossaryLine("Swap", "macOS moving idle memory to disk when RAM is tight. Only slows things down while it's actively happening (elevated pressure); memory left in swap afterward just sits there harmlessly.")
                                 glossaryLine("MCP / agent", "the standard plug, and the AI assistants that use it to control this app.")
                             }
                             .padding(.bottom, 8)
