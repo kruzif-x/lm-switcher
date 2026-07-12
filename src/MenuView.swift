@@ -19,6 +19,17 @@ func copyToClipboard(_ s: String) {
     NSPasteboard.general.setString(s, forType: .string)
 }
 
+/// Quant chip ("Q4_K_M") — the #1 token users scan for when choosing
+/// between variants of the same model (Phase 2).
+func quantChip(_ q: String) -> some View {
+    Text(q)
+        .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+        .foregroundStyle(.secondary)
+}
+
 /// Small icon button revealed on row hover (Phase 1: the top actions stop
 /// hiding behind right-click; the context menu keeps the full set).
 func rowActionButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
@@ -430,6 +441,7 @@ private struct RunningRow: View {
         let multiRun = manager.models.filter { manager.state(for: $0).isRunning }.count >= 2
         let checked  = manager.selected.contains(model.id)
         let pinned   = manager.perModelSetting("pinned", default: false, for: model)
+        let parsed   = parseModelName(model.name)
 
         HStack(spacing: 8) {
             if multiRun {
@@ -446,9 +458,10 @@ private struct RunningRow: View {
                     .frame(width: 7, height: 7)
             }
 
-            Text(model.name)
+            Text(parsed.display)
                 .lineLimit(1)
                 .font(.system(size: 13))
+                .help(model.name)
 
             // Pin protects against agent unloads only (MCP_SPEC §3.10);
             // the user's Unload buttons ignore it.
@@ -479,6 +492,8 @@ private struct RunningRow: View {
                     }
                 }
             }
+
+            if let q = parsed.quant { quantChip(q) }
 
             backendBadge(model)
 
@@ -522,6 +537,7 @@ private struct StoppedRow: View {
     var body: some View {
         let state     = manager.state(for: model)
         let isLoading = loadingIDs.contains(model.id) && !state.isRunning
+        let parsed    = parseModelName(model.name)
 
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -535,10 +551,11 @@ private struct StoppedRow: View {
                         .frame(width: 7, height: 7)
                 }
 
-                Text(model.name)
+                Text(parsed.display)
                     .lineLimit(1)
                     .font(.system(size: 13))
                     .foregroundStyle(state.lastError != nil ? Color.red : Color.secondary)
+                    .help(model.name)
 
                 Spacer()
 
@@ -558,6 +575,8 @@ private struct StoppedRow: View {
                             .stroke(Color.orange.opacity(0.5), lineWidth: 0.5))
                         .help("Larger than current free RAM — loading it will likely swap")
                 }
+
+                if let q = parsed.quant { quantChip(q) }
 
                 backendBadge(model)
             }

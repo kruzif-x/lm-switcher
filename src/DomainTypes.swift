@@ -17,6 +17,64 @@ import Foundation
 
 // MARK:   ModelBackend
 /// Distinguishes the model file format / inference engine.
+// MARK: - Model name parsing (redesign Phase 2)
+//
+//  Model filenames carry the metadata users scan for — family, size,
+//  quant — but read as noise ("cerebras_Qwen3-Coder-REAP-25B-A3B-
+//  Q4_K_M.gguf"). Parse them into a display name + quant token; the
+//  raw name stays available as a tooltip. Best-effort: any surprise
+//  falls back to the raw name with no quant chip.
+
+struct ParsedModelName {
+    let display: String
+    let quant: String?      // "Q4_K_M", "Q8_0", "OQ4", "4-BIT", …
+}
+
+func parseModelName(_ raw: String) -> ParsedModelName {
+    var name = raw
+    for ext in [".gguf", ".GGUF"] where name.hasSuffix(ext) {
+        name = String(name.dropLast(ext.count))
+    }
+
+    // Quant token FIRST — its underscores (q5_k_m) would otherwise fool
+    // the publisher-prefix heuristic below. Last match wins (quants sit
+    // near the end). Covers Q4_K_M / Q8_0 / IQ4_XS / oQ4 / 4-bit / f16.
+    var quant: String? = nil
+    let pattern = #"(?i)(?:^|[-_.])((?:i|o)?q\d(?:_[a-z0-9]+)*|\d+-?bit|b?f16)(?=$|[-_.])"#
+    if let re = try? NSRegularExpression(pattern: pattern) {
+        let ns = name as NSString
+        let matches = re.matches(in: name, range: NSRange(location: 0, length: ns.length))
+        if let m = matches.last, m.numberOfRanges > 1 {
+            quant = ns.substring(with: m.range(at: 1)).uppercased()
+            // Remove the token plus its leading separator from the name.
+            name = ns.replacingCharacters(in: m.range, with: "")
+        }
+    }
+
+    // Publisher prefix ("cerebras_", "deepreinforce-ai_"): strip when the
+    // part before the first underscore is all lowercase slug characters.
+    if let us = name.firstIndex(of: "_") {
+        let prefix = name[..<us]
+        let slugSet = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789.-")
+        if !prefix.isEmpty, name.index(after: us) < name.endIndex,
+           prefix.unicodeScalars.allSatisfy({ slugSet.contains($0) }) {
+            name = String(name[name.index(after: us)...])
+        }
+    }
+
+    // Tokenize on "-", drop noise tokens, rejoin with spaces.
+    let noise: Set<String> = ["ud", "imat", "gguf", "mlx"]
+    let tokens = name.split(whereSeparator: { $0 == "-" })
+        .map(String.init)
+        .filter { !$0.isEmpty && !noise.contains($0.lowercased()) }
+    let display = tokens.joined(separator: " ")
+        .trimmingCharacters(in: .whitespaces)
+
+    guard display.count >= 3 else { return ParsedModelName(display: raw, quant: nil) }
+    return ParsedModelName(display: display, quant: quant)
+}
+
+
 /// Each backend has its own launch command and SF Symbol icon.
 enum ModelBackend: String, CaseIterable, Identifiable {
     /// GGUF format (used by `llama.cpp` / `llama-server`). One file per model.
