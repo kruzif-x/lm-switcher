@@ -55,8 +55,11 @@ struct MenuView: View {
     // System memory shown in the footer. Computed only while the panel is
     // open (onAppear + 3 s timer, torn down onDisappear) — zero idle cost.
     @State private var metrics: SystemMetrics? = nil
-    @State private var rssByPid: [Int32: String] = [:]
+    @State private var rssByPid: [Int32: UInt64] = [:]
     @State private var metricsTimer: Timer? = nil
+    /// Stopped model currently hovered — its projected footprint ghosts
+    /// onto the memory spine (Phase 3).
+    @State private var ghostModel: ModelEntry? = nil
     /// Weights size per model id (bytes) — computed once per model, cached
     /// for the fit hint on stopped rows.
     @State private var sizeById: [String: UInt64] = [:]
@@ -66,9 +69,10 @@ struct MenuView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            memorySpine
+            Divider()
             modelScroll
             Divider()
-            memoryRow
             footerRow
         }
         .frame(width: 300)
@@ -104,9 +108,9 @@ struct MenuView: View {
             .map { (id: $0.id, path: $0.path, backend: $0.backend) }
         DispatchQueue.global(qos: .utility).async {
             let m = SystemMetrics.read()
-            var rss: [Int32: String] = [:]
+            var rss: [Int32: UInt64] = [:]
             for pid in pids {
-                if let bytes = SystemMetrics.rssBytes(pid: pid) { rss[pid] = gbText(bytes) }
+                if let bytes = SystemMetrics.rssBytes(pid: pid) { rss[pid] = bytes }
             }
             var sizes: [String: UInt64] = [:]
             let fm = FileManager.default
@@ -136,33 +140,105 @@ struct MenuView: View {
         return size + size / 10 + (UInt64(512) << 20) + headroom > m.ramAvailable
     }
 
-    // MARK: - Memory line
+    // MARK: - Memory spine (redesign Phase 3)
+    //
+    //  A stacked bar makes "who is eating my RAM" a glance: grey =
+    //  system + other apps, colored segments = your running models,
+    //  track = free. Hovering a stopped model ghosts its projected
+    //  footprint on — accent when it fits, red when it won't.
 
-    /// "11 GB free of 32 · normal" — swap appears only when something is
-    /// actually wrong (swap in use or pressure above normal).
-    private var memoryRow: some View {
-        HStack(spacing: 4) {
-            if let m = metrics {
-                let unwell = m.memoryPressure != "normal" || m.swapUsed > 0
-                Text("\(gbText(m.ramAvailable)) free of \(gbText(m.ramTotal))")
-                    .foregroundStyle(.secondary)
-                Text("·").foregroundStyle(.secondary)
-                Text(m.memoryPressure)
-                    .foregroundStyle(pressureColor(m.memoryPressure))
-                if unwell, m.swapUsed > 0 {
-                    Text("·").foregroundStyle(.secondary)
-                    Text("swap \(gbText(m.swapUsed))")
-                        .foregroundStyle(m.memoryPressure == "critical" ? Color.red : Color.orange)
-                }
-            } else {
-                Text(" ")   // reserve the row height before the first read
-            }
-            Spacer()
+    /// (name, resident bytes) per running model, from the RSS tick.
+    private func runningSegments() -> [(name: String, bytes: UInt64)] {
+        manager.models.compactMap { m in
+            let st = manager.state(for: m)
+            guard st.isRunning, let pid = st.pid, let bytes = rssByPid[pid] else { return nil }
+            return (parseModelName(m.name).display, bytes)
         }
-        .font(.system(size: 10))
+    }
+
+    /// File-size-based projection, matching the fit hint's formula
+    /// (weights + 10% + compute buffer). No KV term — it's a hint.
+    private func projectedBytes(_ model: ModelEntry) -> UInt64? {
+        guard let size = sizeById[model.id], size > 0 else { return nil }
+        return size + size / 10 + (UInt64(512) << 20)
+    }
+
+    private var memorySpine: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(metrics.map { "\(gbText($0.ramUsed)) / \(gbText($0.ramTotal))" } ?? " ")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(metrics?.memoryPressure ?? "")
+                    .fontWeight(.semibold)
+                    .foregroundStyle(pressureColor(metrics?.memoryPressure ?? ""))
+            }
+            .font(.system(size: 10))
+
+            GeometryReader { geo in
+                HStack(spacing: 0.5) {
+                    if let m = metrics {
+                        let total = Double(m.ramTotal)
+                        let segs = runningSegments()
+                        let modelSum = segs.reduce(0 as UInt64) { $0 + $1.bytes }
+                        let other = m.ramUsed > modelSum ? m.ramUsed - modelSum : 0
+
+                        barSeg(other, total: total, width: geo.size.width,
+                               color: Color.secondary.opacity(0.45),
+                               help: "System + other apps — \(gbText(other))")
+                        ForEach(Array(segs.enumerated()), id: \.offset) { i, s in
+                            barSeg(s.bytes, total: total, width: geo.size.width,
+                                   color: i % 2 == 0 ? Color.blue : Color.teal,
+                                   help: "\(s.name) — \(gbText(s.bytes))")
+                        }
+                        if let g = ghostModel, let proj = projectedBytes(g) {
+                            let fits = !unlikelyToFit(g)
+                            barSeg(min(proj, m.ramAvailable), total: total, width: geo.size.width,
+                                   color: (fits ? Color.accentColor : Color.red).opacity(0.55),
+                                   help: "Projected — \(gbText(proj))")
+                        }
+                    }
+                }
+            }
+            .frame(height: 8)
+            .background(Color.secondary.opacity(0.13))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+
+            memHint
+                .font(.system(size: 9.5))
+                .lineLimit(1)
+                .frame(height: 12, alignment: .leading)
+        }
         .padding(.horizontal, 12)
-        .padding(.top, 5)
-        .padding(.bottom, 1)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+    }
+
+    private func barSeg(_ bytes: UInt64, total: Double, width: CGFloat,
+                        color: Color, help: String) -> some View {
+        Rectangle()
+            .fill(color)
+            .frame(width: max(0, width * CGFloat(Double(bytes) / total)))
+            .help(help)
+    }
+
+    @ViewBuilder
+    private var memHint: some View {
+        if let g = ghostModel, let proj = projectedBytes(g), let m = metrics {
+            if !unlikelyToFit(g) {
+                let remain = m.ramAvailable > proj ? m.ramAvailable - proj : 0
+                Text("+\(gbText(proj)) if loaded → \(gbText(remain)) would remain")
+                    .foregroundStyle(Color.accentColor)
+            } else {
+                Text("won't fit — needs \(gbText(proj)), \(gbText(m.ramAvailable)) free")
+                    .foregroundStyle(Color.red)
+            }
+        } else if let m = metrics, m.swapUsed > 0 || m.memoryPressure != "normal" {
+            Text("swap \(gbText(m.swapUsed)) in use — unload something")
+                .foregroundStyle(m.memoryPressure == "critical" ? Color.red : Color.orange)
+        } else {
+            Text(" ")
+        }
     }
 
     private func pressureColor(_ level: String) -> Color {
@@ -223,7 +299,7 @@ struct MenuView: View {
                     sectionLabel("Running")
                     ForEach(running) { model in
                         RunningRow(model: model, manager: manager,
-                                   rss: manager.state(for: model).pid.flatMap { rssByPid[$0] },
+                                   rss: manager.state(for: model).pid.flatMap { rssByPid[$0] }.map(gbText),
                                    onToast: { showToast($0) })
                     }
                     if running.count >= 2 {
@@ -249,7 +325,11 @@ struct MenuView: View {
                     }
                     ForEach(stopped) { model in
                         StoppedRow(model: model, manager: manager, loadingIDs: $loadingIDs,
-                                   unlikelyToFit: unlikelyToFit(model))
+                                   unlikelyToFit: unlikelyToFit(model),
+                                   onHoverChange: { h in
+                                       if h { ghostModel = model }
+                                       else if ghostModel?.id == model.id { ghostModel = nil }
+                                   })
                     }
                 }
             }
@@ -531,6 +611,9 @@ private struct StoppedRow: View {
     /// True when the model's weights likely exceed current free RAM —
     /// the row dims as a hint (loading stays allowed; it's not a guard).
     let unlikelyToFit: Bool
+    /// Reports hover to MenuView so the memory spine can ghost this
+    /// model's projected footprint (Phase 3).
+    let onHoverChange: (Bool) -> Void
 
     @State private var hovering = false
 
@@ -597,7 +680,10 @@ private struct StoppedRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .onHover { h in
+            hovering = h
+            onHoverChange(h)
+        }
         .onTapGesture {
             guard !isLoading else { return }
             startLoading()
