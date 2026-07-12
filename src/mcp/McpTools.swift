@@ -155,6 +155,25 @@ enum McpTools {
         (perModelValue("pinned", hash: m.hash) as? Bool) ?? false
     }
 
+    /// Append one JSONL event for the app to turn into a macOS
+    /// notification (consumed + truncated by its sync tick).
+    private static func logAgentEvent(_ action: String, model: String, port: Int? = nil) {
+        var obj: [String: Any] = ["ts": Date().timeIntervalSince1970,
+                                  "action": action, "model": model]
+        if let port { obj["port"] = port }
+        guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        let path = llamaDir + "/events.jsonl"
+        if !FileManager.default.fileExists(atPath: path) {
+            FileManager.default.createFile(atPath: path, contents: nil)
+        }
+        if let fh = FileHandle(forWritingAtPath: path) {
+            fh.seekToEndOfFile()
+            fh.write(data)
+            fh.write(Data([0x0A]))
+            try? fh.close()
+        }
+    }
+
     /// Stop one running model and VERIFY it stopped. CLI-launched models go
     /// through `llama unload`; app-launched ones (no PID file — invisible to
     /// the CLI) are TERMed directly, exactly what the app's own Unload does.
@@ -165,10 +184,17 @@ enum McpTools {
             kill(r.pid, SIGTERM)
         }
         for _ in 0..<20 {
-            if kill(r.pid, 0) != 0 { return true }
+            if kill(r.pid, 0) != 0 {
+                logAgentEvent("unloaded", model: r.displayName)
+                return true
+            }
             Thread.sleep(forTimeInterval: 0.25)
         }
-        return kill(r.pid, 0) != 0
+        if kill(r.pid, 0) != 0 {
+            logAgentEvent("unloaded", model: r.displayName)
+            return true
+        }
+        return false
     }
 
     private static func backendBinaryMissing(_ m: DiscoveredModel) -> String? {
@@ -290,6 +316,7 @@ enum McpTools {
         let timeout = min(600, max(10, args["timeout_s"] as? Int ?? 180))
         switch Launcher.waitHealthy(hash: model.hash, backend: model.backend, timeoutS: timeout) {
         case .ready(let port, _):
+            logAgentEvent("loaded", model: model.name, port: port)
             var body: [String: Any] = [
                 "message": "\(model.name) ready on :\(port)",
                 "endpoint": "http://127.0.0.1:\(port)/v1",

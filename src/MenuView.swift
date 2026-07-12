@@ -27,6 +27,9 @@ struct MenuView: View {
     @State private var metrics: SystemMetrics? = nil
     @State private var rssByPid: [Int32: String] = [:]
     @State private var metricsTimer: Timer? = nil
+    /// Weights size per model id (bytes) — computed once per model, cached
+    /// for the fit hint on stopped rows.
+    @State private var sizeById: [String: UInt64] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -50,20 +53,43 @@ struct MenuView: View {
     }
 
     /// Read metrics off-main (RSS spawns one `ps` per running model),
-    /// publish on main.
+    /// publish on main. Model weight sizes are computed once per model.
     private func refreshMetrics() {
         let pids = manager.models.compactMap { manager.state(for: $0).pid }
+        let unsized = manager.models.filter { sizeById[$0.id] == nil }
+            .map { (id: $0.id, path: $0.path, backend: $0.backend) }
         DispatchQueue.global(qos: .utility).async {
             let m = SystemMetrics.read()
             var rss: [Int32: String] = [:]
             for pid in pids {
                 if let bytes = SystemMetrics.rssBytes(pid: pid) { rss[pid] = gbText(bytes) }
             }
+            var sizes: [String: UInt64] = [:]
+            let fm = FileManager.default
+            for entry in unsized {
+                if entry.backend == .gguf {
+                    sizes[entry.id] = ((try? fm.attributesOfItem(atPath: entry.path.path))?[.size] as? UInt64) ?? 0
+                } else if let files = try? fm.contentsOfDirectory(atPath: entry.path.path) {
+                    sizes[entry.id] = files.filter { $0.hasSuffix(".safetensors") }.reduce(0 as UInt64) {
+                        $0 + ((((try? fm.attributesOfItem(atPath: entry.path.path + "/" + $1))?[.size]) as? UInt64) ?? 0)
+                    }
+                }
+            }
             DispatchQueue.main.async {
                 metrics = m
                 rssByPid = rss
+                sizeById.merge(sizes) { _, new in new }
             }
         }
+    }
+
+    /// Fit hint for stopped rows: weights + 10% + compute buffer + OS
+    /// headroom vs. available RAM. File-size-based (no header parse), so
+    /// it under-estimates a little — a hint, not a guard.
+    private func unlikelyToFit(_ model: ModelEntry) -> Bool {
+        guard let m = metrics, let size = sizeById[model.id], size > 0 else { return false }
+        let headroom = max(UInt64(2) << 30, m.ramTotal / 10)
+        return size + size / 10 + (UInt64(512) << 20) + headroom > m.ramAvailable
     }
 
     // MARK: - Memory line
@@ -169,7 +195,8 @@ struct MenuView: View {
                         sectionLabel("Available")
                     }
                     ForEach(stopped) { model in
-                        StoppedRow(model: model, manager: manager, loadingIDs: $loadingIDs)
+                        StoppedRow(model: model, manager: manager, loadingIDs: $loadingIDs,
+                                   unlikelyToFit: unlikelyToFit(model))
                     }
                 }
             }
@@ -315,6 +342,10 @@ private struct RunningRow: View {
         .contentShape(Rectangle())
         .contextMenu {
             Button("Unload") { manager.unloadModel(model) }
+            Button("Copy endpoint") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("http://127.0.0.1:\(state.port)/v1", forType: .string)
+            }
             Button(pinned ? "Unpin" : "Pin") {
                 manager.setPerModelSetting(!pinned, for: model, key: "pinned")
                 manager.refreshTrigger += 1
@@ -330,6 +361,9 @@ private struct StoppedRow: View {
     let model: ModelEntry
     @Bindable var manager: ServerManager
     @Binding var loadingIDs: Set<String>
+    /// True when the model's weights likely exceed current free RAM —
+    /// the row dims as a hint (loading stays allowed; it's not a guard).
+    let unlikelyToFit: Bool
 
     var body: some View {
         let state     = manager.state(for: model)
@@ -354,6 +388,7 @@ private struct StoppedRow: View {
             Spacer()
 
             backendBadge(model)
+                .help(unlikelyToFit ? "Larger than current free RAM — loading it will likely swap" : "")
 
             if let err = state.lastError {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -362,6 +397,7 @@ private struct StoppedRow: View {
                     .help("Failed to load: \(err)")
             }
         }
+        .opacity(unlikelyToFit ? 0.45 : 1.0)
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
         .contentShape(Rectangle())

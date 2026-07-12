@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the MCP for per-call overrides).
 - Help section 9 "Agent access (MCP)"; Mlock and No-mmap toggles surfaced
   in the Inference card; Help tab audited against the current UI.
+- **TTL auto-unload** — Settings → Global → "Idle unload (min)": GGUF
+  models with no request activity (observed via the server's /slots
+  endpoint, launched with `--slots`) are auto-unloaded after the
+  configured idle time, with a notification. Pinned and MLX models are
+  exempt. Off by default.
+- **Agent-action notifications** — the MCP logs successful loads/unloads
+  to events.jsonl; the app posts a macOS notification per event
+  ("Notify on agent actions" toggle, ON by default).
+- **Copy endpoint** — right-click a running model → Copy endpoint puts
+  `http://127.0.0.1:PORT/v1` on the clipboard.
+- **Fit hint** — stopped models whose weights likely exceed current free
+  RAM are dimmed in the dropdown (hover the badge for the explanation).
+- **README** — new "Agent control (MCP)" section with the tool table and
+  registration instructions.
 - **Memory footer** — the menu dropdown shows "N GB free of M · pressure"
   (swap appears only when in use or pressure is elevated), refreshed every
   3 s while the panel is open, zero cost while closed. Hovering a running

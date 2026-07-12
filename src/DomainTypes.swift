@@ -149,6 +149,15 @@ struct AppSettings {
     /// Consumed only by llm-switcher-mcp; the app itself never acts on it.
     var allowSwapLoads: Bool = false
 
+    /// Post a macOS notification when an agent loads/unloads a model via
+    /// the MCP. The MCP writes events to events.jsonl; the app posts them.
+    var notifyAgentActions: Bool = true
+
+    /// Auto-unload GGUF models idle for this many minutes (0 = off).
+    /// Idle = /slots response unchanged between polls. Pinned models and
+    /// MLX models (no slots endpoint) are exempt.
+    var ttlMinutes: Int = 0
+
     /// KV cache type for K cache. q8_0 is the community default for Mac
     /// (halves KV memory with minimal quality loss). f16 is full precision.
     var kvCacheTypeK: String = "q8_0"

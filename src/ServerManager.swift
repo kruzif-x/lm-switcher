@@ -9,6 +9,7 @@ import SwiftUI
 import AppKit
 import Darwin
 import CryptoKit
+import UserNotifications
 
 
 // MARK: - ServerManager
@@ -741,6 +742,10 @@ class ServerManager {
                 args += ["-fa", "on"]
             }
 
+            // Slots endpoint (local-only) — lets the TTL auto-unload poll
+            // detect activity. Harmless when TTL is off.
+            args += ["--slots"]
+
             // Reasoning suppression — Gemma 4 emits reasoning_content that
             // breaks OpenAI-compatible clients (opencode, pi, OpenClaw).
             // See docs/GEMMA4_LOADING_DETAILS.md §3.2.
@@ -1442,6 +1447,139 @@ class ServerManager {
         DispatchQueue.main.async { [weak self] in
             self?.mergeExternalStates(externalStates)
         }
+
+        // Both run on syncQueue (the only caller); network + file I/O
+        // stay off the main thread, mutations hop back to main.
+        checkIdleTTL()
+        consumeAgentEvents()
+    }
+
+    // MARK:   TTL auto-unload
+    //
+    //  Every 10th sync tick (~30 s) probe each running, unpinned GGUF
+    //  model's /slots endpoint. Any change in the response body counts as
+    //  activity (n_past/n_decoded move when requests are processed, and
+    //  persist afterwards — so activity between polls is still detected).
+    //  A model whose response is unchanged for `ttlMinutes` is unloaded.
+    //  MLX has no slots endpoint and is exempt. Only touched from syncQueue.
+
+    private var slotActivity: [String: (sig: Int, lastActive: Date)] = [:]
+    private var ttlTick = 0
+
+    private func checkIdleTTL() {
+        ttlTick += 1
+        guard ttlTick % 10 == 0 else { return }
+        // UserDefaults is thread-safe; `settings` is main-owned, avoid it here.
+        let ttlMin = UserDefaults.standard.integer(forKey: "ttlMinutes")
+        guard ttlMin > 0 else {
+            if !slotActivity.isEmpty { slotActivity.removeAll() }
+            return
+        }
+
+        // Snapshot running, unpinned GGUF models on main (same main.sync
+        // pattern the unload path already uses on this queue).
+        var candidates: [(model: ModelEntry, port: Int)] = []
+        DispatchQueue.main.sync {
+            for m in self.models where m.backend == .gguf {
+                let st = self.state(for: m)
+                if st.isRunning, st.port > 0,
+                   !self.perModelSetting("pinned", default: false, for: m) {
+                    candidates.append((m, st.port))
+                }
+            }
+        }
+
+        let now = Date()
+        var toUnload: [(ModelEntry, Int)] = []
+        for (model, port) in candidates {
+            guard let body = fetchSlots(port: port) else {
+                // 501/404/timeout — endpoint off (pre---slots launch) or
+                // busy; never TTL a model we cannot observe.
+                slotActivity[model.id] = nil
+                continue
+            }
+            let sig = body.hashValue
+            if let prev = slotActivity[model.id], prev.sig == sig {
+                if now.timeIntervalSince(prev.lastActive) > Double(ttlMin) * 60 {
+                    toUnload.append((model, ttlMin))
+                }
+            } else {
+                slotActivity[model.id] = (sig, now)
+            }
+        }
+        // Prune entries for models no longer candidates so a re-load
+        // starts a fresh clock.
+        let candidateIDs = Set(candidates.map { $0.model.id })
+        slotActivity = slotActivity.filter { candidateIDs.contains($0.key) }
+
+        for (model, minutes) in toUnload {
+            slotActivity[model.id] = nil
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.unloadModel(model)
+                self.postNotification(title: "LLM Switcher",
+                                      body: "Unloaded \(model.name) — idle for \(minutes) min.")
+            }
+        }
+    }
+
+    /// Synchronous GET of /slots; nil unless HTTP 200.
+    private func fetchSlots(port: Int) -> Data? {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/slots") else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        var result: Data? = nil
+        let sem = DispatchSemaphore(value: 0)
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            if let http = resp as? HTTPURLResponse, http.statusCode == 200 { result = data }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.0)
+        return result
+    }
+
+    // MARK:   Agent action notifications
+    //
+    //  llm-switcher-mcp appends one JSON line per successful mutation to
+    //  events.jsonl; we drain the file each tick and post a notification
+    //  per event (gated by the notifyAgentActions setting). Draining even
+    //  when notifications are off keeps the file from growing unbounded.
+
+    private func consumeAgentEvents() {
+        let path = NSHomeDirectory() + "/.local/share/llama-menubar/events.jsonl"
+        guard let fh = FileHandle(forUpdatingAtPath: path) else { return }
+        defer { try? fh.close() }
+        let data = fh.readDataToEndOfFile()
+        guard !data.isEmpty else { return }
+        try? fh.truncate(atOffset: 0)
+
+        let notify = UserDefaults.standard.object(forKey: "notifyAgentActions") as? Bool ?? true
+        guard notify, let text = String(data: data, encoding: .utf8) else { return }
+        for line in text.split(separator: "\n") {
+            guard let obj = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any],
+                  let action = obj["action"] as? String,
+                  let model = obj["model"] as? String else { continue }
+            var body = "Agent \(action) \(model)"
+            if let port = obj["port"] as? Int { body += " on :\(port)" }
+            DispatchQueue.main.async { [weak self] in
+                self?.postNotification(title: "LLM Switcher", body: body)
+            }
+        }
+    }
+
+    /// Post a user notification. No-ops when running outside an app bundle
+    /// (UNUserNotificationCenter aborts without one — e.g. bare-binary runs).
+    private func postNotification(title: String, body: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            center.add(UNNotificationRequest(identifier: UUID().uuidString,
+                                             content: content, trigger: nil))
+        }
     }
 
     /// Spawn `/bin/ps` synchronously and parse its output into a
@@ -1564,6 +1702,8 @@ class ServerManager {
         // MCP agent access: off by default — absent key reads as false.
         settings.mcpEnabled = d.bool(forKey: "mcpEnabled")
         settings.allowSwapLoads = d.bool(forKey: "allowSwapLoads")
+        settings.notifyAgentActions = d.object(forKey: "notifyAgentActions") as? Bool ?? true
+        settings.ttlMinutes = d.integer(forKey: "ttlMinutes")
 
         // KV cache quantization.
         settings.kvCacheTypeK = d.string(forKey: "kvCacheTypeK") ?? "q8_0"
@@ -1613,6 +1753,8 @@ class ServerManager {
         d.set(settings.enableMtp, forKey: "enableMtp")
         d.set(settings.mcpEnabled, forKey: "mcpEnabled")
         d.set(settings.allowSwapLoads, forKey: "allowSwapLoads")
+        d.set(settings.notifyAgentActions, forKey: "notifyAgentActions")
+        d.set(settings.ttlMinutes, forKey: "ttlMinutes")
         d.set(settings.kvCacheTypeK, forKey: "kvCacheTypeK")
         d.set(settings.kvCacheTypeV, forKey: "kvCacheTypeV")
         d.set(settings.flashAttention, forKey: "flashAttention")

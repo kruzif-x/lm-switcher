@@ -446,6 +446,10 @@ load_model() {
         # Flash attention (app default: on).
         [[ "$(pref_bool flashAttention true)" == "true" ]] && args+=("-fa" "on")
 
+        # Slots endpoint (local-only) — lets the app's TTL auto-unload
+        # poll detect activity on CLI-launched servers too.
+        args+=("--slots")
+
         # Reasoning suppression — Gemma 4 emits a `reasoning_content` field
         # that breaks OpenAI-compatible clients (opencode, pi, OpenClaw).
         # Gated behind the same `suppressReasoning` setting the app uses

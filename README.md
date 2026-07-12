@@ -212,7 +212,7 @@ Open Settings from the menu bar dropdown (⚙ Settings…).
 
 **CLI environment variables:**
 ```bash
-LLAMA_MODELS_DIR=~/models    # models directory (default: ~/models)
+LLAMA_MODELS_DIR=~/models    # models directory (default: the app's Models Directory setting, then ~/models)
 LLAMA_PORT=8080              # default port
 LLAMA_CTX_SIZE=4096          # default context size
 LLAMA_EXTRA_ARGS=""          # extra args for llama-server
@@ -220,6 +220,43 @@ LLAMA_SERVER=/opt/homebrew/bin/llama-server
 MLX_SERVER=~/Library/Python/3.14/bin/mlx_lm.server
 LLAMA_CHAT_TEMPLATE=""       # optional chat template override
 ```
+
+## Agent control (MCP)
+
+LLM Switcher ships a standalone MCP server, `llm-switcher-mcp` (installed
+to `~/bin`), that lets agents — Claude Code, Hermes, opencode, anything
+speaking MCP over stdio — manage your local models. It is **OFF by
+default**: enable **Agent access (MCP)** in Settings → Global (Inference
+card, below MTP) before registering.
+
+```bash
+# Claude Code
+claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp
+```
+
+| Tool | What it does |
+|------|--------------|
+| `status` | Fresh snapshot: running models, ports, RAM/pressure/swap |
+| `list_models` | All discovered models with size, max context, pin state |
+| `load_model` | Load and block until the endpoint is healthy |
+| `unload_model` | Unload one model (pinned models are refused) |
+| `unload_all` | Unload everything except pinned models |
+| `switch_model` | Load new, verify healthy, then unload the rest |
+| `get_settings` | Read-only settings dump |
+
+Safety rails:
+
+- **Swap guard** — loads that would exceed free RAM are refused with the
+  largest context size that *would* fit, unless you enable
+  **Allow swap for agent loads**.
+- **Pinning** — right-click a running model → Pin. Agents cannot unload
+  it; your own Unload buttons still can.
+- **Notifications** — a macOS notification is posted whenever an agent
+  loads or unloads a model (toggleable).
+- **Read-only settings** — agents can never change ports, context sizes,
+  or sampling. Per-call `ctx_size`/`port` requests are ephemeral.
+- Turning the toggle OFF blocks every tool call instantly but never
+  unloads running models.
 
 ## Architecture
 

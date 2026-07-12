@@ -19,6 +19,8 @@ private struct GlobalSettingsModifier: ViewModifier {
     @Binding var enableMtp: Bool
     @Binding var mcpEnabled: Bool
     @Binding var allowSwapLoads: Bool
+    @Binding var notifyAgentActions: Bool
+    @Binding var ttlMinutesStr: String
     @Binding var kvCacheTypeK: String
     @Binding var kvCacheTypeV: String
     @Binding var flashAttention: Bool
@@ -40,7 +42,7 @@ private struct GlobalSettingsModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .modifier(ServerDefaultsModifier(manager: manager, modelsDir: $modelsDir, defaultPort: $defaultPort, defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs, enableMtp: $enableMtp, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads))
+            .modifier(ServerDefaultsModifier(manager: manager, modelsDir: $modelsDir, defaultPort: $defaultPort, defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs, enableMtp: $enableMtp, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, notifyAgentActions: $notifyAgentActions, ttlMinutesStr: $ttlMinutesStr))
             .modifier(KvCacheModifier(manager: manager, kvCacheTypeK: $kvCacheTypeK, kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention, thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning, llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath, chatTemplatePath: $chatTemplatePath))
             .modifier(PerfSamplingModifier(manager: manager, temperature: $temperature, topP: $topP, topK: $topK, repeatPenalty: $repeatPenalty, seedStr: $seedStr, cpuThreadsStr: $cpuThreadsStr, batchSizeStr: $batchSizeStr, mlock: $mlock, noMmap: $noMmap, mlxMaxKvSizeStr: $mlxMaxKvSizeStr))
     }
@@ -55,6 +57,8 @@ private struct ServerDefaultsModifier: ViewModifier {
     @Binding var enableMtp: Bool
     @Binding var mcpEnabled: Bool
     @Binding var allowSwapLoads: Bool
+    @Binding var notifyAgentActions: Bool
+    @Binding var ttlMinutesStr: String
     func body(content: Content) -> some View {
         content
             .onChange(of: modelsDir)      { _, v in manager.settings.modelsDir = v; manager.refreshModels(); manager.startWatching() }
@@ -64,6 +68,8 @@ private struct ServerDefaultsModifier: ViewModifier {
             .onChange(of: enableMtp)      { _, v in manager.settings.enableMtp = v }
             .onChange(of: mcpEnabled)     { _, v in manager.settings.mcpEnabled = v }
             .onChange(of: allowSwapLoads) { _, v in manager.settings.allowSwapLoads = v }
+            .onChange(of: notifyAgentActions) { _, v in manager.settings.notifyAgentActions = v }
+            .onChange(of: ttlMinutesStr)  { _, v in manager.settings.ttlMinutes = Int(v) ?? 0 }
     }
 }
 
@@ -149,6 +155,8 @@ struct SettingsView: View {
     @State private var enableMtp: Bool
     @State private var mcpEnabled: Bool
     @State private var allowSwapLoads: Bool
+    @State private var notifyAgentActions: Bool
+    @State private var ttlMinutesStr: String
     @State private var kvCacheTypeK: String
     @State private var kvCacheTypeV: String
     @State private var flashAttention: Bool
@@ -178,6 +186,8 @@ struct SettingsView: View {
         _enableMtp        = State(initialValue: manager.settings.enableMtp)
         _mcpEnabled       = State(initialValue: manager.settings.mcpEnabled)
         _allowSwapLoads   = State(initialValue: manager.settings.allowSwapLoads)
+        _notifyAgentActions = State(initialValue: manager.settings.notifyAgentActions)
+        _ttlMinutesStr    = State(initialValue: manager.settings.ttlMinutes == 0 ? "" : "\(manager.settings.ttlMinutes)")
         _kvCacheTypeK     = State(initialValue: manager.settings.kvCacheTypeK)
         _kvCacheTypeV     = State(initialValue: manager.settings.kvCacheTypeV)
         _flashAttention   = State(initialValue: manager.settings.flashAttention)
@@ -235,7 +245,7 @@ struct SettingsView: View {
             manager: manager,
             modelsDir: $modelsDir, defaultPort: $defaultPort,
             defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs,
-            enableMtp: $enableMtp, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, kvCacheTypeK: $kvCacheTypeK,
+            enableMtp: $enableMtp, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, notifyAgentActions: $notifyAgentActions, ttlMinutesStr: $ttlMinutesStr, kvCacheTypeK: $kvCacheTypeK,
             kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention,
             thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning,
             llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath,
@@ -268,6 +278,8 @@ struct SettingsView: View {
         enableMtp       = d.enableMtp
         mcpEnabled      = d.mcpEnabled
         allowSwapLoads  = d.allowSwapLoads
+        notifyAgentActions = d.notifyAgentActions
+        ttlMinutesStr   = d.ttlMinutes == 0 ? "" : "\(d.ttlMinutes)"
         kvCacheTypeK    = d.kvCacheTypeK
         kvCacheTypeV    = d.kvCacheTypeV
         flashAttention  = d.flashAttention
@@ -307,6 +319,8 @@ struct SettingsView: View {
         enableMtp       = s.enableMtp
         mcpEnabled      = s.mcpEnabled
         allowSwapLoads  = s.allowSwapLoads
+        notifyAgentActions = s.notifyAgentActions
+        ttlMinutesStr   = s.ttlMinutes == 0 ? "" : "\(s.ttlMinutes)"
         kvCacheTypeK    = s.kvCacheTypeK
         kvCacheTypeV    = s.kvCacheTypeV
         flashAttention  = s.flashAttention
@@ -363,6 +377,9 @@ struct SettingsView: View {
                 Divider().frame(width: 1)
                 shortFieldRow(label: "Context size", placeholder: "4k", text: $defaultCtxSize)
                     .help("Context window in tokens. Accepts k-suffix (4k, 8k) or plain integers.")
+                Divider().frame(width: 1)
+                shortFieldRow(label: "Idle unload (min)", placeholder: "off", text: $ttlMinutesStr)
+                    .help("Auto-unload GGUF models idle this long. Empty/0 = off. Pinned and MLX models exempt.")
             }
             Divider().padding(.leading, 14)
             inlineFieldRow(label: "Extra args", placeholder: "--no-mmap", text: $globalExtraArgs)
@@ -449,6 +466,12 @@ struct SettingsView: View {
                     label: "Allow swap for agent loads",
                     hint: "OFF: agent loads that don't fit in free RAM are refused instead of swapping",
                     isOn: $allowSwapLoads
+                )
+                Divider().padding(.leading, 14)
+                toggleRow(
+                    label: "Notify on agent actions",
+                    hint: "macOS notification when an agent loads or unloads a model",
+                    isOn: $notifyAgentActions
                 )
                 HStack {
                     Text("Register:  claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp")
@@ -941,6 +964,7 @@ struct SettingsView: View {
                         helpEntry("Default port", "Starting port for model servers. Additional models increment — 8080, 8081, 8082…")
                         helpEntry("Context size", "Context window in tokens. Accepts k-suffix (4k, 8k) or plain integers. Use 4k for 16 GB Macs, 64k for 32 GB+.")
                         helpEntry("Extra args", "Free-form arguments appended to every server launch. Parsed with quote handling.")
+                        helpEntry("Idle unload (min)", "Auto-unloads GGUF models with no request activity for this long (checked ~every 30 s via the server's /slots endpoint). Empty or 0 = off. Pinned models and MLX models are exempt. A notification is posted when a model is auto-unloaded.")
                         helpEntry("Backend paths", "Paths to the llama-server (GGUF) and mlx_lm.server (MLX) binaries. (Backends card)")
                         helpEntry("Chat template", "Custom .jinja or .json template for agentic harnesses (opencode, pi). Leave empty for the model's built-in template. (Backends card)")
                         helpEntry("Flash attention", "Hardware-accelerated attention via Metal. No downside on Apple Silicon — leave ON. (Inference card)")
@@ -1049,7 +1073,8 @@ struct SettingsView: View {
                         helpEntry("What it is", "An MCP stdio server (llm-switcher-mcp) that lets agents (Claude Code, Hermes, opencode…) list, load, unload, and switch models. Register with: claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp")
                         helpEntry("Agent access (MCP) toggle", "Master switch, OFF by default. While OFF every agent tool call is refused. Turning it OFF never unloads models — it revokes control, not servers.")
                         helpEntry("Allow swap for agent loads", "OFF: agent loads that don't fit in free RAM are refused with an explanation and the largest context that would fit. ON: the load proceeds and the agent gets a swap warning.")
-                        helpEntry("Pinning", "Right-click a running model → Pin. Agents cannot unload pinned models; the menu bar Unload buttons are unaffected — pins protect against agents, not you.")
+                        helpEntry("Pinning", "Right-click a running model → Pin. Agents cannot unload pinned models and idle auto-unload skips them; the menu bar Unload buttons are unaffected — pins protect against automation, not you.")
+                        helpEntry("Notify on agent actions", "Posts a macOS notification whenever an agent loads or unloads a model, so nothing happens behind your back. ON by default.")
                         helpEntry("Agent settings access", "Read-only. Agents can never change ports, context sizes, sampling, or any other setting. Per-call ctx/port requests are ephemeral and never persisted.")
                     }
                 }
