@@ -143,16 +143,21 @@ cd ~/Projects/LLM-Switcher
 This will:
 1. Compile `LlamaMenubarApp.swift` to a binary
 2. Wrap it in `~/Applications/LLM Switcher.app`
-3. Install the `llama` CLI to `~/bin/llama`
-4. Install a LaunchAgent so the app starts at login
-5. Register the app with Launch Services (so it shows in Launchpad/Spotlight)
+3. Compile the `llm-switcher-mcp` agent-access server to `~/bin` (a build
+   failure here only warns — it never blocks the app install)
+4. Install the `llama` CLI to `~/bin/llama`
+5. Install a LaunchAgent so the app starts at login
+6. Register the app with Launch Services (so it shows in Launchpad/Spotlight)
 
 ### 2. Use it
 
 **From the menu bar:**
 - Click the ⚡ icon in your menu bar
-- Tick the models you want → click "Load Selected"
-- Click "⏹ Unload All" or right-click a model to unload it individually
+- Click any model to load it; hover a row for quick copy / pin / unload
+  buttons, or right-click for the full action list (Switch to, etc.)
+- With 2+ models running, checkboxes appear for bulk "Unload selected"
+- "⏹ Unload all" stops everything at once — no confirmation dialog;
+  a 5-second Undo appears instead if that was a mistake
 
 **From the CLI:**
 
@@ -198,17 +203,24 @@ The app **automatically excludes** these files from the model list (they're not 
 
 Open Settings from the menu bar dropdown (⚙ Settings…).
 
-**Global tab:**
-- **Models Directory** — root directory to scan recursively for GGUF and MLX models
-- **Default Port** — base port for auto-assignment (each model gets the next available)
-- **Default Ctx Size** — context window size in tokens (accepts "k" suffix, e.g. "8k")
-- **Global Extra Args** — extra arguments passed to every `llama-server` process
-- **Chat Template Override** — optional path to a custom `.jinja` or `.json` chat template (for agentic harnesses like opencode/pi that need custom tool-calling templates)
-- **llama-server** / **mlx_lm.server** — backend binary paths
+**Global tab** (card-based):
+- **Models** — models directory, default port, context size, idle-unload
+  timer, extra args
+- **Backends** — `llama-server` / `mlx_lm.server` paths, chat template override
+- **Inference** — flash attention, thinking mode, reasoning suppression, MTP,
+  mlock, no-mmap
+- **Agent access (MCP)** — allow agent control, allow swap for agent loads,
+  notify on agent actions (see [Agent control (MCP)](#agent-control-mcp))
+- **Advanced** (collapsed) — KV cache type, sampling, CPU threads/batch size,
+  MLX max KV size
 
-**Per-Model tab:**
-- Editable port and context size for each discovered model
-- Load/Unload buttons per model
+**Per-Model tab** — a sidebar of every discovered model (running state +
+an override-count badge) next to a detail pane for the selected model.
+Flip "Override Global Settings" to edit that model's port, context,
+sampling, KV cache, thinking, MTP, and extra args independently; each
+field is tagged **OVERRIDE** or **GLOBAL** so it's obvious at a glance
+what's actually customized versus just inherited. Load / Unload / Switch
+buttons live right in the header.
 
 **CLI environment variables:**
 ```bash
@@ -372,7 +384,7 @@ Because that's the lightest-weight way to keep a tool always available on macOS 
 
 ## Version
 
-Current: **v1.1.0** — MTP exclusion, mmproj fallback matching, chat template settings, layout overhaul. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
+Current: **v1.3.0** — menu bar + Per-Model redesign, MCP agent access, idle auto-unload. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
 
 See `CHANGELOG.md` for full version history.
 

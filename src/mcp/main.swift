@@ -10,7 +10,7 @@
 
 import Foundation
 
-let serverVersion = "1.2.0"
+let serverVersion = "1.3.0"
 
 let serverInstructions = """
 Models can be loaded and unloaded by the user from the menu bar at any \

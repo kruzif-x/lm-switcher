@@ -1515,7 +1515,7 @@ struct SettingsView: View {
                     }
                     Text("LLM Switcher")
                         .font(.title2).fontWeight(.medium)
-                    Text("Version 1.2.0")
+                    Text("Version 1.3.0")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.top, 24)

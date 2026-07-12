@@ -108,12 +108,21 @@ enum McpTools {
         var global: [String: Any] = [:]
         let stringKeys = ["modelsDir", "llamaServerPath", "mlxServerPath", "chatTemplatePath",
                           "globalExtraArgs", "kvCacheTypeK", "kvCacheTypeV"]
-        let intKeys = ["defaultPort", "defaultCtxSize", "topK", "seed", "cpuThreads", "batchSize", "mlxMaxKvSize"]
-        let boolKeys = ["enableMtp", "mcpEnabled", "allowSwapLoads", "flashAttention",
-                        "thinkingEnabled", "suppressReasoning", "mlock", "noMmap"]
+        let intKeys = ["defaultPort", "defaultCtxSize", "topK", "seed", "cpuThreads", "batchSize",
+                       "mlxMaxKvSize", "ttlMinutes"]
+        // Per-key defaults — matching AppSettings' Swift-side defaults
+        // (DomainTypes.swift). A blanket `false` here previously made
+        // every true-by-default toggle (MTP, flash attention, thinking,
+        // suppress reasoning, notify-on-agent-actions) report as OFF to
+        // agents whenever the user had never touched it in Settings.
+        let boolDefaults: [String: Bool] = [
+            "enableMtp": true, "mcpEnabled": false, "allowSwapLoads": false,
+            "flashAttention": true, "thinkingEnabled": true, "suppressReasoning": true,
+            "mlock": false, "noMmap": false, "notifyAgentActions": true,
+        ]
         for k in stringKeys { global[k] = Prefs.string(k) }
         for k in intKeys { global[k] = Prefs.int(k) }
-        for k in boolKeys { global[k] = Prefs.bool(k) }
+        for (k, def) in boolDefaults { global[k] = Prefs.bool(k, default: def) }
         for k in ["temperature", "topP", "repeatPenalty"] { global[k] = (Prefs.value(k) as? Double) ?? 0 }
 
         let suffixes = ["overrideEnabled", "port", "ctx", "temperature", "topP", "topK",

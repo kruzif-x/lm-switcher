@@ -16,8 +16,9 @@
 #  3. Unloads and removes the LaunchAgent.
 #  4. Removes the `.app` bundle from `~/Applications/`.
 #  5. Removes the legacy `.app` bundle from `~/bin/` (older installs).
-#  6. Removes the compiled binary, CLI script, Swift source, install
-#     scripts, and icon assets from `~/bin/`.
+#  6. Removes the compiled binary, `llm-switcher-mcp` agent-access
+#     server, CLI script, Swift source, install scripts, and icon
+#     assets from `~/bin/`.
 #  7. Removes the runtime data directory (`~/.local/share/llama-menubar/`).
 #  8. Clears the per-app `defaults` settings.
 #
@@ -27,6 +28,10 @@
 #    other tools there).
 #  - It does NOT remove the `~/Applications/` directory.
 #  - It does NOT remove your models (`~/models/`) or your gguf cache.
+#  - It does NOT deregister `llm-switcher-mcp` from any MCP client
+#    (Claude Code, Hermes, etc.) — those keep their own config outside
+#    this app, so removing the binary would otherwise leave a dangling
+#    reference. The script prints a reminder at the end.
 #
 #  USAGE
 #  -----
@@ -172,6 +177,13 @@ if [[ -f "$BIN_DIR/llm-switcher" ]]; then
     echo "  ✓ llm-switcher binary removed"
 fi
 
+# MCP agent-access server (separate binary; may not exist if that
+# build failed or the user is on a pre-1.2.0 install).
+if [[ -f "$BIN_DIR/llm-switcher-mcp" ]]; then
+    rm -f "$BIN_DIR/llm-switcher-mcp"
+    echo "  ✓ llm-switcher-mcp removed"
+fi
+
 # CLI script.
 if [[ -f "$BIN_DIR/llama" ]]; then
     rm -f "$BIN_DIR/llama"
@@ -253,3 +265,10 @@ echo "Note: ~/bin/ is left intact. If you want to remove it:"
 echo "  rmdir ~/bin   # (only if empty)"
 echo ""
 echo "Note: ~/Applications/ is left intact. If empty, you can remove it too."
+echo ""
+echo "If you registered the MCP agent-access server (llm-switcher-mcp)"
+echo "with any client, deregister it there too — this script can't reach"
+echo "into their config:"
+echo "  claude mcp remove llm-switcher          # Claude Code"
+echo "  # Hermes: remove the llm-switcher entry from"
+echo "  #   ~/.hermes/config.yaml → mcp_servers:, then restart the gateway"

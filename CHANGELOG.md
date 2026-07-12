@@ -5,6 +5,57 @@ All notable changes to LLM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-13
+
+### Added
+- **Redesign, phases 1–5** — the menu bar dropdown and Per-Model tab
+  rebuilt around five focus areas:
+  - *Discoverability*: hovering a running model reveals inline copy /
+    pin / unload buttons (hovering a stopped model reveals load) —
+    right-click keeps the full action list, including Switch to.
+  - *Legibility*: model filenames are parsed into a clean display name
+    with a monospaced quant chip (`Q4_K_M`, `Q8_0`, etc.); the raw
+    filename moves to a tooltip. Agent access settings graduated from
+    the Inference card into their own "Agent access (MCP)" card.
+  - *Memory spine*: the old text memory line became a stacked bar at
+    the top of the menu — system/other apps, each running model, free
+    RAM — with a predictive ghost segment on hovering a stopped model
+    showing whether it would fit before you click Load.
+  - *Per-Model master-detail*: replaced the disclosure-group wall with
+    a sidebar (running state + override-count badge) and a detail pane
+    tagging every field OVERRIDE or GLOBAL, so customizations are
+    visible without diffing against the Global tab by eye.
+  - *Trust and speed*: an Agent Activity feed (clock icon) shows recent
+    MCP loads/unloads; "Unload all" drops its would-be confirmation
+    dialog in favor of a 5-second Undo; a type-to-filter field appears
+    once the library passes 10 models.
+- **TTL auto-unload** — optional "Idle unload (min)" setting stops GGUF
+  models with no request activity (via llama-server's `/slots`
+  endpoint), notifying when it happens. Off by default; pinned and MLX
+  models are exempt.
+- **Agent action notifications** — a macOS notification on every
+  MCP-driven load/unload, toggleable independently of the Activity
+  feed's history (the two used to be wrongly coupled — fixed here).
+- **Smarter memory messaging** — the memory bar and Help now distinguish
+  leftover swap during normal pressure (harmless, drains on its own)
+  from swap under real memory pressure (actionable — unload something).
+  Loading a model that's flagged "won't fit" shows a one-time toast
+  estimating how much will go to swap before the load proceeds.
+- **Copy endpoint** and a **first-run onboarding view** (engine check
+  with a copyable install command, a Hugging Face link, and a folder
+  picker) when no models are found yet.
+- Help tab rewritten end-to-end: reorganized around what a new user is
+  trying to do (getting started → everyday use → settings → tuning →
+  agents → CLI → troubleshooting) instead of mirroring Settings' field
+  order, with a plain-language line plus an optional technical detail
+  line per entry, and a troubleshooting/glossary section.
+
+### Fixed
+- A model's error state now prints inline under the row instead of
+  requiring a hover on a small warning icon.
+- CLI `MODELS_DIR` now falls back to the app's saved Models Directory
+  setting instead of a hardcoded `~/models`.
+
 ## [1.2.0] - 2026-07-12
 
 ### Added
