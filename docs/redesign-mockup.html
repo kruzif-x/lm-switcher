@@ -1,0 +1,575 @@
+<title>LLM Switcher — UI Redesign Mockup</title>
+<style>
+  :root {
+    --desk1:#E2E5EB; --desk2:#C9CED8;
+    --ink:#1D1D1F; --ink2:rgba(29,29,31,.62); --ink3:rgba(29,29,31,.40);
+    --panel:rgba(246,246,249,.94); --panel-edge:rgba(0,0,0,.14);
+    --row-hover:rgba(0,0,0,.05); --run-bg:rgba(52,199,89,.09);
+    --chip-bg:rgba(0,0,0,.07); --chip-ink:rgba(29,29,31,.66);
+    --accent:#007AFF; --good:#28A745; --warn:#C77800; --bad:#D70015;
+    --seg1:#2E86DE; --seg2:#48A9A6; --segother:#9AA0AA; --track:rgba(0,0,0,.10);
+    --code-bg:rgba(0,0,0,.06);
+    --board-ink:#2A2C33; --board-ink2:rgba(42,44,51,.6);
+    --callout:#B4552D;
+    --win:rgba(240,240,244,.97);
+    --field:rgba(255,255,255,.85); --field-edge:rgba(0,0,0,.18);
+  }
+  @media (prefers-color-scheme: dark) { :root {
+    --desk1:#191B21; --desk2:#0E0F13;
+    --ink:#F2F2F4; --ink2:rgba(242,242,244,.60); --ink3:rgba(242,242,244,.38);
+    --panel:rgba(41,41,46,.92); --panel-edge:rgba(255,255,255,.12);
+    --row-hover:rgba(255,255,255,.06); --run-bg:rgba(50,215,75,.08);
+    --chip-bg:rgba(255,255,255,.10); --chip-ink:rgba(242,242,244,.70);
+    --accent:#0A84FF; --good:#32D74B; --warn:#FF9F0A; --bad:#FF453A;
+    --seg1:#3E8FE0; --seg2:#4FB3AF; --segother:#5A5F6A; --track:rgba(255,255,255,.12);
+    --code-bg:rgba(255,255,255,.08);
+    --board-ink:#E8E9ED; --board-ink2:rgba(232,233,237,.55);
+    --callout:#E8946A;
+    --win:rgba(48,48,54,.97);
+    --field:rgba(255,255,255,.07); --field-edge:rgba(255,255,255,.16);
+  }}
+  :root[data-theme="light"] {
+    --desk1:#E2E5EB; --desk2:#C9CED8;
+    --ink:#1D1D1F; --ink2:rgba(29,29,31,.62); --ink3:rgba(29,29,31,.40);
+    --panel:rgba(246,246,249,.94); --panel-edge:rgba(0,0,0,.14);
+    --row-hover:rgba(0,0,0,.05); --run-bg:rgba(52,199,89,.09);
+    --chip-bg:rgba(0,0,0,.07); --chip-ink:rgba(29,29,31,.66);
+    --accent:#007AFF; --good:#28A745; --warn:#C77800; --bad:#D70015;
+    --seg1:#2E86DE; --seg2:#48A9A6; --segother:#9AA0AA; --track:rgba(0,0,0,.10);
+    --code-bg:rgba(0,0,0,.06);
+    --board-ink:#2A2C33; --board-ink2:rgba(42,44,51,.6);
+    --callout:#B4552D;
+    --win:rgba(240,240,244,.97);
+    --field:rgba(255,255,255,.85); --field-edge:rgba(0,0,0,.18);
+  }
+  :root[data-theme="dark"] {
+    --desk1:#191B21; --desk2:#0E0F13;
+    --ink:#F2F2F4; --ink2:rgba(242,242,244,.60); --ink3:rgba(242,242,244,.38);
+    --panel:rgba(41,41,46,.92); --panel-edge:rgba(255,255,255,.12);
+    --row-hover:rgba(255,255,255,.06); --run-bg:rgba(50,215,75,.08);
+    --chip-bg:rgba(255,255,255,.10); --chip-ink:rgba(242,242,244,.70);
+    --accent:#0A84FF; --good:#32D74B; --warn:#FF9F0A; --bad:#FF453A;
+    --seg1:#3E8FE0; --seg2:#4FB3AF; --segother:#5A5F6A; --track:rgba(255,255,255,.12);
+    --code-bg:rgba(255,255,255,.08);
+    --board-ink:#E8E9ED; --board-ink2:rgba(232,233,237,.55);
+    --callout:#E8946A;
+    --win:rgba(48,48,54,.97);
+    --field:rgba(255,255,255,.07); --field-edge:rgba(255,255,255,.16);
+  }
+
+  * { box-sizing:border-box; }
+  body {
+    margin:0; min-height:100vh;
+    background:
+      radial-gradient(1200px 500px at 20% -5%, color-mix(in srgb, var(--seg1) 14%, transparent), transparent 60%),
+      linear-gradient(165deg, var(--desk1), var(--desk2));
+    font-family:-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    color:var(--board-ink);
+    -webkit-font-smoothing:antialiased;
+    padding:44px 28px 72px;
+  }
+  .mono { font-family:ui-monospace, "SF Mono", Menlo, monospace; }
+
+  header.page { max-width:1120px; margin:0 auto 8px; }
+  .eyebrow { font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11px; letter-spacing:.14em;
+             color:var(--callout); text-transform:uppercase; margin-bottom:10px; }
+  h1 { font-size:clamp(26px,3.4vw,38px); font-weight:700; letter-spacing:-.02em; margin:0 0 8px; text-wrap:balance; }
+  .lede { font-size:15px; line-height:1.55; color:var(--board-ink2); max-width:62ch; margin:0; }
+  .lede strong { color:var(--board-ink); font-weight:600; }
+  .try { display:inline-flex; gap:8px; align-items:center; margin-top:14px;
+         font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11.5px; color:var(--callout);
+         border:1px dashed color-mix(in srgb, var(--callout) 55%, transparent);
+         padding:7px 12px; border-radius:8px; }
+
+  .board { max-width:1120px; margin:38px auto 0; display:flex; flex-wrap:wrap; gap:56px 48px;
+           justify-content:center; align-items:flex-start; }
+  .screen { display:flex; flex-direction:column; gap:14px; }
+  .screen > figcaption { max-width:320px; }
+  .cap-title { font-size:13px; font-weight:700; letter-spacing:.01em; margin:0 0 6px; }
+  .cap-title .ph { color:var(--callout); font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px;
+                   letter-spacing:.1em; margin-right:8px; }
+  ul.notes { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:5px; }
+  ul.notes li { font-size:12px; line-height:1.5; color:var(--board-ink2); padding-left:22px; position:relative; }
+  ul.notes li b { color:var(--board-ink); font-weight:600; }
+  .dot { position:absolute; left:0; top:1.5px; width:15px; height:15px; border-radius:50%;
+         background:var(--callout); color:#fff; font-size:9.5px; font-weight:700;
+         display:inline-flex; align-items:center; justify-content:center; }
+
+  .macpanel { width:312px; background:var(--panel); backdrop-filter:blur(28px);
+              border:1px solid var(--panel-edge); border-radius:12px;
+              box-shadow:0 22px 60px rgba(0,0,0,.35), 0 2px 10px rgba(0,0,0,.18);
+              color:var(--ink); position:relative; overflow:visible; }
+  .macpanel .inner { overflow:hidden; border-radius:12px; }
+
+  .memwrap { padding:12px 14px 10px; }
+  .memlabel { display:flex; justify-content:space-between; font-size:10.5px; color:var(--ink2);
+              margin-bottom:6px; font-variant-numeric:tabular-nums; }
+  .memlabel .state-good { color:var(--good); font-weight:600; }
+  .membar { height:9px; border-radius:5px; background:var(--track); display:flex; overflow:hidden; }
+  .membar .seg { height:100%; transition:width .35s ease; }
+  .seg.other { background:var(--segother); }
+  .seg.m1 { background:var(--seg1); } .seg.m2 { background:var(--seg2); }
+  .seg.ghost { background:repeating-linear-gradient(45deg, var(--accent), var(--accent) 3px,
+               color-mix(in srgb, var(--accent) 35%, transparent) 3px, color-mix(in srgb, var(--accent) 35%, transparent) 6px);
+               opacity:.85; }
+  .seg.ghost.bad { background:repeating-linear-gradient(45deg, var(--bad), var(--bad) 3px,
+               color-mix(in srgb, var(--bad) 35%, transparent) 3px, color-mix(in srgb, var(--bad) 35%, transparent) 6px); }
+  .memhint { font-size:10.5px; margin-top:6px; min-height:14px; color:var(--ink2);
+             font-variant-numeric:tabular-nums; transition:color .2s; }
+  .memhint.bad { color:var(--bad); } .memhint.ok { color:var(--accent); }
+  .legend { display:flex; gap:12px; margin-top:5px; font-size:10px; color:var(--ink3); }
+  .legend i { display:inline-block; width:8px; height:8px; border-radius:2.5px; margin-right:4px; vertical-align:-1px; }
+
+  .search { margin:2px 12px 8px; display:flex; align-items:center; gap:6px;
+            background:var(--field); border:1px solid var(--field-edge); border-radius:7px; padding:4px 8px; }
+  .search svg { flex:none; opacity:.45; }
+  .search input { border:0; outline:0; background:transparent; width:100%; font-size:12px; color:var(--ink);
+                  font-family:inherit; }
+  .search input::placeholder { color:var(--ink3); }
+
+  .sect { font-size:9.5px; font-weight:600; letter-spacing:.09em; color:var(--ink3);
+          padding:7px 14px 3px; text-transform:uppercase; }
+
+  .row { display:flex; align-items:center; gap:7px; padding:5px 12px; position:relative; cursor:default; }
+  .row:hover { background:var(--row-hover); }
+  .row.running { background:var(--run-bg); }
+  .row.running:hover { background:color-mix(in srgb, var(--run-bg) 60%, var(--row-hover)); }
+  .statusdot { width:7px; height:7px; border-radius:50%; flex:none; }
+  .running .statusdot { background:var(--good); }
+  .stopped .statusdot { background:transparent; border:1.5px solid var(--ink3); }
+  .name { font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .stopped .name { color:var(--ink2); }
+  .chip { flex:none; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:8.5px; font-weight:600;
+          padding:1.5px 5px; border-radius:4px; background:var(--chip-bg); color:var(--chip-ink); letter-spacing:.02em; }
+  .chip.backend.mlx { color:var(--seg2); }
+  .port { flex:none; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; color:var(--good); }
+  .pinicon { flex:none; font-size:9px; color:var(--ink2); }
+  .nofit { flex:none; font-size:8.5px; font-weight:600; color:var(--warn);
+           border:1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+           padding:1px 5px; border-radius:4px; letter-spacing:.03em; }
+  .row .spacer { flex:1 1 auto; min-width:8px; }
+  .actions { display:flex; gap:3px; flex:none; opacity:0; transition:opacity .12s; }
+  .row:hover .actions { opacity:1; }
+  .actions button { all:unset; cursor:pointer; width:21px; height:19px; border-radius:5px; text-align:center;
+                    font-size:11px; color:var(--ink2); line-height:19px; }
+  .actions button:hover { background:var(--chip-bg); color:var(--ink); }
+  .actions button:focus-visible { outline:2px solid var(--accent); }
+  .dim { opacity:.5; }
+  .errline { padding:0 14px 6px 26px; font-size:10.5px; color:var(--bad); line-height:1.35; }
+  .errline a { color:inherit; text-decoration:underline; cursor:pointer; }
+  .loadingrow .name { color:var(--ink2); }
+  .spin { width:10px; height:10px; flex:none; border:1.5px solid var(--ink3); border-top-color:var(--accent);
+          border-radius:50%; animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  .panel-div { height:1px; background:var(--panel-edge); margin:6px 0; opacity:.6; }
+  .footerrow { display:flex; align-items:center; padding:3px 8px 5px; }
+  .fbtn { all:unset; cursor:pointer; width:28px; height:26px; text-align:center; line-height:26px;
+          border-radius:6px; color:var(--ink2); font-size:13px; position:relative; }
+  .fbtn:hover { background:var(--row-hover); color:var(--ink); }
+  .fbtn:focus-visible { outline:2px solid var(--accent); }
+  .quit { margin-left:auto; font-size:12px; color:var(--ink2); padding:0 10px; cursor:pointer; }
+  .quit:hover { color:var(--ink); }
+
+  .toast { position:absolute; left:50%; transform:translateX(-50%) translateY(6px); bottom:-44px;
+           background:var(--win); border:1px solid var(--panel-edge); color:var(--ink);
+           font-size:11.5px; padding:7px 14px; border-radius:8px; white-space:nowrap;
+           box-shadow:0 8px 26px rgba(0,0,0,.3); opacity:0; pointer-events:none; transition:all .25s; }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  .snack { position:absolute; left:12px; right:12px; bottom:-52px; display:flex; align-items:center;
+           justify-content:space-between; background:var(--win); border:1px solid var(--panel-edge);
+           border-radius:9px; padding:8px 12px; font-size:11.5px; color:var(--ink);
+           box-shadow:0 8px 26px rgba(0,0,0,.3); opacity:0; pointer-events:none; transition:all .25s; }
+  .snack.show { opacity:1; pointer-events:auto; bottom:-56px; }
+  .snack button { all:unset; cursor:pointer; color:var(--accent); font-weight:600; font-size:11.5px; padding:2px 6px; }
+  .snack button:focus-visible { outline:2px solid var(--accent); border-radius:4px; }
+
+  .agentpop { position:absolute; left:calc(100% + 14px); bottom:0; width:252px; background:var(--win);
+              border:1px solid var(--panel-edge); border-radius:11px; padding:10px 0 6px;
+              box-shadow:0 16px 44px rgba(0,0,0,.35); color:var(--ink); opacity:0; pointer-events:none;
+              transform:translateX(-6px); transition:all .2s; z-index:5; }
+  .agentpop.show { opacity:1; pointer-events:auto; transform:none; }
+  .agentpop h4 { margin:0 12px 7px; font-size:10px; letter-spacing:.09em; color:var(--ink3); text-transform:uppercase; }
+  .aev { padding:5px 12px; font-size:11.5px; line-height:1.4; display:flex; gap:8px; }
+  .aev + .aev { border-top:1px solid color-mix(in srgb, var(--panel-edge) 55%, transparent); }
+  .aev .who { flex:none; font-weight:600; }
+  .aev .t { margin-left:auto; flex:none; color:var(--ink3); font-size:10px; font-variant-numeric:tabular-nums; }
+  .aev .what { color:var(--ink2); }
+
+  .macwin { width:560px; max-width:92vw; background:var(--win); border:1px solid var(--panel-edge);
+            border-radius:12px; box-shadow:0 22px 60px rgba(0,0,0,.35); color:var(--ink); overflow:hidden; }
+  .titlebar { display:flex; align-items:center; gap:8px; padding:11px 12px 9px; position:relative; }
+  .lights { display:flex; gap:7px; }
+  .lights i { width:11px; height:11px; border-radius:50%; }
+  .lights i:nth-child(1){ background:#FF5F57; } .lights i:nth-child(2){ background:#FEBC2E; }
+  .lights i:nth-child(3){ background:#28C840; }
+  .tabs { position:absolute; left:50%; transform:translateX(-50%); display:flex; gap:2px;
+          background:var(--chip-bg); border-radius:8px; padding:2px; }
+  .tabs span { font-size:11px; padding:3px 12px; border-radius:6px; color:var(--ink2); }
+  .tabs .on { background:var(--win); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,.2); font-weight:600; }
+  .mdbody { display:flex; min-height:322px; border-top:1px solid var(--panel-edge); }
+  .mdside { width:172px; flex:none; border-right:1px solid var(--panel-edge); padding:8px 6px; }
+  .mrow { display:flex; align-items:center; gap:7px; font-size:12px; padding:5.5px 8px; border-radius:7px;
+          color:var(--ink2); }
+  .mrow .statusdot { width:6px; height:6px; }
+  .mrow.on { background:var(--accent); color:#fff; }
+  .mrow.on .ovct { background:rgba(255,255,255,.25); color:#fff; }
+  .ovct { margin-left:auto; font-size:9px; font-weight:700; background:var(--chip-bg); color:var(--chip-ink);
+          border-radius:8px; padding:1px 6px; }
+  .mddetail { flex:1; padding:14px 18px; }
+  .mdhead { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+  .mdhead h3 { margin:0; font-size:14px; font-weight:700; }
+  .mdhead .chip { font-size:9px; }
+  .mdhead .loadbtn { margin-left:auto; font-size:11px; padding:3px 12px; border-radius:6px;
+                     background:var(--chip-bg); color:var(--ink); }
+  .mdsub { font-size:10.5px; color:var(--ink3); margin-bottom:12px; }
+  .srow { display:flex; align-items:center; gap:10px; padding:7px 2px; font-size:12px;
+          border-bottom:1px solid color-mix(in srgb, var(--panel-edge) 50%, transparent); }
+  .srow .lab { width:110px; flex:none; color:var(--ink2); }
+  .srow .val { font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11.5px;
+               background:var(--field); border:1px solid var(--field-edge); border-radius:6px;
+               padding:2.5px 9px; min-width:66px; }
+  .srow.ov .val { border-color:color-mix(in srgb, var(--accent) 65%, transparent); color:var(--accent); font-weight:600; }
+  .badge-ov { margin-left:auto; font-size:9px; font-weight:700; letter-spacing:.05em; }
+  .srow.ov .badge-ov { color:var(--accent); }
+  .srow:not(.ov) .badge-ov { color:var(--ink3); font-weight:500; }
+  .mdreset { display:flex; gap:10px; margin-top:12px; }
+  .mdreset span { font-size:11px; color:var(--ink2); background:var(--chip-bg); border-radius:6px; padding:4px 10px; }
+  .mdreset .danger { color:var(--bad); }
+
+  .fr { padding:20px 18px 14px; }
+  .fr h3 { margin:0 0 4px; font-size:14px; font-weight:700; }
+  .fr p.sub { margin:0 0 14px; font-size:11.5px; color:var(--ink2); line-height:1.45; }
+  .step { display:flex; gap:10px; padding:8px 0; align-items:flex-start; }
+  .stepn { flex:none; width:19px; height:19px; border-radius:50%; background:var(--chip-bg);
+           color:var(--ink); font-size:10.5px; font-weight:700; text-align:center; line-height:19px; }
+  .step.done .stepn { background:var(--good); color:#fff; }
+  .step .st { font-size:12px; line-height:1.45; }
+  .step .st small { display:block; color:var(--ink2); font-size:10.5px; margin-top:1px; }
+  .step .st .codechip { display:inline-flex; align-items:center; gap:7px; margin-top:5px;
+        font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:10.5px; background:var(--code-bg);
+        border-radius:6px; padding:3.5px 9px; cursor:pointer; }
+  .step .st .codechip:hover { outline:1px solid var(--field-edge); }
+  .step .st .codechip i { font-style:normal; opacity:.5; font-size:10px; }
+  .step .st a { color:var(--accent); text-decoration:none; }
+  .warnrow { display:flex; gap:8px; align-items:center; margin:4px 0 10px; padding:7px 10px;
+             background:color-mix(in srgb, var(--warn) 12%, transparent); border-radius:8px;
+             font-size:11px; color:var(--ink); }
+  .warnrow b { color:var(--warn); }
+  .bigbtn { display:block; width:100%; margin-top:12px; text-align:center; background:var(--accent);
+            color:#fff; font-size:12.5px; font-weight:600; border-radius:8px; padding:8px 0; cursor:pointer; }
+
+  footer.page { max-width:1120px; margin:64px auto 0; border-top:1px solid color-mix(in srgb, var(--board-ink) 15%, transparent);
+                padding-top:18px; display:flex; flex-wrap:wrap; gap:10px 26px;
+                font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:11px; color:var(--board-ink2); }
+  footer.page b { color:var(--callout); font-weight:600; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition:none !important; animation:none !important; }
+  }
+</style>
+
+<header class="page">
+  <div class="eyebrow">Design proposal · LLM Switcher 1.3 · interactive mockup</div>
+  <h1>The dropdown becomes a console.</h1>
+  <p class="lede">Three screens: the redesigned <strong>menu bar panel</strong> (fully operable below — real model names, real memory math), the <strong>Per-Model master-detail</strong> rebuild, and the <strong>first-run</strong> state. Numbered notes map to the proposal phases.</p>
+  <div class="try">TRY&nbsp;IT → hover rows · hover a stopped model &amp; watch the memory bar · click ⧉ · press ⏹ then Undo · click 🕘</div>
+</header>
+
+<div class="board">
+
+  <figure class="screen" style="margin:0;">
+    <div class="macpanel" id="panel">
+      <div class="inner">
+        <div class="memwrap">
+          <div class="memlabel"><span id="memtext">21.0 / 32 GB</span><span class="state-good" id="memstate">normal</span></div>
+          <div class="membar" id="membar"></div>
+          <div class="memhint" id="memhint">hover a stopped model to preview its footprint</div>
+          <div class="legend">
+            <span><i style="background:var(--seg1)"></i>your models</span>
+            <span><i style="background:var(--segother)"></i>system + other</span>
+            <span><i style="background:var(--track)"></i>free</span>
+          </div>
+        </div>
+        <div class="search">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="10" cy="10" r="7"/><path d="M15.5 15.5 21 21"/></svg>
+          <input id="filter" type="text" placeholder="Filter models…  (type to try)" aria-label="Filter models">
+        </div>
+        <div id="rows"></div>
+        <div class="panel-div"></div>
+        <div class="footerrow">
+          <button class="fbtn" title="Settings">⚙︎</button>
+          <button class="fbtn" title="Refresh models">↻</button>
+          <button class="fbtn" id="unloadall" title="Unload all">⏹</button>
+          <button class="fbtn" id="agentbtn" title="Agent activity">🕘</button>
+          <span class="quit">Quit</span>
+        </div>
+      </div>
+      <div class="toast" id="toast">Copied http://127.0.0.1:8090/v1</div>
+      <div class="snack" id="snack"><span>Unloaded 2 models</span><button id="undo">Undo (5)</button></div>
+      <div class="agentpop" id="agentpop" role="dialog" aria-label="Agent activity">
+        <h4>Agent activity</h4>
+        <div class="aev"><span class="who">Hermes</span><span class="what">loaded OmniCoder 9B on :8081</span><span class="t">2m</span></div>
+        <div class="aev"><span class="who">idle unload</span><span class="what">Qwythos 9B — 30 min idle</span><span class="t">1h</span></div>
+        <div class="aev"><span class="who">Claude Code</span><span class="what">switched to Qwen3 Coder 25B</span><span class="t">3h</span></div>
+        <div class="aev"><span class="who">guard</span><span class="what">refused SuperGemma 26B — wouldn't fit</span><span class="t">3h</span></div>
+      </div>
+    </div>
+    <figcaption>
+      <p class="cap-title"><span class="ph">SCREEN 1 · PHASES 1–3, 5</span>Menu bar panel</p>
+      <ul class="notes">
+        <li><span class="dot">1</span><b>Parsed names + quant chips.</b> Raw filename lives in the tooltip; the eye scans family, size, quant.</li>
+        <li><span class="dot">2</span><b>Hover actions.</b> Copy endpoint / unload / pin surface on hover — no more secret right-click menu.</li>
+        <li><span class="dot">3</span><b>Memory spine.</b> Stacked bar replaces the caption. Hovering a stopped model previews its footprint — striped blue = fits, striped red = won't.</li>
+        <li><span class="dot">4</span><b>Inline errors.</b> Failures explain themselves under the row, with the fix.</li>
+        <li><span class="dot">5</span><b>Undo, not confirm.</b> ⏹ acts instantly; a 5-second Undo rescues mistakes.</li>
+        <li><span class="dot">6</span><b>Agent feed.</b> 🕘 shows what agents did while you were away.</li>
+      </ul>
+    </figcaption>
+  </figure>
+
+  <figure class="screen" style="margin:0;">
+    <div class="macwin">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <div class="tabs"><span>Global</span><span class="on">Per-Model</span><span>Help</span><span>About</span></div>
+      </div>
+      <div class="mdbody">
+        <div class="mdside">
+          <div class="mrow"><span class="statusdot" style="background:var(--good)"></span>Gemma 4 E4B <span class="ovct">1</span></div>
+          <div class="mrow on"><span class="statusdot" style="border:1.5px solid rgba(255,255,255,.7)"></span>Qwen3 Coder 25B <span class="ovct">2</span></div>
+          <div class="mrow"><span class="statusdot" style="border:1.5px solid var(--ink3)"></span>Ornith 1.0 9B</div>
+          <div class="mrow"><span class="statusdot" style="border:1.5px solid var(--ink3)"></span>Qwythos 9B 1M</div>
+          <div class="mrow"><span class="statusdot" style="border:1.5px solid var(--ink3)"></span>GLM-4.7 Flash 23B</div>
+          <div class="mrow"><span class="statusdot" style="border:1.5px solid var(--ink3)"></span>OmniCoder 9B</div>
+          <div class="mrow"><span class="statusdot" style="border:1.5px solid var(--ink3)"></span>SuperGemma 4 26B</div>
+          <div class="mrow"><span class="statusdot" style="border:1.5px solid var(--ink3)"></span>Qwen3.6 35B MLX</div>
+        </div>
+        <div class="mddetail">
+          <div class="mdhead">
+            <h3>Qwen3 Coder REAP 25B</h3><span class="chip">Q4_K_M</span><span class="chip">GGUF</span>
+            <span class="loadbtn">Load</span>
+          </div>
+          <div class="mdsub mono">cerebras_Qwen3-Coder-REAP-25B-A3B-Q4_K_M.gguf · 14 GB · max ctx 262k</div>
+          <div class="srow ov"><span class="lab">Port</span><span class="val">8083</span><span class="badge-ov">OVERRIDE</span></div>
+          <div class="srow ov"><span class="lab">Context size</span><span class="val">16k</span><span class="badge-ov">OVERRIDE</span></div>
+          <div class="srow"><span class="lab">Temperature</span><span class="val">0.60</span><span class="badge-ov">global</span></div>
+          <div class="srow"><span class="lab">Top-P / Top-K</span><span class="val">0.95 / 20</span><span class="badge-ov">global</span></div>
+          <div class="srow"><span class="lab">K / V cache</span><span class="val">q8_0 / q4_0</span><span class="badge-ov">global</span></div>
+          <div class="srow"><span class="lab">Thinking · MTP</span><span class="val">ON · ON</span><span class="badge-ov">global</span></div>
+          <div class="mdreset"><span>Reset to Global</span><span class="danger">Reset to Default</span></div>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      <p class="cap-title"><span class="ph">SCREEN 2 · PHASE 4</span>Per-Model, rebuilt as master-detail</p>
+      <ul class="notes">
+        <li><span class="dot">1</span><b>Sidebar list</b> with running state and an override-count pill — "what did I customize?" answered without opening anything.</li>
+        <li><span class="dot">2</span><b>Same row language as Global.</b> Overridden values pop in accent; inherited values stay quiet. One visual grammar across both tabs.</li>
+        <li><span class="dot">3</span><b>Parsed header</b> keeps the raw filename and hard limits (size, max context) as reference metadata.</li>
+      </ul>
+    </figcaption>
+  </figure>
+
+  <figure class="screen" style="margin:0;">
+    <div class="macpanel" style="width:312px;">
+      <div class="inner">
+        <div class="fr">
+          <h3>Welcome to LLM Switcher</h3>
+          <p class="sub">Run AI models entirely on this Mac. Three steps and you're chatting.</p>
+          <div class="warnrow"><b>⚠</b><span><b>llama-server not found.</b> Install the engine, then come back:</span></div>
+          <div class="step done">
+            <span class="stepn">✓</span>
+            <div class="st">Install the engine
+              <span class="codechip">brew install llama.cpp <i>⧉</i></span>
+            </div>
+          </div>
+          <div class="step">
+            <span class="stepn">2</span>
+            <div class="st">Download a model
+              <small>Free files from <a href="https://huggingface.co/models?library=gguf">Hugging Face</a> — with 16 GB RAM, grab a 9B <span class="mono">Q4_K_M.gguf</span></small>
+            </div>
+          </div>
+          <div class="step">
+            <span class="stepn">3</span>
+            <div class="st">Point the app at your downloads
+              <small>It watches the folder — new models appear automatically</small>
+            </div>
+          </div>
+          <span class="bigbtn">Choose Models Folder…</span>
+        </div>
+        <div class="panel-div"></div>
+        <div class="footerrow">
+          <button class="fbtn">⚙︎</button><button class="fbtn">↻</button>
+          <span class="quit">Quit</span>
+        </div>
+      </div>
+    </div>
+    <figcaption>
+      <p class="cap-title"><span class="ph">SCREEN 3 · PHASE 1</span>First run — the panel teaches itself</p>
+      <ul class="notes">
+        <li><span class="dot">1</span><b>Engine check is proactive:</b> the missing dependency is announced with a copyable fix, not discovered via a failed load.</li>
+        <li><span class="dot">2</span><b>The empty list becomes the onboarding</b> — Help section 1, condensed into the moment it's needed.</li>
+      </ul>
+    </figcaption>
+  </figure>
+</div>
+
+<footer class="page">
+  <span><b>P1</b> hover actions · inline errors · empty states — ~1 day</span>
+  <span><b>P2</b> name parser · chips — ~1 day</span>
+  <span><b>P3</b> memory spine + prediction — 1–2 days</span>
+  <span><b>P4</b> per-model master-detail — 2–3 days</span>
+  <span><b>P5</b> agent feed · undo · filter</span>
+</footer>
+
+<script>
+(function(){
+  const RAM = 32, OTHER = 13.0;
+  let models = [
+    { id:'e4b',  name:'Gemma 4 E4B',          quant:'Q5_K_M', backend:'GGUF', file:'gemma-4-e4b-q5_k_m-imat.gguf',                    est:8.0,  running:true,  port:8090, pinned:true  },
+    { id:'omni', name:'OmniCoder 9B',          quant:'Q4_K_M', backend:'GGUF', file:'omnicoder-9b-q4_k_m.gguf',                        est:6.3,  running:false, port:8081, pinned:false },
+    { id:'orni', name:'Ornith 1.0 9B',         quant:'Q5_K_M', backend:'GGUF', file:'deepreinforce-ai_Ornith-1.0-9B-Q5_K_M.gguf',      est:7.4,  running:false, port:0,    pinned:false },
+    { id:'qwy',  name:'Qwythos 9B · 1M ctx',   quant:'Q4_K_M', backend:'GGUF', file:'Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M.gguf',   est:6.5,  running:false, port:0,    pinned:false },
+    { id:'glm',  name:'GLM-4.7 Flash 23B',     quant:'Q4_K_XL',backend:'GGUF', file:'GLM-4.7-Flash-REAP-23B-A3B-UD-Q4_K_XL.gguf',      est:14.8, running:false, port:0,    pinned:false, err:'port 8090 in use — right-click → Port, or view log' },
+    { id:'qwen', name:'Qwen3 Coder REAP 25B',  quant:'Q4_K_M', backend:'GGUF', file:'cerebras_Qwen3-Coder-REAP-25B-A3B-Q4_K_M.gguf',   est:15.9, running:false, port:0,    pinned:false },
+    { id:'sg',   name:'SuperGemma 4 26B',      quant:'Q4_K_M', backend:'GGUF', file:'supergemma4-26b-abliterated-multimodal-Q4_K_M.gguf', est:18.1, running:false, port:0, pinned:false },
+    { id:'mlx',  name:'Qwen3.6 35B A3B',       quant:'4-bit',  backend:'MLX',  file:'Qwen3.6-35B-A3B-Opus-MLX-oQ4',                    est:22.4, running:false, port:0,    pinned:false },
+  ];
+  const HEADROOM = 3.2;
+  let ghost = null, undoStash = null, undoTimer = null, undoLeft = 5;
+
+  const $ = s => document.querySelector(s);
+  const rowsEl = $('#rows'), membar = $('#membar'), memtext = $('#memtext'),
+        memhint = $('#memhint'), memstate = $('#memstate'), filter = $('#filter');
+
+  function used()   { return OTHER + models.filter(m=>m.running).reduce((a,m)=>a+m.est,0); }
+  function free()   { return Math.max(RAM - used(), 0); }
+  function fits(m)  { return m.est + HEADROOM <= free(); }
+
+  function renderBar(){
+    membar.innerHTML = '';
+    const segs = [];
+    segs.push({cls:'other', gb:OTHER, tip:'system + other apps'});
+    models.filter(m=>m.running).forEach((m,i)=>
+      segs.push({cls: i%2 ? 'm2':'m1', gb:m.est, tip:m.name}));
+    if (ghost) segs.push({cls:'ghost'+(fits(ghost)?'':' bad'), gb:Math.min(ghost.est, free()), tip:'projected'});
+    segs.forEach(s=>{
+      const d = document.createElement('div');
+      d.className = 'seg '+s.cls;
+      d.style.width = (s.gb/RAM*100)+'%';
+      d.title = s.tip+' — '+s.gb.toFixed(1)+' GB';
+      membar.appendChild(d);
+    });
+    memtext.textContent = used().toFixed(1)+' / '+RAM+' GB';
+    const f = free();
+    memstate.textContent = f < 4 ? 'warning' : 'normal';
+    memstate.className = f < 4 ? '' : 'state-good';
+    memstate.style.color = f < 4 ? 'var(--warn)' : '';
+    if (ghost){
+      if (fits(ghost)){ memhint.className='memhint ok';
+        memhint.textContent = '+'+ghost.est.toFixed(1)+' GB if loaded → '+(f-ghost.est).toFixed(1)+' GB would remain'; }
+      else { memhint.className='memhint bad';
+        memhint.textContent = 'won’t fit — needs '+ghost.est.toFixed(1)+' GB, '+f.toFixed(1)+' GB free (headroom reserved)'; }
+    } else { memhint.className='memhint'; memhint.textContent='hover a stopped model to preview its footprint'; }
+  }
+
+  function chip(t, extra){ return '<span class="chip '+(extra||'')+'">'+t+'</span>'; }
+
+  function renderRows(){
+    const q = filter.value.trim().toLowerCase();
+    const vis = models.filter(m => !q || (m.name+' '+m.file).toLowerCase().includes(q));
+    const running = vis.filter(m=>m.running), stopped = vis.filter(m=>!m.running);
+    let h = '';
+    if (running.length){
+      h += '<div class="sect">Running</div>';
+      running.forEach(m=>{
+        h += '<div class="row running" data-id="'+m.id+'" title="'+m.file+'">'
+          +  '<span class="statusdot"></span><span class="name">'+m.name+'</span>'
+          +  (m.pinned ? '<span class="pinicon">📌</span>' : '')
+          +  '<span class="spacer"></span>'
+          +  '<span class="actions">'
+          +  '<button data-act="copy" title="Copy endpoint">⧉</button>'
+          +  '<button data-act="pin" title="'+(m.pinned?'Unpin':'Pin')+'">'+(m.pinned?'📌':'📍')+'</button>'
+          +  '<button data-act="stop" title="Unload">■</button></span>'
+          +  chip(m.quant) + chip(m.backend,'backend'+(m.backend==='MLX'?' mlx':''))
+          +  '<span class="port">:'+m.port+'</span></div>';
+      });
+    }
+    if (stopped.length){
+      h += '<div class="sect">Available</div>';
+      stopped.forEach(m=>{
+        const nofit = !fits(m);
+        h += '<div class="row stopped'+(nofit?' dim':'')+'" data-id="'+m.id+'" title="'+m.file+' · est. '+m.est.toFixed(1)+' GB">'
+          +  '<span class="statusdot"></span><span class="name">'+m.name+'</span>'
+          +  '<span class="spacer"></span>'
+          +  '<span class="actions"><button data-act="load" title="Load">▶</button></span>'
+          +  (nofit ? '<span class="nofit">won’t fit</span>' : '')
+          +  chip(m.quant) + chip(m.backend,'backend'+(m.backend==='MLX'?' mlx':''))
+          +  '</div>';
+        if (m.err) h += '<div class="errline">⚠ '+m.err.replace('view log','<a>view log</a>')+'</div>';
+      });
+    }
+    if (!vis.length) h = '<div class="sect" style="padding:14px">no models match “'+q+'”</div>';
+    rowsEl.innerHTML = h;
+    bindRows();
+    renderBar();
+  }
+
+  function bindRows(){
+    rowsEl.querySelectorAll('.row.stopped').forEach(el=>{
+      el.addEventListener('mouseenter', ()=>{ ghost = models.find(m=>m.id===el.dataset.id); renderBar(); });
+      el.addEventListener('mouseleave', ()=>{ ghost = null; renderBar(); });
+    });
+    rowsEl.querySelectorAll('.actions button').forEach(b=>{
+      b.addEventListener('click', e=>{
+        e.stopPropagation();
+        const m = models.find(x=>x.id===b.closest('.row').dataset.id);
+        const act = b.dataset.act;
+        if (act==='copy') toast('Copied http://127.0.0.1:'+m.port+'/v1');
+        if (act==='pin'){ m.pinned = !m.pinned; renderRows(); }
+        if (act==='stop'){ m.running = false; ghost=null; renderRows(); }
+        if (act==='load'){ loadModel(m); }
+      });
+    });
+  }
+
+  function loadModel(m){
+    ghost = null;
+    const rowEl = rowsEl.querySelector('.row[data-id="'+m.id+'"]');
+    if (rowEl){ rowEl.classList.add('loadingrow');
+      rowEl.querySelector('.statusdot').outerHTML = '<span class="spin"></span>';
+      rowEl.querySelector('.name').textContent = m.name+' — loading weights…'; }
+    setTimeout(()=>{ m.running = true; m.port = m.port || nextPort(); renderRows(); }, 1400);
+  }
+  function nextPort(){ let p=8080; while (models.some(m=>m.running&&m.port===p)) p++; return p; }
+
+  let toastT;
+  function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show');
+    clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), 1800); }
+
+  $('#unloadall').addEventListener('click', ()=>{
+    const running = models.filter(m=>m.running && !m.pinned);
+    if (!running.length){ toast('Nothing to unload (pins kept)'); return; }
+    undoStash = running.map(m=>m.id);
+    running.forEach(m=>m.running=false);
+    renderRows();
+    const sn=$('#snack'); sn.firstElementChild.textContent='Unloaded '+running.length+' model'+(running.length>1?'s':'')+' (pins kept)';
+    sn.classList.add('show'); undoLeft=5; $('#undo').textContent='Undo ('+undoLeft+')';
+    clearInterval(undoTimer);
+    undoTimer=setInterval(()=>{ undoLeft--;
+      if (undoLeft<=0){ clearInterval(undoTimer); sn.classList.remove('show'); undoStash=null; }
+      else $('#undo').textContent='Undo ('+undoLeft+')'; }, 1000);
+  });
+  $('#undo').addEventListener('click', ()=>{
+    if (undoStash){ undoStash.forEach(id=>{ models.find(m=>m.id===id).running=true; }); undoStash=null; }
+    clearInterval(undoTimer); $('#snack').classList.remove('show'); renderRows();
+  });
+
+  $('#agentbtn').addEventListener('click', e=>{ e.stopPropagation(); $('#agentpop').classList.toggle('show'); });
+  document.addEventListener('click', e=>{ if (!e.target.closest('#agentpop')) $('#agentpop').classList.remove('show'); });
+
+  filter.addEventListener('input', renderRows);
+  renderRows();
+})();
+</script>
