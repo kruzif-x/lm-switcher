@@ -143,6 +143,8 @@ struct SettingsView: View {
     @Bindable var manager: ServerManager
     @State private var selectedTab: Int
     @State private var savedFeedback: Bool = false
+    /// Selected model in the Per-Model master-detail view (redesign Phase 4).
+    @State private var selectedModelID: String? = nil
 
     // Local @State mirrors of manager.settings
     @State private var modelsDir: String
@@ -725,220 +727,311 @@ struct SettingsView: View {
     }
 
 
-    // MARK: - Per-Model tab
+    // MARK: - Per-Model tab (redesign Phase 4: master-detail)
+    //
+    //  Was a DisclosureGroup wall repeating 11 TextFields per model.
+    //  Now a sidebar (running state + override-count pill) + a detail
+    //  pane reusing the Global tab's row language, with per-field
+    //  OVERRIDE/GLOBAL badges so "what did I customize?" reads at a
+    //  glance instead of requiring a value-by-value diff against Global.
+
+    /// The field keys that make up a model's overridable settings —
+    /// shared by the sidebar's count pill and the detail rows' badges.
+    private static let overrideKeys = [
+        "port", "ctx", "temperature", "topP", "topK", "repeatPenalty",
+        "kvCacheTypeK", "kvCacheTypeV", "thinkingEnabled", "enableMtp", "extraArgs",
+    ]
+
+    private func overrideCount(for model: ModelEntry) -> Int {
+        guard manager.perModelOverrideEnabled(for: model) else { return 0 }
+        return Self.overrideKeys.filter { manager.perModelSettingExists($0, for: model) }.count
+    }
+
+    private var selectedModel: ModelEntry? {
+        manager.models.first(where: { $0.id == selectedModelID }) ?? manager.models.first
+    }
 
     private var modelsPane: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Per-Model Settings").font(.headline)
-                Spacer()
-            }
-            Text("Override global settings per model · Auto-saved · Applies on next model (re)load")
-                .font(.caption).foregroundStyle(.secondary)
-
+        Group {
             if manager.models.isEmpty {
-                Text("No models found in \(manager.settings.modelsDir)")
-                    .foregroundStyle(.secondary).padding()
+                VStack(spacing: 6) {
+                    Image(systemName: "cube").font(.system(size: 26)).foregroundStyle(.secondary)
+                    Text("No models found").font(.system(size: 13, weight: .medium))
+                    Text("Set a Models directory in the Global tab.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    VStack(spacing: 8) {
-                        ForEach(manager.models) { model in
-                            perModelCard(for: model)
-                        }
+                HStack(spacing: 0) {
+                    modelSidebar
+                    Divider()
+                    if let model = selectedModel {
+                        modelDetail(for: model)
                     }
                 }
             }
         }
-        .padding()
     }
 
-    private func perModelCard(for model: ModelEntry) -> some View {
-        let state = manager.state(for: model)
-        return DisclosureGroup {
-            perModelOverrideFields(for: model)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: model.backend.sfSymbol)
-                    .foregroundStyle(model.backend == .mlx ? Color.purple : Color.blue)
-                    .imageScale(.small)
-                Text(model.name).lineLimit(1).truncationMode(.middle)
-                Spacer()
-                if state.isRunning {
-                    Image(systemName: "circle.fill").foregroundStyle(Color.green).imageScale(.small)
-                    Text(":\(String(state.port))").font(.caption.monospaced()).foregroundStyle(.secondary)
-                } else {
-                    Image(systemName: "circle").foregroundStyle(.secondary).imageScale(.small)
-                }
-                if state.isRunning {
-                    Button("Unload") { manager.unloadModel(model) }.controlSize(.small)
-                } else if manager.switchingTo == model.id {
-                    Text("Switching…").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    HStack(spacing: 4) {
-                        Button("Load") { manager.loadModel(model) }.controlSize(.small)
-                        if manager.anyRunning {
-                            Button("Switch") { manager.switchModel(model) }.controlSize(.small)
-                        }
-                    }
+    // MARK: Sidebar
+
+    private var modelSidebar: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(manager.models) { model in
+                    sidebarRow(for: model)
                 }
             }
+            .padding(6)
         }
-        .padding(.vertical, 2)
+        .frame(width: 168)
+        .background(Color.secondary.opacity(0.035))
     }
 
-    private func perModelOverrideFields(for model: ModelEntry) -> some View {
+    private func sidebarRow(for model: ModelEntry) -> some View {
         let _ = manager.refreshTrigger
-        let overrideOn = manager.perModelOverrideEnabled(for: model)
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Toggle(isOn: Binding<Bool>(
-                    get: { overrideOn },
-                    set: { newVal in
-                        manager.setPerModelOverride(newVal, for: model)
-                        manager.refreshTrigger += 1
-                    }
-                )) { Text("Override Global Settings") }
-                .toggleStyle(.switch).controlSize(.small)
-                Spacer()
-                if overrideOn {
-                    Button("Reset to Global") {
-                        manager.resetPerModel(for: model)
-                        manager.refreshTrigger += 1
-                    }
-                    .controlSize(.small).foregroundStyle(Color.red)
+        let state = manager.state(for: model)
+        let isSelected = selectedModel?.id == model.id
+        let count = overrideCount(for: model)
+        return HStack(spacing: 6) {
+            Circle()
+                .fill(state.isRunning ? Color.green : Color.clear)
+                .overlay(
+                    Circle().stroke(state.isRunning ? Color.clear : Color.secondary.opacity(0.5), lineWidth: 1.2)
+                )
+                .frame(width: 6, height: 6)
+            Text(parseModelName(model.name).display)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+            Spacer(minLength: 4)
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.95) : Color.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        (isSelected ? Color.white.opacity(0.24) : Color.secondary.opacity(0.16)),
+                        in: Capsule()
+                    )
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(isSelected ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .contentShape(Rectangle())
+        .onTapGesture { selectedModelID = model.id }
+    }
+
+    // MARK: Detail
+
+    @ViewBuilder
+    private func modelActionButton(for model: ModelEntry, state: ModelState) -> some View {
+        if state.isRunning {
+            Button("Unload") { manager.unloadModel(model) }.controlSize(.small)
+        } else if manager.switchingTo == model.id {
+            Text("Switching…").font(.system(size: 11)).foregroundStyle(.secondary)
+        } else {
+            HStack(spacing: 4) {
+                Button("Load") { manager.loadModel(model) }.controlSize(.small)
+                if manager.anyRunning {
+                    Button("Switch") { manager.switchModel(model) }.controlSize(.small)
                 }
             }
+        }
+    }
 
-            if !overrideOn {
-                HStack(spacing: 16) {
-                    Text("Port: \(String(format: "%d", manager.settings.defaultPort))").font(.caption2).foregroundStyle(.secondary)
-                    Text("Ctx: \(manager.formatCtxDisplay(manager.settings.defaultCtxSize))").font(.caption2).foregroundStyle(.secondary)
-                    Text("Temp: \(manager.settings.temperature)").font(.caption2).foregroundStyle(.secondary)
-                    Text("Top-P: \(manager.settings.topP)").font(.caption2).foregroundStyle(.secondary)
-                    Text("Top-K: \(manager.settings.topK)").font(.caption2).foregroundStyle(.secondary)
-                    Text("RP: \(manager.settings.repeatPenalty)").font(.caption2).foregroundStyle(.secondary)
+    private func backendChip(_ backend: ModelBackend) -> some View {
+        Text(backend.rawValue)
+            .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(backend == .mlx ? Color.purple : Color.secondary)
+    }
+
+    /// Small "OVERRIDE" / "GLOBAL" indicator — the badge language that
+    /// makes per-field customization legible without a value-by-value
+    /// comparison against the Global tab.
+    private func overrideBadge(active: Bool) -> some View {
+        Text(active ? "OVERRIDE" : "GLOBAL")
+            .font(.system(size: 8, weight: .bold))
+            .tracking(0.3)
+            .foregroundStyle(active ? Color.accentColor : Color.secondary.opacity(0.55))
+            .frame(width: 58, alignment: .trailing)
+    }
+
+    private func overrideRow<Content: View>(
+        label: String, key: String, model: ModelEntry, overrideOn: Bool,
+        @ViewBuilder field: () -> Content
+    ) -> some View {
+        let active = overrideOn && manager.perModelSettingExists(key, for: model)
+        return HStack(spacing: 10) {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(width: 82, alignment: .leading)
+            field()
+            Spacer()
+            overrideBadge(active: active)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func modelDetail(for model: ModelEntry) -> some View {
+        let _ = manager.refreshTrigger
+        let state = manager.state(for: model)
+        let overrideOn = manager.perModelOverrideEnabled(for: model)
+        let parsed = parseModelName(model.name)
+
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text(parsed.display).font(.system(size: 14, weight: .bold)).lineLimit(1)
+                    if let q = parsed.quant { quantChip(q) }
+                    backendChip(model.backend)
+                    Spacer()
+                    modelActionButton(for: model, state: state)
                 }
-                HStack(spacing: 16) {
-                    Text("K: \(manager.settings.kvCacheTypeK)").font(.caption2).foregroundStyle(.secondary)
-                    Text("V: \(manager.settings.kvCacheTypeV)").font(.caption2).foregroundStyle(.secondary)
-                    Text("Think: \(manager.settings.thinkingEnabled ? "ON" : "OFF")").font(.caption2).foregroundStyle(.secondary)
-                    Text("MTP: \(manager.settings.enableMtp ? "ON" : "OFF")").font(.caption2).foregroundStyle(.secondary)
+                Text(model.name)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+
+                Divider()
+
+                HStack {
+                    Toggle(isOn: Binding<Bool>(
+                        get: { overrideOn },
+                        set: { newVal in
+                            manager.setPerModelOverride(newVal, for: model)
+                            manager.refreshTrigger += 1
+                        }
+                    )) { Text("Override Global Settings").font(.system(size: 12)) }
+                    .toggleStyle(.switch).controlSize(.small)
+                    Spacer()
+                    if overrideOn {
+                        Button("Reset to Global") {
+                            manager.resetPerModel(for: model)
+                            manager.refreshTrigger += 1
+                        }
+                        .controlSize(.small).foregroundStyle(Color.red)
+                    }
                 }
-            } else {
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Port:").font(.caption).foregroundStyle(.secondary)
+
+                VStack(spacing: 0) {
+                    overrideRow(label: "Port", key: "port", model: model, overrideOn: overrideOn) {
                         TextField("", text: Binding<String>(
                             get: { String(format: "%d", manager.perModelPort(for: model)) },
                             set: { if let p = Int($0), p >= 0, p < 65536 { manager.setPerModelPort(p, for: model) } }
-                        )).frame(width: 70).textFieldStyle(.roundedBorder).controlSize(.small)
+                        )).frame(width: 70).textFieldStyle(.roundedBorder).controlSize(.small).disabled(!overrideOn)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Ctx:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "Context", key: "ctx", model: model, overrideOn: overrideOn) {
                         TextField("", text: Binding<String>(
                             get: { manager.formatCtxDisplay(manager.perModelCtxSize(for: model)) },
                             set: { if let c = manager.parseCtxInput($0) { manager.setPerModelCtxSize(c, for: model) } }
-                        )).frame(width: 70).textFieldStyle(.roundedBorder).controlSize(.small)
+                        )).frame(width: 70).textFieldStyle(.roundedBorder).controlSize(.small).disabled(!overrideOn)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Temp:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "Temperature", key: "temperature", model: model, overrideOn: overrideOn) {
                         TextField("", text: Binding<String>(
                             get: { String(format: "%.2f", manager.perModelSetting("temperature", default: manager.settings.temperature, for: model) as Double) },
                             set: { if let v = Double($0) { manager.setPerModelSetting(v, for: model, key: "temperature") } }
-                        )).frame(width: 50).textFieldStyle(.roundedBorder).controlSize(.small)
+                        )).frame(width: 60).textFieldStyle(.roundedBorder).controlSize(.small).disabled(!overrideOn)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Top-P:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "Top-P", key: "topP", model: model, overrideOn: overrideOn) {
                         TextField("", text: Binding<String>(
                             get: { String(format: "%.2f", manager.perModelSetting("topP", default: manager.settings.topP, for: model) as Double) },
                             set: { if let v = Double($0) { manager.setPerModelSetting(v, for: model, key: "topP") } }
-                        )).frame(width: 50).textFieldStyle(.roundedBorder).controlSize(.small)
+                        )).frame(width: 60).textFieldStyle(.roundedBorder).controlSize(.small).disabled(!overrideOn)
                     }
-                }
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Top-K:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "Top-K", key: "topK", model: model, overrideOn: overrideOn) {
                         TextField("", text: Binding<String>(
                             get: { String(format: "%d", manager.perModelSetting("topK", default: manager.settings.topK, for: model) as Int) },
                             set: { if let v = Int($0) { manager.setPerModelSetting(v, for: model, key: "topK") } }
-                        )).frame(width: 50).textFieldStyle(.roundedBorder).controlSize(.small)
+                        )).frame(width: 60).textFieldStyle(.roundedBorder).controlSize(.small).disabled(!overrideOn)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("RP:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "Repeat penalty", key: "repeatPenalty", model: model, overrideOn: overrideOn) {
                         TextField("", text: Binding<String>(
                             get: { String(format: "%.2f", manager.perModelSetting("repeatPenalty", default: manager.settings.repeatPenalty, for: model) as Double) },
                             set: { if let v = Double($0) { manager.setPerModelSetting(v, for: model, key: "repeatPenalty") } }
-                        )).frame(width: 50).textFieldStyle(.roundedBorder).controlSize(.small)
+                        )).frame(width: 60).textFieldStyle(.roundedBorder).controlSize(.small).disabled(!overrideOn)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("K Cache:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "K cache", key: "kvCacheTypeK", model: model, overrideOn: overrideOn) {
                         Picker("", selection: Binding<String>(
                             get: { manager.perModelSetting("kvCacheTypeK", default: manager.settings.kvCacheTypeK, for: model) },
                             set: { manager.setPerModelSetting($0, for: model, key: "kvCacheTypeK") }
                         )) {
                             Text("f16").tag("f16"); Text("q8_0").tag("q8_0"); Text("q4_0").tag("q4_0")
-                        }.pickerStyle(.menu).frame(width: 80).controlSize(.small)
+                        }.pickerStyle(.menu).frame(width: 80).controlSize(.small).disabled(!overrideOn)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("V Cache:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "V cache", key: "kvCacheTypeV", model: model, overrideOn: overrideOn) {
                         Picker("", selection: Binding<String>(
                             get: { manager.perModelSetting("kvCacheTypeV", default: manager.settings.kvCacheTypeV, for: model) },
                             set: { manager.setPerModelSetting($0, for: model, key: "kvCacheTypeV") }
                         )) {
                             Text("f16").tag("f16"); Text("q8_0").tag("q8_0"); Text("q4_0").tag("q4_0")
-                        }.pickerStyle(.menu).frame(width: 80).controlSize(.small)
+                        }.pickerStyle(.menu).frame(width: 80).controlSize(.small).disabled(!overrideOn)
                     }
-                }
-                HStack(spacing: 16) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Think:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "Thinking", key: "thinkingEnabled", model: model, overrideOn: overrideOn) {
                         Toggle("", isOn: Binding<Bool>(
                             get: { manager.perModelSetting("thinkingEnabled", default: manager.settings.thinkingEnabled, for: model) },
                             set: { manager.setPerModelSetting($0, for: model, key: "thinkingEnabled") }
-                        )).toggleStyle(.switch).controlSize(.small).labelsHidden()
+                        )).toggleStyle(.switch).controlSize(.small).labelsHidden().disabled(!overrideOn)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("MTP:").font(.caption).foregroundStyle(.secondary)
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "MTP", key: "enableMtp", model: model, overrideOn: overrideOn) {
                         Toggle("", isOn: Binding<Bool>(
                             get: { manager.perModelSetting("enableMtp", default: manager.settings.enableMtp, for: model) },
                             set: { manager.setPerModelSetting($0, for: model, key: "enableMtp") }
-                        )).toggleStyle(.switch).controlSize(.small).labelsHidden()
+                        )).toggleStyle(.switch).controlSize(.small).labelsHidden().disabled(!overrideOn)
+                    }
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "Extra args", key: "extraArgs", model: model, overrideOn: overrideOn) {
+                        TextField("", text: Binding<String>(
+                            get: { manager.perModelSetting("extraArgs", default: manager.settings.globalExtraArgs, for: model) },
+                            set: { manager.setPerModelSetting($0, for: model, key: "extraArgs") }
+                        )).textFieldStyle(.roundedBorder).controlSize(.small).disabled(!overrideOn)
                     }
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Extra Args:").font(.caption).foregroundStyle(.secondary)
-                    TextField("", text: Binding<String>(
-                        get: { manager.perModelSetting("extraArgs", default: manager.settings.globalExtraArgs, for: model) },
-                        set: { manager.setPerModelSetting($0, for: model, key: "extraArgs") }
-                    )).textFieldStyle(.roundedBorder).controlSize(.small)
-                }
-            }
+                .background(Color.secondary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.18), lineWidth: 0.5)
+                )
 
-            HStack {
-                Spacer()
-                Button("Reset to Default") {
-                    if manager.perModelOverrideEnabled(for: model) {
-                        let d = AppSettings()
-                        manager.setPerModelPort(d.defaultPort, for: model)
-                        manager.setPerModelCtxSize(d.defaultCtxSize, for: model)
-                        manager.setPerModelSetting(d.temperature, for: model, key: "temperature")
-                        manager.setPerModelSetting(d.topP, for: model, key: "topP")
-                        manager.setPerModelSetting(d.topK, for: model, key: "topK")
-                        manager.setPerModelSetting(d.repeatPenalty, for: model, key: "repeatPenalty")
-                        manager.setPerModelSetting(d.kvCacheTypeK, for: model, key: "kvCacheTypeK")
-                        manager.setPerModelSetting(d.kvCacheTypeV, for: model, key: "kvCacheTypeV")
-                        manager.setPerModelSetting(d.thinkingEnabled, for: model, key: "thinkingEnabled")
-                        manager.setPerModelSetting(d.enableMtp, for: model, key: "enableMtp")
-                        manager.setPerModelSetting(d.globalExtraArgs, for: model, key: "extraArgs")
-                    } else {
-                        manager.resetPerModel(for: model)
+                if overrideOn {
+                    HStack {
+                        Spacer()
+                        Button("Reset to Default") {
+                            let d = AppSettings()
+                            manager.setPerModelPort(d.defaultPort, for: model)
+                            manager.setPerModelCtxSize(d.defaultCtxSize, for: model)
+                            manager.setPerModelSetting(d.temperature, for: model, key: "temperature")
+                            manager.setPerModelSetting(d.topP, for: model, key: "topP")
+                            manager.setPerModelSetting(d.topK, for: model, key: "topK")
+                            manager.setPerModelSetting(d.repeatPenalty, for: model, key: "repeatPenalty")
+                            manager.setPerModelSetting(d.kvCacheTypeK, for: model, key: "kvCacheTypeK")
+                            manager.setPerModelSetting(d.kvCacheTypeV, for: model, key: "kvCacheTypeV")
+                            manager.setPerModelSetting(d.thinkingEnabled, for: model, key: "thinkingEnabled")
+                            manager.setPerModelSetting(d.enableMtp, for: model, key: "enableMtp")
+                            manager.setPerModelSetting(d.globalExtraArgs, for: model, key: "extraArgs")
+                            manager.refreshTrigger += 1
+                        }
+                        .controlSize(.small).foregroundStyle(.secondary)
                     }
-                    manager.refreshTrigger += 1
                 }
-                .controlSize(.small).foregroundStyle(.secondary)
             }
+            .padding(14)
         }
-        .padding(.leading, 4)
     }
 
 
@@ -1056,8 +1149,11 @@ struct SettingsView: View {
                     }
 
                     helpSection(number: "4", title: "Per-model overrides", id: "s4", proxy: proxy) {
-                        helpEntry("Every model can have its own settings.",
-                                  "Settings → Per-Model → flip \"Override Global Settings\" — the grey inherited values become editable for that model only.",
+                        helpEntry("Pick a model on the left, then flip \"Override Global Settings\".",
+                                  "The grey inherited values on the right become editable for that model only. A number badge in the sidebar shows how many fields you've actually customized.",
+                                  mono: false)
+                        helpEntry("OVERRIDE vs GLOBAL",
+                                  "Each row is tagged: OVERRIDE means this field has its own value; GLOBAL means it's still inheriting from the Global tab, even with overrides turned on.",
                                   mono: false)
                         helpEntry("Changes apply on the next load.",
                                   "Already running? Unload and load again.",
