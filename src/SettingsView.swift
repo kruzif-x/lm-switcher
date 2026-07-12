@@ -473,13 +473,15 @@ struct SettingsView: View {
                     hint: "macOS notification when an agent loads or unloads a model",
                     isOn: $notifyAgentActions
                 )
-                HStack {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Register:  claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp")
                         .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                    Spacer()
+                    Text("Hermes, opencode, and other clients: see Help → 9. Agent access (MCP)")
+                        .font(.system(size: 10))
                 }
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
             }
@@ -1070,7 +1072,10 @@ struct SettingsView: View {
                     }
 
                     helpSection(number: "9", title: "Agent access (MCP)", id: "s9", proxy: proxy) {
-                        helpEntry("What it is", "An MCP stdio server (llm-switcher-mcp) that lets agents (Claude Code, Hermes, opencode…) list, load, unload, and switch models. Register with: claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp")
+                        helpEntry("What it is", "An MCP stdio server (~/bin/llm-switcher-mcp) that lets agents (Claude Code, Hermes, opencode…) list, load, unload, and switch models. It speaks standard JSON-RPC 2.0 over stdio, so any MCP client can connect.")
+                        helpEntry("Register — Claude Code", "claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp   (add --scope user to make it available in every project)")
+                        helpEntry("Register — Hermes", "Add an entry under mcp_servers: in ~/.hermes/config.yaml with command: ~/bin/llm-switcher-mcp, args: [], timeout: 300 — then restart the gateway to pick it up.")
+                        helpEntry("Register — other MCP clients", "opencode, pi, or any stdio MCP client: configure a local/stdio server whose command is ~/bin/llm-switcher-mcp with no arguments (e.g. opencode.json → mcp → { \"llm-switcher\": { \"type\": \"local\", \"command\": [\"~/bin/llm-switcher-mcp\"] } }).")
                         helpEntry("Agent access (MCP) toggle", "Master switch, OFF by default. While OFF every agent tool call is refused. Turning it OFF never unloads models — it revokes control, not servers.")
                         helpEntry("Allow swap for agent loads", "OFF: agent loads that don't fit in free RAM are refused with an explanation and the largest context that would fit. ON: the load proceeds and the agent gets a swap warning.")
                         helpEntry("Pinning", "Right-click a running model → Pin. Agents cannot unload pinned models and idle auto-unload skips them; the menu bar Unload buttons are unaffected — pins protect against automation, not you.")

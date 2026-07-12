@@ -230,8 +230,27 @@ default**: enable **Agent access (MCP)** in Settings → Global (Inference
 card, below MTP) before registering.
 
 ```bash
-# Claude Code
-claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp
+# Claude Code (--scope user makes it available in every project)
+claude mcp add --scope user llm-switcher -- ~/bin/llm-switcher-mcp
+```
+
+```yaml
+# Hermes — add under mcp_servers: in ~/.hermes/config.yaml,
+# then restart the gateway
+mcp_servers:
+  llm-switcher:
+    command: /Users/you/bin/llm-switcher-mcp   # absolute path
+    args: []
+    timeout: 300        # loads block until healthy (default 180 s)
+```
+
+Any other MCP client (opencode, pi, …): configure a **local/stdio**
+server whose command is `~/bin/llm-switcher-mcp` with no arguments — the
+server speaks standard JSON-RPC 2.0 over stdio, newline-delimited. For
+opencode that looks like:
+
+```json
+"mcp": { "llm-switcher": { "type": "local", "command": ["~/bin/llm-switcher-mcp"] } }
 ```
 
 | Tool | What it does |
