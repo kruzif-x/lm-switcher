@@ -477,7 +477,7 @@ struct SettingsView: View {
                     Text("Register:  claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp")
                         .font(.system(size: 10, design: .monospaced))
                         .textSelection(.enabled)
-                    Text("Hermes, opencode, and other clients: see Help → 9. Agent access (MCP)")
+                    Text("Hermes, opencode, and other clients: see Help → 7. Agent access (MCP)")
                         .font(.system(size: 10))
                 }
                 .foregroundStyle(.secondary)
@@ -943,72 +943,144 @@ struct SettingsView: View {
                     // Table of contents
                     tocSection(proxy: proxy)
 
-                    // Sections
-                    helpSection(number: "1", title: "Quick start", id: "s1", proxy: proxy) {
-                        helpEntry("Set your models directory",
-                                  "Go to Global → Models directory. Point it at the folder containing your .gguf files and MLX model folders (folders with .safetensors + config.json).")
-                        helpEntry("Load a model",
-                                  "Click any model row in the menu bar dropdown. Each model starts its own server on a separate port.")
-                        helpEntry("Use the CLI",
-                                  "llama list · llama load <name> · llama switch <name> · llama status")
+                    // Sections — task-oriented: get started → daily use →
+                    // tune → connect → fix. Reference material last.
+                    helpSection(number: "1", title: "Getting started", id: "s1", proxy: proxy) {
+                        helpEntry("LLM Switcher runs AI models entirely on your Mac.",
+                                  "No account, no cloud, no data leaving your machine. You download model files; this app starts and stops them for you.",
+                                  mono: false)
+                        helpEntry("Step 0 — Install an engine (one-time)",
+                                  "In Terminal: brew install llama.cpp — that covers GGUF models, which is all most people need. For Apple MLX models, also: pip install mlx-lm.",
+                                  detail: "Paths are auto-detected; override in Global → Backends. Defaults: /opt/homebrew/bin/llama-server and the newest Python user-install of mlx_lm.server.",
+                                  mono: false)
+                        helpEntry("Step 1 — Download a model",
+                                  "Models are free files from Hugging Face (links below). Not sure what fits your Mac? Use the table in section 5 — e.g. with 16 GB of RAM, search \"Qwen3.5 9B GGUF\" and download the file ending in Q4_K_M.gguf.",
+                                  detail: "GGUF = a single .gguf file. MLX = a folder containing config.json + *.safetensors.",
+                                  mono: false)
+                        helpLinks([("Hugging Face — GGUF models", "https://huggingface.co/models?library=gguf"),
+                                   ("MLX community", "https://huggingface.co/mlx-community")])
+                        helpEntry("Step 2 — Tell the app where your models live",
+                                  "Settings → Global → Models directory: pick the folder you download models into. The app watches it — new downloads appear automatically.",
+                                  detail: "Scanned recursively. Hidden folders and mmproj-*/mtp-* companion files are excluded from the list on purpose — they belong to other models.",
+                                  mono: false)
+                        helpEntry("Step 3 — Load it",
+                                  "Click the model in the menu bar dropdown. A green dot and a port number (like :8080) mean it's running.",
+                                  mono: false)
+                        helpEntry("Step 4 — Talk to it",
+                                  "Simplest: open http://127.0.0.1:8080 in your browser — GGUF models include a built-in chat page. Or right-click the running model → Copy endpoint, and paste it into any chat app that accepts an \"OpenAI-compatible\" server (no API key needed — type anything if a key is required).",
+                                  detail: "Endpoint is http://127.0.0.1:PORT/v1 — standard OpenAI chat-completions API, bound to 127.0.0.1, so other machines can't reach it.",
+                                  mono: false)
                     }
 
-                    helpSection(number: "2", title: "Menu bar actions", id: "s2", proxy: proxy) {
-                        helpEntry("Click a stopped model", "Loads it directly on the next available port.")
-                        helpEntry("Right-click any model", "Load / Unload / Switch to — single-model actions without bulk selection.")
-                        helpEntry("Unload selected", "Appears when 2+ models are running. The running models show checkboxes — uncheck any you want to keep, then click Unload selected.")
-                        helpEntry("Unload all ⏹", "Stops every running model at once.")
-                        helpEntry("Refresh ↻", "Re-scans the models directory for new or removed files.")
+                    helpSection(number: "2", title: "Everyday use", id: "s2", proxy: proxy) {
+                        helpEntry("Click a model to load it; Unload to stop it.",
+                                  "Each model gets its own port, so several can run at once — if they fit in memory.",
+                                  mono: false)
+                        helpEntry("Right-click for the good stuff.",
+                                  "Running models: Unload · Copy endpoint · Pin. Stopped models: Load · Switch to.",
+                                  mono: false)
+                        helpEntry("Switch = swap safely.",
+                                  "\"Switch to\" loads the new model first, checks it's healthy, THEN stops the others. If the new one fails, the old one keeps running.",
+                                  mono: false)
+                        helpEntry("Running 2+ models shows checkboxes.",
+                                  "Untick the ones you want to keep, then \"Unload selected\". The ⏹ footer button stops everything at once; ↻ re-scans your models folder.",
+                                  mono: false)
+                        helpEntry("The memory line is your dashboard.",
+                                  "\"11 GB free of 32 · normal\" at the bottom of the menu. Green normal = all is well. Orange warning or red critical (with a swap figure) = your Mac is running out of memory: unload something.",
+                                  detail: "Refreshed every 3 s while the menu is open, same formula as Activity Monitor. Hover a running model's port to see that model's RAM use.",
+                                  mono: false)
+                        helpEntry("Dimmed models probably won't fit.",
+                                  "A greyed-out model is bigger than your current free memory. You can still load it, but expect serious slowdown (hover its badge for details).",
+                                  mono: false)
+                        helpEntry("Pin anything that must stay up.",
+                                  "Pinning protects a model from automation — AI agents and idle auto-unload can't stop it. Your own Unload buttons always work.",
+                                  mono: false)
                     }
 
-                    helpSection(number: "3", title: "Global settings", id: "s3", proxy: proxy) {
-                        helpEntry("Models directory", "Scanned for .gguf files and MLX model folders. (Models card)")
-                        helpEntry("Default port", "Starting port for model servers. Additional models increment — 8080, 8081, 8082…")
-                        helpEntry("Context size", "Context window in tokens. Accepts k-suffix (4k, 8k) or plain integers. Use 4k for 16 GB Macs, 64k for 32 GB+.")
-                        helpEntry("Extra args", "Free-form arguments appended to every server launch. Parsed with quote handling.")
-                        helpEntry("Idle unload (min)", "Auto-unloads GGUF models with no request activity for this long (checked ~every 30 s via the server's /slots endpoint). Empty or 0 = off. Pinned models and MLX models are exempt. A notification is posted when a model is auto-unloaded.")
-                        helpEntry("Backend paths", "Paths to the llama-server (GGUF) and mlx_lm.server (MLX) binaries. (Backends card)")
-                        helpEntry("Chat template", "Custom .jinja or .json template for agentic harnesses (opencode, pi). Leave empty for the model's built-in template. (Backends card)")
-                        helpEntry("Flash attention", "Hardware-accelerated attention via Metal. No downside on Apple Silicon — leave ON. (Inference card)")
-                        helpEntry("Thinking mode", "Model generates reasoning tokens before responding. Better for coding and tool loops. Qwen recommends ON for coding, OFF for speed-constrained Macs.")
-                        helpEntry("Suppress reasoning", "Suppresses Gemma 4's reasoning_content field that crashes OpenAI-compatible clients (opencode, pi, OpenClaw). Leave ON unless your client handles it natively.")
-                        helpEntry("MTP", "Multi-Token Prediction. ON by default — auto-detected per model. Only applies to models with built-in MTP or a companion mtp-*.gguf head.")
-                        helpEntry("Mlock", "Locks model in RAM to prevent swap. Only enable with spare RAM. GGUF only.")
-                        helpEntry("No-MMap", "Disables memory-mapped file loading. Can improve speed on NVMe. GGUF only.")
+                    helpSection(number: "3", title: "Settings explained", id: "s3", proxy: proxy) {
+                        Group {
+                            helpSub("Models card")
+                            helpEntry("Models directory", "The folder the app scans for models.")
+                            helpEntry("Default port", "Where the first model listens; the rest count up from it (8080, 8081, …). Change it if something else already uses 8080.")
+                            helpEntry("Context size", "How much conversation the model remembers at once. 4k ≈ a few pages of text; 64k ≈ a short book. Bigger remembers more but uses more memory.",
+                                      detail: "Tokens; accepts k-suffix or plain integers; passed as --ctx-size. Memory cost grows linearly — see section 5.")
+                            helpEntry("Idle unload (min)", "Automatically stop models nobody has used for this many minutes. Empty = never. You get a notification when it happens; pinned models are exempt.",
+                                      detail: "Activity observed via llama-server's /slots endpoint, checked ~every 30 s. GGUF only — MLX servers don't expose activity.")
+                            helpEntry("Extra args", "Power-user field: anything typed here is passed to every server launch.",
+                                      detail: "Quote-aware parsing; per-model extra args are appended after these.")
+                        }
+                        Group {
+                            helpSub("Backends card")
+                            helpEntry("llama-server / mlx_lm.server", "Where the two engines live. Only touch these if you installed an engine somewhere unusual.")
+                            helpEntry("Chat template", "Leave empty — the model's built-in template is right for normal chat. Set a custom .jinja file only if a coding agent misbehaves with tool calls.",
+                                      detail: "Passed as --chat-template-file. Needed mainly for Gemma 4 agentic use — see section 6.")
+                        }
+                        Group {
+                            helpSub("Inference card")
+                            helpEntry("Flash attention", "Faster and leaner on Apple Silicon. Leave ON.")
+                            helpEntry("Thinking mode", "The model reasons before answering: better code and tool use, slower replies. ON for quality, OFF for speed.",
+                                      detail: "OFF sends --chat-template-kwargs {\"enable_thinking\":false}.")
+                            helpEntry("Suppress reasoning", "Hides the model's internal \"thinking\" from chat apps that would otherwise crash or print it. Leave ON unless your app displays reasoning natively.",
+                                      detail: "Gemma 4's reasoning_content field; applied as --reasoning off --reasoning-format none.")
+                            helpEntry("MTP (speed boost)", "Lets supported models write several words at a time. Leave ON; models without MTP simply ignore it.",
+                                      detail: "Detected via companion mtp-*.gguf (same folder or MTP/ subfolder) or -MTP- in the filename; attached with --spec-type draft-mtp.")
+                            helpEntry("Agent access (MCP)", "The master switch that lets AI assistants manage your models. OFF = agents are completely blocked. See section 7.")
+                            helpEntry("Mlock", "Pins the model into RAM so macOS can never move it to disk. Only enable with plenty of spare memory. GGUF only.")
+                            helpEntry("No-mmap", "Loads the model into memory up front instead of streaming from disk. Can help on some setups; fine to ignore. GGUF only.")
+                        }
+                        Group {
+                            helpSub("Advanced settings (collapsed at the bottom)")
+                            helpEntry("K / V cache type", "Compresses conversation memory. The default (q8_0 + q4_0) roughly halves memory use with barely any quality loss. f16 = maximum quality, maximum memory.")
+                            helpEntry("Temperature · Top-P · Top-K", "Creativity dials. Sensible temperatures: 0.6 coding, 0.8 chat, 1.0 brainstorming.",
+                                      detail: "Qwen-recommended: top-p 0.95, top-k 20 across workloads.")
+                            helpEntry("Repeat penalty", "Raise to 1.1–1.5 if the model gets stuck repeating itself. 1.0 = off.")
+                            helpEntry("Seed", "Set a number to make output reproducible. Empty = random.")
+                            helpEntry("CPU threads / Batch size", "Leave empty/default unless you know why. GGUF only.")
+                            helpEntry("Max KV size (MLX)", "Caps conversation memory for MLX models. Set 4096–8192 on 16 GB Macs to avoid running out.")
+                        }
                     }
 
-                    helpSection(number: "4", title: "Advanced settings", id: "s4", proxy: proxy) {
-                        helpEntry("K / V cache type", "KV cache quantization — separate from model weight quantization. q8_0 K + q4_0 V halves memory with minimal quality loss. f16 = full precision (spare RAM only).")
-                        helpEntry("Temperature", "0.6 for coding, 0.8 for chat, 1.0 for research.")
-                        helpEntry("Top-P / Top-K", "Qwen-recommended defaults: top-p 0.95, top-k 20 for all workloads.")
-                        helpEntry("Repeat penalty", "1.0 = off. Increase to 1.1–1.5 if the model repeats itself.")
-                        helpEntry("Seed", "Fixed seed for reproducible output. Empty = random.")
-                        helpEntry("CPU threads", "Empty = auto-detect all cores. Limit on 8 GB Macs to reduce contention. GGUF only.")
-                        helpEntry("Batch size", "Prompt processing batch. Default 2048 is the llama.cpp standard. GGUF only.")
-                        helpEntry("Max KV size (MLX)", "Caps KV cache for MLX. 0 = unlimited. Set 4096–8192 on 16 GB Macs to avoid OOM.")
+                    helpSection(number: "4", title: "Per-model overrides", id: "s4", proxy: proxy) {
+                        helpEntry("Every model can have its own settings.",
+                                  "Settings → Per-Model → flip \"Override Global Settings\" — the grey inherited values become editable for that model only.",
+                                  mono: false)
+                        helpEntry("Changes apply on the next load.",
+                                  "Already running? Unload and load again.",
+                                  mono: false)
+                        helpEntry("Two reset buttons.",
+                                  "\"Reset to Global\" = inherit everything again. \"Reset to Default\" = factory values.",
+                                  detail: "Overrides persist in the shared settings store, so the CLI honors them too. Per-model extra args are APPENDED to global extra args, not replacing them.",
+                                  mono: false)
                     }
 
-                    helpSection(number: "5", title: "Per-model overrides", id: "s5", proxy: proxy) {
-                        helpEntry("Override global settings", "When OFF, the model inherits all global settings shown in gray. When ON, each field becomes editable for that model only.")
-                        helpEntry("When do changes apply?", "Per-model settings take effect on the next load. If the model is already running, unload it and reload it.")
-                        helpEntry("Reset to global", "Clears all per-model overrides — the model inherits global settings again on next load.")
-                        helpEntry("Extra args (per-model)", "Appended to global extra args, not replaced. Use for model-specific flags.")
+                    helpSection(number: "5", title: "Performance & memory", id: "s5", proxy: proxy) {
+                        helpEntry("The one rule: models must fit in RAM.",
+                                  "When they don't, macOS moves data to disk (\"swap\") and everything crawls. The memory line (section 2) warns you before that happens.",
+                                  mono: false)
+                        helpEntry("What to download for your Mac",
+                                  "Model names below are examples — any similar-sized model works the same way.",
+                                  mono: false)
+                        Group {
+                            helpEntry("8 GB",  "e.g. Qwen3.5-4B Q4_K_M — light chat only.")
+                            helpEntry("16 GB", "e.g. Qwen3.5-9B Q4_K_M — the practical floor for agentic tool use.")
+                            helpEntry("24 GB", "e.g. Qwen3.6-27B Q4_K_M — strong coding.")
+                            helpEntry("32 GB", "e.g. Qwen3.6-35B-A3B MLX 4-bit — MoE sweet spot (~3B active per token).")
+                            helpEntry("48 GB+", "e.g. Qwen3.6-27B Q6_K — the 'serious agent' quant. Q4 drifts on long tool traces.")
+                            helpEntry("64 GB+", "e.g. Qwen3.6-27B Q8 — near-full precision.")
+                        }
+                        helpEntry("Q4? Q8? That's quantization — compression for models.",
+                                  "Lower numbers = smaller and faster, slightly less precise. Q4_K_M is the everyday choice; Q6_K / Q8 when quality matters more than memory.",
+                                  detail: "Model quantization is baked into the file. KV-cache quantization (Advanced settings) is separate and applies at runtime — any combination works.",
+                                  mono: false)
+                        helpEntry("Memory = model + conversation.",
+                                  "The model file is the fixed cost; the conversation (KV cache) grows with context size. A 9B Q4_K_M at 4k context ≈ 6–7 GB total.",
+                                  mono: false)
+                        helpEntry("Three levers when memory is tight:",
+                                  "Use a smaller quant, lower the context size, or keep KV cache at q8_0/q4_0. Idle unload (section 3) frees memory automatically when you forget.",
+                                  mono: false)
                     }
 
-                    helpSection(number: "6", title: "CLI commands", id: "s6", proxy: proxy) {
-                        helpEntry("llama list", "List all discovered models with load status.")
-                        helpEntry("llama load <name…>", "Load one or more models by fuzzy name match.")
-                        helpEntry("llama unload <name…> | all", "Unload one or more named models, or all at once.")
-                        helpEntry("llama switch <name…>", "Atomic switch: load new model(s), verify they started, then unload everything else.")
-                        helpEntry("llama status", "Show running models with ports and PIDs.")
-                        helpEntry("llama ctx <model> <size>", "Set per-model context size override.")
-                        helpEntry("llama port <model> <port>", "Set per-model port override.")
-                        helpEntry("llama menubar", "Launch the menu bar app.")
-                        helpEntry("llama uninstall", "Remove the app, CLI, and launch agent.")
-                        helpEntry("llama help", "Show CLI usage.")
-                    }
-
-                    helpSection(number: "7", title: "Vision models (Gemma 4 / Qwen2-VL)", id: "s7", proxy: proxy) {
+                    helpSection(number: "6", title: "Vision models (Gemma 4 / Qwen2-VL)", id: "s6", proxy: proxy) {
                         helpEntry("mmproj auto-pairing",
                                   "Vision-capable models (Gemma 4, Qwen2-VL, and others) require a companion mmproj-*.gguf projection file for image processing. LLM Switcher finds and attaches it automatically — no configuration needed.")
 
@@ -1061,26 +1133,92 @@ struct SettingsView: View {
                         helpEntry("Chat template bugs (Gemma 4)", "The standard Gemma 4 template has 4 bugs that break multi-turn tool calling. Use a custom .jinja template via Global → Backends → Chat template for agentic harnesses.")
                     }
 
-                    helpSection(number: "8", title: "Quantization guide", id: "s8", proxy: proxy) {
-                        helpEntry("Model quant vs KV cache quant", "Model quantization (Q4_K_M, Q8, etc.) is baked into the .gguf file. KV cache quant (the settings here) controls how the context window is stored in RAM during inference. They're independent — any combination works.")
-                        helpEntry("8 GB",  "Qwen3.5-4B Q4_K_M — simple chat only, not for agent work.")
-                        helpEntry("16 GB", "Qwen3.5-9B Q4_K_M — practical floor for agentic tool calling.")
-                        helpEntry("24 GB", "Qwen3.6-27B Q4_K_M — dense, stronger coding.")
-                        helpEntry("32 GB+", "Qwen3.6-35B-A3B MLX 4-bit — MoE sweet spot (~3B active per token).")
-                        helpEntry("48 GB+", "Qwen3.6-27B Q6_K — the 'serious agent' quant. Q4 drifts on long tool traces.")
-                        helpEntry("64 GB+", "Qwen3.6-27B Q8 — near-full precision.")
+                    helpSection(number: "7", title: "Agent access (MCP)", id: "s7", proxy: proxy) {
+                        Group {
+                            helpEntry("Let AI assistants drive.",
+                                      "Claude Code, Hermes, opencode, and other AI agents can list, load, and switch your models themselves — your assistant says \"I need the coding model\" and makes it happen. MCP is the standard plug that makes this work.",
+                                      mono: false)
+                            helpLinks([("What is MCP?", "https://modelcontextprotocol.io")])
+                            helpEntry("It's OFF by default, and you're always in charge.",
+                                      "Nothing happens silently — every agent load/unload posts a notification. Pin any model an agent must never touch. Agents can't change your settings (read-only). Loads that would overflow memory are refused automatically unless you enable \"Allow swap for agent loads\". Flipping the toggle OFF blocks agents instantly but never stops running models.",
+                                      mono: false)
+                        }
+                        Group {
+                            helpEntry("Register — Claude Code", "One Terminal command (after turning the toggle ON):", mono: false)
+                            helpCode(["claude mcp add --scope user llm-switcher -- ~/bin/llm-switcher-mcp"])
+                            helpEntry("Register — Hermes", "Add under mcp_servers: in ~/.hermes/config.yaml, then restart the gateway:", mono: false)
+                            helpCode(["llm-switcher:",
+                                      "  command: /Users/YOU/bin/llm-switcher-mcp",
+                                      "  args: []",
+                                      "  timeout: 300"])
+                            helpEntry("Register — anything else (opencode, pi, …)",
+                                      "Configure a local/stdio MCP server with command ~/bin/llm-switcher-mcp and no arguments.",
+                                      detail: "Standard JSON-RPC 2.0 over stdio. Tools: status, list_models, load_model, unload_model, unload_all, switch_model, get_settings. Every response embeds a fresh state snapshot.",
+                                      mono: false)
+                        }
                     }
 
-                    helpSection(number: "9", title: "Agent access (MCP)", id: "s9", proxy: proxy) {
-                        helpEntry("What it is", "An MCP stdio server (~/bin/llm-switcher-mcp) that lets agents (Claude Code, Hermes, opencode…) list, load, unload, and switch models. It speaks standard JSON-RPC 2.0 over stdio, so any MCP client can connect.")
-                        helpEntry("Register — Claude Code", "claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp   (add --scope user to make it available in every project)")
-                        helpEntry("Register — Hermes", "Add an entry under mcp_servers: in ~/.hermes/config.yaml with command: ~/bin/llm-switcher-mcp, args: [], timeout: 300 — then restart the gateway to pick it up.")
-                        helpEntry("Register — other MCP clients", "opencode, pi, or any stdio MCP client: configure a local/stdio server whose command is ~/bin/llm-switcher-mcp with no arguments (e.g. opencode.json → mcp → { \"llm-switcher\": { \"type\": \"local\", \"command\": [\"~/bin/llm-switcher-mcp\"] } }).")
-                        helpEntry("Agent access (MCP) toggle", "Master switch, OFF by default. While OFF every agent tool call is refused. Turning it OFF never unloads models — it revokes control, not servers.")
-                        helpEntry("Allow swap for agent loads", "OFF: agent loads that don't fit in free RAM are refused with an explanation and the largest context that would fit. ON: the load proceeds and the agent gets a swap warning.")
-                        helpEntry("Pinning", "Right-click a running model → Pin. Agents cannot unload pinned models and idle auto-unload skips them; the menu bar Unload buttons are unaffected — pins protect against automation, not you.")
-                        helpEntry("Notify on agent actions", "Posts a macOS notification whenever an agent loads or unloads a model, so nothing happens behind your back. ON by default.")
-                        helpEntry("Agent settings access", "Read-only. Agents can never change ports, context sizes, sampling, or any other setting. Per-call ctx/port requests are ephemeral and never persisted.")
+                    helpSection(number: "8", title: "Command line (for terminal users)", id: "s8", proxy: proxy) {
+                        helpEntry("Everything the menu does, scriptable.",
+                                  "The llama CLI and the app share the same settings and see each other's models.",
+                                  mono: false)
+                        helpCode(["llama list                     all models + status",
+                                  "llama load <name>              load (fuzzy match, e.g. \"qwen\")",
+                                  "llama load --ctx 8192 <name>   one-off context override (not saved)",
+                                  "llama unload <name> | all",
+                                  "llama switch <name>            load new → verify → stop the rest",
+                                  "llama status                   running models, ports, PIDs",
+                                  "llama ctx <model> <size>       save a per-model context size",
+                                  "llama port <model> <port>      save a per-model port",
+                                  "llama menubar · uninstall · help"])
+                        helpEntry("Environment overrides",
+                                  "LLAMA_MODELS_DIR, LLAMA_PORT, LLAMA_CTX_SIZE, LLAMA_SERVER, MLX_SERVER.",
+                                  detail: "Precedence for port/ctx: --flags → saved per-model → defaults.",
+                                  mono: false)
+                    }
+
+                    helpSection(number: "9", title: "Troubleshooting & glossary", id: "s9", proxy: proxy) {
+                        Group {
+                            helpEntry("The list is empty",
+                                      "Set the Models directory (section 1, step 2), then click ↻ Refresh. Note: mmproj-* and mtp-* files are hidden on purpose — they're companions, not models.",
+                                      mono: false)
+                            helpEntry("A model shows a red ⚠",
+                                      "Hover it for the error. Most common: the engine isn't installed — run brew install llama.cpp (GGUF) or pip install mlx-lm (MLX).",
+                                      mono: false)
+                            helpEntry("It loads, then disappears",
+                                      "Usually a port collision or out-of-memory. The last lines of the log say why: ~/.local/share/llama-menubar/logs/. Give the model its own port in Per-Model settings.",
+                                      mono: false)
+                            helpEntry("My Mac got very slow",
+                                      "You're swapping. Check the memory line in the menu; unload a model or use a smaller quant (section 5).",
+                                      mono: false)
+                            helpEntry("The model repeats itself forever",
+                                      "Advanced settings → Repeat penalty → 1.1.",
+                                      mono: false)
+                            helpEntry("Weird tokens or broken formatting in a coding agent",
+                                      "Chat-template issue. For normal chat, leave Chat template empty. For Gemma 4 with agents, see section 6.",
+                                      mono: false)
+                            helpEntry("My chat app can't connect",
+                                      "The model must be RUNNING (green dot), and the URL needs the /v1: http://127.0.0.1:8080/v1. Only apps on this Mac can reach it.",
+                                      mono: false)
+                            helpEntry("An agent says \"access disabled\"",
+                                      "That's the Agent access toggle doing its job. Turn it ON in Settings → Global if you want agents in control.",
+                                      mono: false)
+                        }
+                        Group {
+                            helpSub("Mini-glossary")
+                            VStack(alignment: .leading, spacing: 3) {
+                                glossaryLine("Model", "the AI brain, a file you download. Bigger = more capable + more RAM.")
+                                glossaryLine("GGUF / MLX", "the two model formats: single file vs. Apple-optimized folder.")
+                                glossaryLine("Quantization (Q4, Q8)", "compression level of a model. Smaller = lighter, slightly less precise.")
+                                glossaryLine("Token", "the word-pieces models read and write (≈ ¾ of an English word).")
+                                glossaryLine("Context", "how much conversation the model can keep in mind at once.")
+                                glossaryLine("KV cache", "the RAM your conversation occupies while the model runs.")
+                                glossaryLine("Endpoint", "the local web address chat apps use to reach a loaded model.")
+                                glossaryLine("Swap", "macOS spilling memory to disk when RAM runs out — the slowness you feel.")
+                                glossaryLine("MCP / agent", "the standard plug, and the AI assistants that use it to control this app.")
+                            }
+                            .padding(.bottom, 8)
+                        }
                     }
                 }
                 .padding(.bottom, 16)
@@ -1097,15 +1235,15 @@ struct SettingsView: View {
                 .tracking(0.5)
 
             let items: [(String, String, String)] = [
-                ("1", "s1", "Quick start"),
-                ("2", "s2", "Menu bar actions"),
-                ("3", "s3", "Global settings"),
-                ("4", "s4", "Advanced settings"),
-                ("5", "s5", "Per-model overrides"),
-                ("6", "s6", "CLI commands"),
-                ("7", "s7", "Vision models"),
-                ("8", "s8", "Quantization guide"),
-                ("9", "s9", "Agent access (MCP)"),
+                ("1", "s1", "Getting started"),
+                ("2", "s2", "Everyday use"),
+                ("3", "s3", "Settings explained"),
+                ("4", "s4", "Per-model overrides"),
+                ("5", "s5", "Performance & memory"),
+                ("6", "s6", "Vision models"),
+                ("7", "s7", "Agent access (MCP)"),
+                ("8", "s8", "Command line"),
+                ("9", "s9", "Troubleshooting"),
             ]
 
             let cols = [GridItem(.flexible()), GridItem(.flexible())]
@@ -1157,17 +1295,74 @@ struct SettingsView: View {
         .id(id)
     }
 
-    private func helpEntry(_ key: String, _ description: String) -> some View {
+    /// Two-tier help entry: a plain-language lead everyone reads, plus an
+    /// optional smaller `detail` line for technical users. `mono: false`
+    /// renders sentence-style leads in the regular face (setting names
+    /// stay monospaced so they look like the controls they describe).
+    private func helpEntry(_ key: String, _ description: String,
+                           detail: String? = nil, mono: Bool = true) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(key)
-                .font(.system(.body, design: .monospaced).weight(.medium))
-                .font(.system(size: 12))
+                .font(mono ? .system(.body, design: .monospaced).weight(.medium)
+                           : .system(size: 12, weight: .semibold))
             Text(description)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let detail {
+                Text("⚙ \(detail)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.secondary.opacity(0.75))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.bottom, 6)
+    }
+
+    /// Card-name subheader inside a help section (MODELS, BACKENDS, …).
+    private func helpSub(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(Color.secondary.opacity(0.8))
+            .tracking(0.6)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
+    }
+
+    /// Copyable monospaced block (commands, config snippets).
+    private func helpCode(_ lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                Text(line)
+            }
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .textSelection(.enabled)
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.07))
+        .cornerRadius(6)
+        .padding(.bottom, 8)
+    }
+
+    /// One glossary line: bold term + plain definition.
+    private func glossaryLine(_ term: String, _ def: String) -> some View {
+        Text("\(Text(term).fontWeight(.semibold)) — \(def)")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// Inline external link row.
+    private func helpLinks(_ links: [(String, String)]) -> some View {
+        HStack(spacing: 14) {
+            ForEach(Array(links.enumerated()), id: \.offset) { _, l in
+                if let url = URL(string: l.1) {
+                    Link(l.0, destination: url).font(.caption)
+                }
+            }
+        }
+        .padding(.bottom, 8)
     }
 
 
