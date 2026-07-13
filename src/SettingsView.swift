@@ -1132,8 +1132,8 @@ struct SettingsView: View {
                         Group {
                             helpSub("Inference card")
                             helpEntry("Flash attention", "Faster and leaner on Apple Silicon. Leave ON.")
-                            helpEntry("Thinking mode", "Whether the model reasons before answering: better code and tool use, slower replies. ON for quality, OFF for speed. Not the same as Suppress reasoning — this decides if thinking happens at all.",
-                                      detail: "OFF sends --chat-template-kwargs {\"enable_thinking\":false}.")
+                            helpEntry("Thinking mode", "Whether the model reasons before answering: usually better for coding, slower replies. ON for quality, OFF for speed. Not the same as Suppress reasoning — this decides if thinking happens at all.",
+                                      detail: "For tool-calling/agentic harnesses specifically, reports are mixed — some setups do better with it ON, some get more reliable tool calls with it OFF (a few harnesses mishandle tool calls made mid-\"thinking\"). Worth testing both ways with your model and harness rather than assuming. OFF sends --chat-template-kwargs {\"enable_thinking\":false}.")
                             helpEntry("Suppress reasoning", "Whether the thinking is SHOWN to your chat app. The model still reasons (if Thinking mode is ON); this just hides the internal monologue from apps that would crash or print it. Leave ON unless your app displays reasoning natively.",
                                       detail: "Strips Gemma 4's reasoning_content field; applied as --reasoning off --reasoning-format none.")
                             helpEntry("MTP (speed boost)", "Lets supported models write several words at a time. Leave ON; models without MTP simply ignore it.",
@@ -1152,12 +1152,27 @@ struct SettingsView: View {
                         Group {
                             helpSub("Advanced settings (collapsed at the bottom)")
                             helpEntry("K / V cache type", "Compresses conversation memory. The default (q8_0 + q4_0) roughly halves memory use with barely any quality loss. f16 = maximum quality, maximum memory.")
-                            helpEntry("Temperature · Top-P · Top-K", "Creativity dials. Sensible temperatures: 0.6 coding, 0.8 chat, 1.0 brainstorming.",
-                                      detail: "Qwen-recommended: top-p 0.95, top-k 20 across workloads.")
+                            helpEntry("Temperature · Top-P · Top-K", "Creativity dials — how deterministic vs. varied the output is. See \"Suggested starting points by task\" below for concrete numbers.")
                             helpEntry("Repeat penalty", "Raise to 1.1–1.5 if the model gets stuck repeating itself. 1.0 = off.")
                             helpEntry("Seed", "Set a number to make output reproducible. Empty = random.")
                             helpEntry("CPU threads / Batch size", "Leave empty/default unless you know why. GGUF only.")
                             helpEntry("Max KV size (MLX)", "Caps conversation memory for MLX models. Set 4096–8192 on 16 GB Macs to avoid running out.")
+                        }
+                        Group {
+                            helpSub("Suggested starting points by task")
+                            helpEntry("These are starting points, not rules.",
+                                      "Every model and harness behaves a little differently — treat the numbers below as where to begin, then adjust Temperature/Top-P/Top-K/Repeat penalty yourself in Global or Per-Model until it feels right. Nothing here is enforced or auto-applied.",
+                                      mono: false)
+                            helpEntry("General chat", "Temp 0.7 · Top-P 0.8 · Top-K 20 · Repeat penalty 1.0 · Thinking OFF.",
+                                      detail: "Qwen's own published non-thinking-mode defaults — verified against Qwen3's model card, not folklore.")
+                            helpEntry("Coding", "Temp 0.6 · Top-P 0.95 · Top-K 20 · Repeat penalty 1.0 · Thinking ON.",
+                                      detail: "Qwen's own published thinking-mode defaults.")
+                            helpEntry("Agentic / tool use", "Temp 0.6 · Top-P 0.95 · Top-K 20 · Repeat penalty 1.1 (a touch higher — tool-call loops are the most common failure mode reported for this use case) · Context: 64k or more if your model supports it — tool schemas and multi-turn history eat context fast.",
+                                      detail: "Thinking ON or OFF is genuinely disputed for tool-calling reliability — see the Thinking mode entry above. More importantly: if a model loops or fumbles tool calls, that's usually a harness-configuration or quantization issue (community reports point at both far more often than sampling settings), not something these numbers alone will fix.",
+                                      mono: false)
+                            helpEntry("Creative writing", "Temp 1.0 · Top-P 0.95 · Top-K 40 · Repeat penalty 1.1 · Thinking OFF.")
+                            helpEntry("Not covered here: min_p.", "Qwen's docs also recommend min_p=0 for both modes. LLM Switcher doesn't expose a min_p field, so there's nothing to set — llama-server uses its own default.",
+                                      mono: false)
                         }
                     }
 
