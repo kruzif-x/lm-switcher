@@ -835,6 +835,26 @@ class ServerManager {
         task.executableURL = URL(fileURLWithPath: executable)
         task.arguments = args
 
+        // Pre-flight: check the backend binary exists BEFORE attempting to
+        // launch, rather than parsing Process.run()'s thrown NSError text
+        // (whose exact wording/domain isn't something we control or should
+        // depend on). This is also the one case worth a specific, actionable
+        // message instead of the generic catch below — "file not found" is
+        // meaningless to someone who's never installed llama.cpp; the fix is
+        // one copy-pasteable command away.
+        if !FileManager.default.isExecutableFile(atPath: executable) {
+            let installHint = model.backend == .gguf
+                ? "brew install llama.cpp"
+                : "pip install mlx-lm"
+            var s = modelStates[model.id] ?? ModelState()
+            s.isRunning = false
+            s.pid = nil
+            s.lastError = "\(model.backend.rawValue) engine not found at \(executable) — install with: \(installHint), or fix the path in Settings → Global → Backends."
+            modelStates[model.id] = s
+            NSSound.beep()
+            return
+        }
+
         // Capture the model ID by value (not the `model` reference) so
         // the termination handler can use it safely later.
         let modelId = model.id

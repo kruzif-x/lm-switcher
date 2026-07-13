@@ -398,7 +398,8 @@ struct SettingsView: View {
                 label: "llama-server",
                 hint: "Binary for GGUF inference",
                 text: $llamaServerPath,
-                isDir: false
+                isDir: false,
+                checkExecutable: true
             ) { url in
                 llamaServerPath = url.path
                 manager.settings.llamaServerPath = url.path
@@ -408,7 +409,8 @@ struct SettingsView: View {
                 label: "mlx_lm.server",
                 hint: "Binary for Apple MLX inference",
                 text: $mlxServerPath,
-                isDir: false
+                isDir: false,
+                checkExecutable: true
             ) { url in
                 mlxServerPath = url.path
                 manager.settings.mlxServerPath = url.path
@@ -647,11 +649,27 @@ struct SettingsView: View {
         isDir: Bool,
         placeholder: String = "",
         allowedExts: [String] = [],
+        checkExecutable: Bool = false,
         onPick: @escaping (URL) -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        // Live existence check for backend binaries — these fields are
+        // never actually empty (a guessed default always fills them), so
+        // the old empty-vs-not styling gave zero signal about whether the
+        // guess is actually correct. Recomputed on every render, cheap
+        // (a single stat() call).
+        let missing = checkExecutable && !text.wrappedValue.isEmpty
+            && !FileManager.default.isExecutableFile(atPath: text.wrappedValue)
+        return VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label).font(.system(size: 12))
+                if missing {
+                    Text("not found")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(Color.red)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.red.opacity(0.5), lineWidth: 0.5))
+                        .help("Nothing executable at this path — install the engine or fix the path.")
+                }
                 Spacer()
                 Button("Browse…") {
                     let panel = NSOpenPanel()
@@ -1125,7 +1143,7 @@ struct SettingsView: View {
                         }
                         Group {
                             helpSub("Backends card")
-                            helpEntry("llama-server / mlx_lm.server", "Where the two engines live. Only touch these if you installed an engine somewhere unusual.")
+                            helpEntry("llama-server / mlx_lm.server", "Where the two engines live. Only touch these if you installed an engine somewhere unusual. A red \"not found\" tag means nothing executable exists at that path yet — install the engine (section 1) or fix the path.")
                             helpEntry("Chat template", "Leave empty — the model's built-in template is right for normal chat. Set a custom .jinja file only if a coding agent misbehaves with tool calls.",
                                       detail: "Passed as --chat-template-file. Needed mainly for Gemma 4 agentic use — see section 6.")
                         }
