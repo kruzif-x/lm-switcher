@@ -1,5 +1,5 @@
 // =============================================================================
-//  JsonRpc.swift — llm-switcher-mcp
+//  JsonRpc.swift — lm-switcher-mcp
 //  Minimal JSON-RPC 2.0 over newline-delimited stdio (MCP_SPEC §3.2).
 //  Dynamic [String: Any] payloads via JSONSerialization — the protocol
 //  surface is small and schemaless enough that Codable buys nothing here.

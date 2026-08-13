@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the runtime architecture of LLM Switcher: how the
+This document describes the runtime architecture of LM Switcher: how the
 components fit together, what each one is responsible for, and how they
 communicate.
 
@@ -133,15 +133,37 @@ This is the same mechanism the CLI uses (lazily, on `status` calls).
 
 | Function | Responsibility |
 |---|---|
-| `list_all_models` | Recursive scan of `$LLAMA_MODELS_DIR`, emit `TYPE\|PATH\|NAME` lines. |
+| `list_all_models` | Recursive scan of `$LLAMA_MODELS_DIR`, emit `TYPE\|PATH\|NAME` lines. Excludes `mmproj-*`, `mtp-*`, `dflash-*`, `modernbert-embed-*` (mirrors Swift `ggufEntry`). |
 | `resolve_query` | Fuzzy-match a user query to a single model. |
 | `is_loaded`, `get_port_for` | Read PID files to determine state. |
 | `per_model_port`, `per_model_ctx` | Read per-model overrides from `defaults`. |
+| `pm`, `pm_bool` | Per-model pref readers: `model.<hash>.<key>` first, global fallback. Used for temperature, topP, topK, repeatPenalty, kvCacheTypeK/V, thinkingEnabled, suppressReasoning, enableMtp, enableDflash — so CLI/MCP loads honor the same overrides as app loads. |
 | `id_hash` | Stable short hash of a model path (for PID filenames and `defaults` keys). |
 | `next_port` | Find the smallest unused port starting at `$LLAMA_PORT`. |
 | `load_model` | Spawn the right backend with the right args. |
 | `unload_model` | SIGTERM (then SIGKILL after 1s) one process. |
 | `cmd_*` | One per subcommand (`list`, `status`, `load`, `unload`, etc.). |
+
+### DFlash speculative decoding
+
+`ServerManager.loadModel(_:)` (and the CLI mirror) auto-detect a
+`dflash-*.gguf` companion next to a GGUF model and attach:
+
+```
+--spec-type draft-dflash --spec-draft-model <file>
+--spec-draft-n-max 15 --spec-draft-p-min 0.4
+```
+
+- Gated by `enableDflash` (global default `true`, per-model overridable).
+- Mutually exclusive with MTP: skipped when `--spec-type` was already
+  attached (`specTypeAttached` in Swift, `has_spec` scan in bash).
+- While a drafter is attached, `--top-p`/`--top-k`/`--repeat-penalty`
+  are omitted (they collapse block acceptance — see README "DFlash").
+- `dflash-*.gguf` is excluded from discovery in **three** places that
+  must stay in sync: Swift `ggufEntry`, CLI `list_all_models`, MCP
+  `StateReader.discoverModels`.
+- `suppressReasoning` is read via `pm()` so it can be flipped per model
+  (Gemma 4 needs it ON, Muse Glimmer needs it OFF).
 
 ## Lifecycle
 

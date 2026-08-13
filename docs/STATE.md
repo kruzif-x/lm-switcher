@@ -1,6 +1,6 @@
 # State
 
-This document describes where LLM Switcher keeps its runtime state, and
+This document describes where LM Switcher keeps its runtime state, and
 how to find/inspect/reset it.
 
 ## At a glance
@@ -11,10 +11,10 @@ how to find/inspect/reset it.
 | Per-model overrides | (same plist, key prefix `model.<hash>.`) | macOS binary plist | (automatic, on unload) |
 | Running processes | One file per model: `~/.local/share/llama-menubar/pids/<name>.pid` | Text (PID + port) | `llama unload` or process death |
 | Server logs | One file per model: `~/.local/share/llama-menubar/logs/<name>.log` | Text | `rm` (not auto-cleaned) |
-| Compiled binary | `~/bin/llama-menubar` | Mach-O | `uninstall.sh` |
-| App bundle | `~/Applications/LLM Switcher.app` | macOS .app | `uninstall.sh` |
+| Compiled binary | `~/bin/lm-switcher` | Mach-O | `uninstall.sh` |
+| App bundle | `~/Applications/LM Switcher.app` | macOS .app | `uninstall.sh` |
 | LaunchAgent plist | `~/Library/LaunchAgents/local.llama-menubar.plist` | XML plist | `uninstall.sh` |
-| Swift source | `~/bin/llama-menubar.swift` | Text | `uninstall.sh` (deletes) |
+| Swift source | `~/bin/*.swift` (module copies) | Text | `uninstall.sh` (deletes) |
 
 ## Global settings (UserDefaults)
 
@@ -31,8 +31,15 @@ Stored under bundle domain `local.llama-menubar`.
 | `mlxServerPath` | String | `~/Library/Python/3.14/bin/mlx_lm.server` | Path to MLX backend entry script |
 | `globalExtraArgs` | String | `""` | Extra args passed to every server (parsed with quote handling) |
 | `enableMtp` | Bool | `true` | Enable MTP (`--spec-type draft-mtp`). ON by default, auto-detected per model — only applies to models with MTP support |
+| `enableDflash` | Bool | `true` | Enable DFlash drafter (`--spec-type draft-dflash`). ON by default, auto-detected per model — only applies to models with a `dflash-*.gguf` companion (absent key reads as true; unlike `enableMtp` which reads as false when absent) |
 | `model.<hash>.port` | Int | — | Per-model port override |
 | `model.<hash>.ctx` | Int | — | Per-model context size override |
+
+Other per-model overridable keys (same `model.<hash>.` prefix):
+`temperature`, `topP`, `topK`, `repeatPenalty`, `kvCacheTypeK`,
+`kvCacheTypeV`, `thinkingEnabled`, `suppressReasoning`, `enableMtp`,
+`enableDflash`, `extraArgs`, `pinned`. The CLI (`pm`/`pm_bool`) and the
+app both honor them for loads.
 
 `<hash>` is the first 12 chars of md5(model_path).
 
@@ -138,7 +145,7 @@ CLI is run.
 with `launchd` to start at login. The plist points to:
 
 ```
-~/Applications/LLM Switcher.app/Contents/MacOS/llama-menubar
+~/Applications/LM Switcher.app/Contents/MacOS/lm-switcher
 ```
 
 `RunAtLoad = true` means it starts as soon as launchd loads the

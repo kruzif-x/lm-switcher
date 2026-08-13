@@ -1,6 +1,6 @@
 # Gemma 4 12B Loading Details for llama.cpp
 
-This document is the authoritative reference for how LLM Switcher loads
+This document is the authoritative reference for how LM Switcher loads
 **Gemma 4 12B** and **Gemma 4 12B QAT** via `llama-server`. It covers the
 exact command line, every argument, how the multimodal projection (mmproj)
 encoder is loaded, how Multi-Token Prediction (MTP) heads are handled, and
@@ -15,7 +15,7 @@ does, but *why* and *what happens inside llama.cpp*.
 ## 1. Overview
 
 When you click "Load Selected" (or run `llama load gemma-4-12b-it-qat-...`),
-LLM Switcher spawns one `llama-server` process per model. The process
+LM Switcher spawns one `llama-server` process per model. The process
 inherits a carefully constructed argument vector that:
 
 1. Points to the main GGUF model (`-m`)
@@ -54,7 +54,7 @@ Typically the **unsloth** QAT build. Two important differences from the
 standard distribution:
 
 1. The mmproj is named generically (`mmproj-BF16.gguf`) instead of
-   `mmproj-gemma-4-12B-it-Q8_0.gguf`. LLM Switcher's fallback matcher
+   `mmproj-gemma-4-12B-it-Q8_0.gguf`. LM Switcher's fallback matcher
    catches this.
 2. A **Multi-Token Prediction (MTP) head** is included as a separate
    GGUF. This file is **not** a standalone model — `llama-server` reads
@@ -156,13 +156,13 @@ The fix is two flags:
   reasoning tokens in the SSE event stream.
 
 Without these flags, Gemma 4 outputs reasoning content and OpenAI
-clients break. **Both LLM Switcher's CLI and Swift app now apply these
+clients break. **Both LM Switcher's CLI and Swift app now apply these
 flags automatically when launching a model.** This brings it in line
 with the companion `LocalLLMToggle` project.
 
 ### 3.3 Per-model overrides
 
-All flags above can be overridden per model. LLM Switcher reads per-model
+All flags above can be overridden per model. LM Switcher reads per-model
 `port` and `ctx-size` from `~/Library/Preferences/local.llama-menubar.plist`:
 
 ```bash
@@ -171,8 +171,12 @@ llama ctx  gemma 8192     # sets model.<hash>.ctx  = 8192
 ```
 
 `--reasoning off`, `--reasoning-format none`, and `--mmproj` are
-**always applied** — they are not user-configurable because they are
-required for Gemma 4 to behave correctly under any client. Custom chat
+applied by default, but **reasoning suppression is now per-model
+overridable** (Settings → Per-Model → Suppress reasoning, or
+`model.<hash>.suppressReasoning`). Keep it ON for Gemma 4 models and
+turn it OFF for **Muse Glimmer**: with suppression active, Muse's
+thinking protocol leaks raw into content (`to=self<|message|>…`
+garbage) and the DFlash drafter's acceptance collapses. Custom chat
 templates are configured via the **Global** settings tab and apply to
 every model loaded.
 
@@ -245,7 +249,7 @@ Standard transformer forward pass
 
 ### 4.4 Auto-pairing algorithm
 
-LLM Switcher auto-discovers the mmproj in the same directory as the
+LM Switcher auto-discovers the mmproj in the same directory as the
 model. The same algorithm is used by both the Swift app
 (`findCompanion(for:prefix:)` in `src/LlamaMenubarApp.swift:1556`) and
 the bash CLI (`src/llama:354-370`).
@@ -339,7 +343,7 @@ The two practical consequences are:
 - It is silently ignored if the path is wrong or the file is missing
   (the model still works without MTP, just slower).
 
-### 5.3 Why LLM Switcher excludes `mtp-*.gguf` from the model list
+### 5.3 Why LM Switcher excludes `mtp-*.gguf` from the model list
 
 If the MTP head appeared as a clickable "model" in the menu, a user
 would try to load it directly:
@@ -642,7 +646,7 @@ log. The Gemma 4 custom template MUST use `<start_of_turn>` and
 
 ## 8. Manual Verification Steps
 
-After starting a Gemma 4 model with LLM Switcher, run these to confirm
+After starting a Gemma 4 model with LM Switcher, run these to confirm
 everything is correctly loaded:
 
 ### 8.1 Check the server startup log
@@ -745,7 +749,7 @@ does, the `--reasoning off` flag is not being applied.
 
 ## Appendix A: Quick Reference
 
-### A.1 All flags used by LLM Switcher when loading Gemma 4
+### A.1 All flags used by LM Switcher when loading Gemma 4
 
 | Flag | Value source | User-overridable? |
 |------|--------------|-------------------|

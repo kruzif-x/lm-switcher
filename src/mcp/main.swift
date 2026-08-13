@@ -1,11 +1,11 @@
 // =============================================================================
-//  main.swift — llm-switcher-mcp
+//  main.swift — lm-switcher-mcp
 //  MCP over stdio: newline-delimited JSON-RPC 2.0 (MCP_SPEC §3.2).
 //  Handles initialize, notifications/initialized, ping, tools/list,
 //  tools/call. Unknown methods → JSON-RPC method-not-found.
 //
 //  Standalone by construction: shares no source files with the app.
-//  Registration: claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp
+//  Registration: hermes mcp add lm-switcher --command ~/bin/lm-switcher-mcp
 // =============================================================================
 
 import Foundation
@@ -18,7 +18,7 @@ time — never assume state persists between your calls. Call `status` \
 before acting on assumptions. Every mutation response includes a fresh \
 state snapshot; treat it as the current truth. Do not load models when \
 memory_pressure is "warning" or "critical". Agent access can be disabled \
-by the user at any time in LLM Switcher settings.
+by the user at any time in LM Switcher settings.
 """
 
 setvbuf(stdout, nil, _IONBF, 0)   // unbuffered — every response flushes
@@ -36,7 +36,7 @@ while let line = readLine(strippingNewline: true) {
         RpcWriter.result(id: req.id ?? NSNull(), [
             "protocolVersion": proto,
             "capabilities": ["tools": [:] as [String: Any]],
-            "serverInfo": ["name": "llm-switcher", "version": serverVersion],
+            "serverInfo": ["name": "lm-switcher", "version": serverVersion],
             "instructions": serverInstructions,
         ])
 

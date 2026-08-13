@@ -1,4 +1,4 @@
-# LLM Switcher — Model Switching Handoff
+# LM Switcher — Model Switching Handoff
 
 **Date:** 2026-06-29
 **Repo:** `/Users/rolandchia/Projects/llm-switcher`
@@ -171,8 +171,8 @@ func switchModel(_ model: ModelEntry) {
 | Swift source | `src/LlamaMenubarApp.swift` | Entire app (~2984 lines) |
 | CLI | `src/llama` | Bash CLI with `switch` command |
 | Install | `scripts/install.sh` | Build + install pipeline |
-| Build source copy | `~/bin/llama-menubar.swift` | Where install.sh compiles from |
-| Binary | `~/Applications/LLM Switcher.app/Contents/MacOS/llama-menubar` | Installed binary |
+| Build source copy | `~/bin/*.swift` (multi-file module, copied by install.sh) | Where install.sh compiles from |
+| Binary | `~/Applications/LM Switcher.app/Contents/MacOS/lm-switcher` | Installed binary |
 | Plist | `~/Library/LaunchAgents/local.llama-menubar.plist` | Auto-start on login |
 | Gitea | `http://localhost:3000/admin/llm-switcher.git` | Origin remote |
 
@@ -180,23 +180,19 @@ func switchModel(_ model: ModelEntry) {
 
 ```bash
 # 1. Edit source
-vim ~/Projects/llm-switcher/src/LlamaMenubarApp.swift
+vim ~/Projects/llm-switcher/src/ServerManager.swift   # (or any src/*.swift)
 
-# 2. Copy to ~/bin (install.sh compiles from here, NOT from src/)
-cp src/LlamaMenubarApp.swift ~/bin/llama-menubar.swift
-
-# 3. Kill running instance
-pkill -f llama-menubar
-
-# 4. Build + install
+# 2. Build + install (install.sh copies src/*.swift to ~/bin, compiles,
+#    rebuilds the .app bundle and rewrites the LaunchAgent plist)
 cd ~/Projects/llm-switcher && bash scripts/install.sh
 
-# 5. Launch
-open ~/Applications/LLM\ Switcher.app
+# 3. Restart the LaunchAgent so the running app picks up the new binary
+launchctl bootout gui/$(id -u)/local.llama-menubar 2>/dev/null
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.llama-menubar.plist
 
-# 6. Verify changes in binary
-strings ~/Applications/LLM\ Switcher.app/Contents/MacOS/llama-menubar | grep "search string"
+# 4. Verify changes in binary
+strings ~/Applications/LM\ Switcher.app/Contents/MacOS/lm-switcher | grep "search string"
 
-# 7. Push to Gitea
+# 5. Push to Gitea
 cd ~/Projects/llm-switcher && git add -A && git commit -m "msg" && git push
 ```

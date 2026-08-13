@@ -1,4 +1,4 @@
-# IP / Copyright Audit — LLM Switcher
+# IP / Copyright Audit — LM Switcher
 
 Date: 2026-07-11 · Scope: full repo at branch `worktree-mcp-spec` · Purpose:
 pre-Mac-App-Store clearance.

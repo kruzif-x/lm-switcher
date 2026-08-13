@@ -1,4 +1,4 @@
-# LLM Switcher MCP — Specification
+# LM Switcher MCP — Specification
 
 Status: DRAFT for review · Target version: 1.2.0
 
@@ -6,7 +6,7 @@ Status: DRAFT for review · Target version: 1.2.0
 
 **Goals**
 
-- Agents (Claude Code, opencode, etc.) can list, load, unload, and switch models
+- Agents (Hermes, opencode, etc.) can list, load, unload, and switch models
   through a standard MCP stdio server, gated by a user toggle (default OFF).
 - Agents always see live truth: running models, ports, endpoints, memory,
   swap, and pressure — including changes the user made from the menu bar.
@@ -38,7 +38,7 @@ Phase 1 ships alone and is verified before Phase 2 starts.
 
 ### 3.1 Components
 
-New standalone executable: `llm-switcher-mcp`, installed to `~/bin`.
+New standalone executable: `lm-switcher-mcp`, installed to `~/bin`.
 **Shares no source files with the app**, with one deliberate exception:
 `src/SystemMetrics.swift` (read-only RAM/pressure/swap/RSS reads, no side
 effects, no protocol surface) is compiled into both targets — the app uses
@@ -59,14 +59,14 @@ src/mcp/
 ```
 
 Registration (printed by install.sh):
-`claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp`
+`hermes mcp add lm-switcher --command ~/bin/lm-switcher-mcp`
 
 ### 3.2 Protocol
 
 - MCP over stdio: newline-delimited JSON-RPC 2.0.
 - Handles: `initialize`, `notifications/initialized` (no-op), `ping`,
   `tools/list`, `tools/call`. Unknown methods → JSON-RPC method-not-found.
-- `initialize` response advertises server name `llm-switcher` and an
+- `initialize` response advertises server name `lm-switcher` and an
   `instructions` string:
 
 > Models can be loaded and unloaded by the user from the menu bar at any
@@ -74,7 +74,7 @@ Registration (printed by install.sh):
 > before acting on assumptions. Every mutation response includes a fresh
 > state snapshot; treat it as the current truth. Do not load models when
 > memory_pressure is "warning" or "critical". Agent access can be disabled
-> by the user at any time in LLM Switcher settings.
+> by the user at any time in LM Switcher settings.
 
 ### 3.3 Tool contract
 
@@ -84,7 +84,7 @@ Every response (success or error) embeds a fresh `state` snapshot:
 "state": {
   "running": [
     {
-      "name": "Qwythos-9B-Claude-Max",
+      "name": "Qwythos-9B-Max",
       "backend": "GGUF",
       "port": 8080,
       "endpoint": "http://127.0.0.1:8080/v1",
@@ -98,7 +98,7 @@ Every response (success or error) embeds a fresh `state` snapshot:
     }
   ],
   "ports": {
-    "8080": {"occupied_by": "Qwythos-9B-Claude-Max", "source": "llm-switcher"},
+    "8080": {"occupied_by": "Qwythos-9B-Max", "source": "lm-switcher"},
     "8082": {"occupied_by": "pid 7301 (node)", "source": "external"},
     "next_free": 8081
   },
@@ -270,12 +270,12 @@ SettingsView Global tab gains one card, **"Agent access (MCP)"**, below
 Inference:
 
 - Toggle: "Allow agent control (MCP)" — hint: "Lets MCP-connected agents
-  (Claude Code, etc.) list, load, and unload models. Off = agents are
+  (Hermes, opencode, etc.) list, load, and unload models. Off = agents are
   fully blocked."
 - Toggle: "Allow swap for model loads" — hint: "When off, agent loads that
   don't fit in free RAM are refused instead of swapping to disk."
 - Static caption: registration one-liner
-  (`claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp`).
+  (`hermes mcp add lm-switcher --command ~/bin/lm-switcher-mcp`).
 
 Enforcement: `mcpEnabled` checked on **every** `tools/call` (fresh read per
 §3.5). OFF blocks all tools including reads. `tools/list` still responds
@@ -306,10 +306,24 @@ running models — it revokes control, not servers (documented in Help).
 | `scripts/install.sh` | +second swiftc target, +registration hint | Additive; MCP build failure does not block app install |
 
 **Explicitly untouched:** process spawn/unload paths, `mergeExternalStates`
-and the poll loop, model discovery/exclusion rules, per-model override
-logic, bulk-selection behavior, menu sizing (the `naturalH` fix), the
+and the poll loop, bulk-selection behavior, menu sizing (the `naturalH` fix),
 window-panel plumbing, the CLI. (Pin icon adds a subview to the running
 row; row height unchanged.)
+
+### 3.12 DFlash drafter + per-model reasoning suppression
+
+- `get_settings` exposes `enableDflash` (global bool, default `true`) and
+  the per-model suffix `suppressReasoning` alongside the existing keys.
+- `StateReader.discoverModels` excludes `dflash-*.gguf` from the model
+  list (in sync with the Swift app and CLI).
+- Loads shell out to the `llama` CLI, which now reads per-model
+  overrides via `pm()`/`pm_bool()` (`model.<hash>.<key>` first, global
+  fallback) — so agent-driven loads apply the same per-model
+  temperature/KV-cache/reasoning/DFlash settings as app loads.
+- DFlash-specific launch flags when a drafter is attached:
+  `--spec-type draft-dflash --spec-draft-model <file> --spec-draft-n-max
+  15 --spec-draft-p-min 0.4`; `--top-p`/`--top-k`/`--repeat-penalty` are
+  omitted (they collapse block acceptance).
 
 ## 4. Regression-safety analysis
 

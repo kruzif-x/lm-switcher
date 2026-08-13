@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-#  llama — CLI companion to the LLM Switcher menu bar app
+#  llama — CLI companion to the LM Switcher menu bar app
 # =============================================================================
 #
 #  PURPOSE
@@ -135,6 +135,7 @@ logfile_for() {
 # `case` in the loop below — must stay in sync with the Swift `ggufEntry`):
 #   - mmproj-*.gguf           (vision projection, paired automatically)
 #   - mtp-*.gguf              (multi-token-prediction head, loaded automatically)
+#   - dflash-*.gguf           (DFlash block-diffusion drafter, loaded automatically)
 #   - modernbert-embed-*.gguf (embedding model, not for chat)
 
 list_all_models() {
@@ -145,7 +146,7 @@ list_all_models() {
     while IFS= read -r f; do
         local bn; bn=$(basename "$f")
         case "$bn" in
-            mmproj-*|mtp-*|modernbert-embed-*) continue ;;
+            mmproj-*|mtp-*|dflash-*|modernbert-embed-*) continue ;;
         esac
         echo "gguf|$f|$bn"
     done < <(find "$MODELS_DIR" -type f -name "*.gguf" 2>/dev/null)
@@ -306,6 +307,30 @@ pref_bool() {
     esac
 }
 
+# Per-model variant of pref(): prefer model.<id_hash>.<key> (the app's
+# per-model overrides), falling back to the global key. Mirrors the Swift
+# app's pm()/perModelSetting. Requires $id_hash in scope (set by load_model).
+#   pm <key> <default>
+pm() {
+    local key="$1" def="$2"
+    local mv; mv=$(defaults read local.llama-menubar "model.${id_hash}.${key}" 2>/dev/null)
+    if [[ -n "$mv" ]]; then echo "$mv"; else pref "$key" "$def"; fi
+}
+
+# Bool variant of pm().
+pm_bool() {
+    local key="$1" def="$2"
+    local mv; mv=$(defaults read local.llama-menubar "model.${id_hash}.${key}" 2>/dev/null)
+    if [[ -n "$mv" ]]; then
+        case "$mv" in
+            1|true|YES|yes) echo true ;;
+            *)              echo false ;;
+        esac
+    else
+        pref_bool "$key" "$def"
+    fi
+}
+
 
 # -----------------------------------------------------------------------------
 # Port allocation
@@ -397,6 +422,15 @@ load_model() {
         # both tools. Previously the CLI only stripped -Q* and diverged on
         # IQ/BF16-named models.
         local stripped; stripped=$(echo "$base" | sed -E 's/-(Q[0-9]+(_[0-9]+)?(_K)?(_[A-Z]+)?|IQ[0-9]+(_[A-Z]+)+|F16|F32|BF16)$//')
+        # DFlash drafter: detect EARLY so the sampling gate below sees
+        # ddraft_attached before it decides on top-p/top-k.
+        local ddraft=""
+        if [[ "$(pm_bool enableDflash true)" == "true" ]]; then
+            for f in "$dir/dflash-"*.gguf; do
+                [[ -f "$f" ]] && ddraft="$f" && break
+            done
+            [[ -n "$ddraft" ]] && ddraft_attached=1
+        fi
         shopt -s nullglob
         local f
 
@@ -439,8 +473,8 @@ load_model() {
 
         # KV cache quantization (app defaults: q8_0 K / q4_0 V).
         local _kvk _kvv
-        _kvk=$(pref kvCacheTypeK q8_0)
-        _kvv=$(pref kvCacheTypeV q4_0)
+        _kvk=$(pm kvCacheTypeK q8_0)
+        _kvv=$(pm kvCacheTypeV q4_0)
         args+=("--cache-type-k" "$_kvk" "--cache-type-v" "$_kvv")
 
         # Flash attention (app default: on).
@@ -455,20 +489,26 @@ load_model() {
         # Gated behind the same `suppressReasoning` setting the app uses
         # (default on) instead of being applied unconditionally to every model.
         # See docs/GEMMA4_LOADING_DETAILS.md §3.2.
-        [[ "$(pref_bool suppressReasoning true)" == "true" ]] && \
+        [[ "$(pm_bool suppressReasoning true)" == "true" ]] && \
             args+=("--reasoning" "off" "--reasoning-format" "none")
 
         # Thinking mode (app default: on). When off, disable via chat-template
         # kwargs, matching the app.
-        if [[ "$(pref_bool thinkingEnabled true)" != "true" ]]; then
+        if [[ "$(pm_bool thinkingEnabled true)" != "true" ]]; then
             args+=("--chat-template-kwargs" '{"enable_thinking":false}')
         fi
 
         # Sampling defaults (shared with MLX in the app).
-        args+=("--temp"           "$(pref temperature 0.8)")
-        args+=("--top-p"          "$(pref topP 0.95)")
-        args+=("--top-k"          "$(pref topK 20)")
-        args+=("--repeat-penalty" "$(pref repeatPenalty 1.0)")
+        args+=("--temp" "$(pm temperature 0.8)")
+        # top-p/top-k/repeat-penalty skew the distribution the DFlash
+        # drafter verifies against, collapsing block acceptance (measured
+        # on Muse Glimmer: 63% -> 13%, 25 t/s -> 7 t/s). Omit while a
+        # DFlash drafter is attached; temperature stays user-controlled.
+        if [[ "${ddraft_attached:-0}" != "1" ]]; then
+            args+=("--top-p"          "$(pm topP 0.95)")
+            args+=("--top-k"          "$(pm topK 20)")
+            args+=("--repeat-penalty" "$(pm repeatPenalty 1.0)")
+        fi
         local _seed; _seed=$(pref seed 0)
         [[ "$_seed" -gt 0 ]] 2>/dev/null && args+=("--seed" "$_seed")
 
@@ -483,7 +523,7 @@ load_model() {
         # built-in MTP (filename infix -MTP-). Silently skipped if not.
         local mtp_check; mtp_check=false
         if [[ "$ENABLE_MTP" == "true" || "$ENABLE_MTP" == "1" \
-              || "$(pref_bool enableMtp true)" == "true" ]]; then
+              || "$(pm_bool enableMtp true)" == "true" ]]; then
             mtp_check=true
         fi
         if [[ "$mtp_check" == "true" ]]; then
@@ -508,6 +548,31 @@ load_model() {
                 args+=("--spec-type" "draft-mtp")
                 if [[ -n "$draft_file" ]]; then
                     args+=("--spec-draft-model" "$draft_file")
+                fi
+            fi
+        fi
+
+        # DFlash (block-diffusion speculative decoding): ON by default.
+        # Muse Glimmer ships dflash-kquant.gguf as a companion drafter.
+        # Skipped when no dflash-*.gguf companion exists, or when MTP was
+        # already attached (the two speculative methods are exclusive).
+        if [[ "$(pm_bool enableDflash true)" == "true" ]]; then
+            local has_spec=false
+            local a
+            for a in "${args[@]}"; do
+                [[ "$a" == "--spec-type" ]] && has_spec=true
+            done
+            if [[ "$has_spec" == "false" ]]; then
+                if [[ -n "$ddraft" ]]; then
+                    ddraft_attached=1
+                    args+=("--spec-type" "draft-dflash")
+                    args+=("--spec-draft-model" "$ddraft")
+                    args+=("--spec-draft-n-max" "15")
+                    # Adaptive disengage: acceptance below 0.4 (Muse's
+                    # reasoning phase on open-ended prompts) stops the
+                    # drafter — measured net loss without it (7.5 t/s vs
+                    # 10 t/s baseline). Structured prompts keep full speed.
+                    args+=("--spec-draft-p-min" "0.4")
                 fi
             fi
         fi
@@ -795,17 +860,17 @@ cmd_port() {
 
 # `llama menubar` — launch the menu bar app from its standard install location.
 cmd_menubar() {
-    local app="$HOME/Applications/LLM Switcher.app"
+    local app="$HOME/Applications/LM Switcher.app"
     if [[ -d "$app" ]]; then
         open "$app"
     else
         # Fall back to the legacy location, in case the user hasn't
         # re-run install.sh since the move to ~/Applications/.
-        app="$HOME/bin/llm-switcher.app"
+        app="$HOME/bin/lm-switcher.app"
         if [[ -d "$app" ]]; then
             open "$app"
         else
-            echo "llm-switcher not found. Run install.sh first."
+            echo "lm-switcher not found. Run install.sh first."
             return 1
         fi
     fi

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-make_icon.py — Generate the LLM Switcher app icon set.
+make_icon.py — Generate the LM Switcher app icon set.
 
 PURPOSE
 -------

@@ -1,4 +1,4 @@
-# LLM Switcher — Scout Audit Report
+# LM Switcher — Scout Audit Report
 
 **Date:** 2025-06-29  
 **Repo:** `/Users/rolandchia/Projects/llm-switcher`
@@ -172,7 +172,7 @@ if flock(fd, LOCK_EX | LOCK_NB) == -1 {
 **Severity:** MEDIUM  
 **File:** `LlamaMenubarApp.swift`, lines 2549–2556  
 **Description:**
-`nextAvailablePort()` only checks ports already in `modelStates`. If another application (not managed by LLM Switcher) is using port 8080, the `Process.run()` call will fail — and thanks to C-1, the failure is silently swallowed.
+`nextAvailablePort()` only checks ports already in `modelStates`. If another application (not managed by LM Switcher) is using port 8080, the `Process.run()` call will fail — and thanks to C-1, the failure is silently swallowed.
 
 **Remediation:** Attempt a `bind()` on `127.0.0.1:port` to verify availability, or at minimum catch the `Process.run()` error (see C-1) and retry on the next port.
 

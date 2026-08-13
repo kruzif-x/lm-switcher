@@ -1,5 +1,5 @@
 // =============================================================================
-//  FootprintEstimator.swift — llm-switcher-mcp
+//  FootprintEstimator.swift — lm-switcher-mcp
 //  GGUF header parse + MLX config.json → footprint & swap guard (§3.7).
 //
 //    footprint ≈ weights + kv_cache + overhead

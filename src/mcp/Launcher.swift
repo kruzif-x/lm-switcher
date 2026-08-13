@@ -1,5 +1,5 @@
 // =============================================================================
-//  Launcher.swift — llm-switcher-mcp
+//  Launcher.swift — lm-switcher-mcp
 //  Mutations shell out to the existing `llama` CLI (MCP_SPEC §3.8):
 //  controlled argv, no shell interpolation of agent input. The MCP adds
 //  pre-flight (swap guard) and post-flight (health wait) around it.

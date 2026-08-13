@@ -1,6 +1,6 @@
 // =============================================================================
 //  ServerManager.swift
-//  LLM Switcher — the brain: model discovery, process lifecycle, persistence
+//  LM Switcher — the brain: model discovery, process lifecycle, persistence
 // =============================================================================
 //  Extracted from the former single-file LlamaMenubarApp.swift (audit A-1).
 // =============================================================================
@@ -113,7 +113,7 @@ class ServerManager {
     /// blocks a future launch. We keep the fd in a static to avoid closing
     /// it — closing would drop the lock.
     static func acquireSingleInstanceLock() -> Bool {
-        let lockPath = NSTemporaryDirectory() + "llm-switcher.lock"
+        let lockPath = NSTemporaryDirectory() + "lm-switcher.lock"
         let fd = open(lockPath, O_CREAT | O_RDWR, 0o644)
         guard fd != -1 else {
             // If we can't even open the lock file, fail open (allow launch)
@@ -618,11 +618,17 @@ class ServerManager {
     ///                               treated as regular models.
     ///   - `modernbert-embed-*.gguf` — embedding models used by the
     ///                                 gbrain system. Not a chat model.
+    ///   - `dflash-*.gguf`           — DFlash block-diffusion drafter
+    ///                                 files (e.g. Muse Glimmer's
+    ///                                 dflash-kquant.gguf). Not standalone
+    ///                                 models; auto-attached via
+    ///                                 --spec-type draft-dflash.
     private func ggufEntry(at url: URL, baseDir: URL) -> ModelEntry? {
         let lname = url.lastPathComponent.lowercased()
         if lname.hasPrefix("mmproj-") { return nil }
         if lname.hasPrefix("mtp-") { return nil }
         if lname.hasPrefix("modernbert-embed-") { return nil }
+        if lname.hasPrefix("dflash-") { return nil }
         // Exclude MTP assistant heads (arch *-assistant) that are not
         // standalone models. Quick GGUF header read to check architecture.
         if let arch = readGgufArchitecture(url), arch.hasSuffix("-assistant") {
@@ -698,6 +704,7 @@ class ServerManager {
         let effKvV = pm("kvCacheTypeV", global: settings.kvCacheTypeV, for: model)
         let effThinking = pm("thinkingEnabled", global: settings.thinkingEnabled, for: model)
         let effMtp = pm("enableMtp", global: settings.enableMtp, for: model)
+        let effDflash = pm("enableDflash", global: settings.enableDflash, for: model)
         let effExtraArgs = pm("extraArgs", global: settings.globalExtraArgs, for: model)
 
         // Build the command line.
@@ -754,7 +761,7 @@ class ServerManager {
             // Reasoning suppression — Gemma 4 emits reasoning_content that
             // breaks OpenAI-compatible clients (opencode, pi, OpenClaw).
             // See docs/GEMMA4_LOADING_DETAILS.md §3.2.
-            if settings.suppressReasoning {
+            if pm("suppressReasoning", global: settings.suppressReasoning, for: model) {
                 args += ["--reasoning", "off", "--reasoning-format", "none"]
             }
 
@@ -767,11 +774,13 @@ class ServerManager {
             // MTP (Multi-Token Prediction): ON by default. Check if the model
             // actually supports MTP (companion mtp-*.gguf or built-in via
             // filename infix -MTP-). If not, silently skip — no-op.
+            var specTypeAttached = false
             if effMtp {
                 // Detect MTP support: companion file or built-in infix
                 let hasCompanion = findMtpDraftModel(for: model.path) != nil
                 let nameContainsMtp = model.name.range(of: "-MTP-", options: .caseInsensitive) != nil
                 if hasCompanion || nameContainsMtp {
+                    specTypeAttached = true
                     args += ["--spec-type", "draft-mtp"]
                     if let draft = findMtpDraftModel(for: model.path) {
                         args += ["--spec-draft-model", draft.path]
@@ -779,11 +788,37 @@ class ServerManager {
                 }
             }
 
+            // DFlash (block-diffusion speculative decoding): ON by default.
+            // Muse Glimmer ships dflash-kquant.gguf as a companion drafter.
+            // Attach --spec-type draft-dflash when one exists and no MTP
+            // head was attached (the two speculative methods are exclusive).
+            var dflashAttached = false
+            if effDflash && !specTypeAttached,
+               let draft = findDflashDraftModel(for: model.path) {
+                dflashAttached = true
+                args += ["--spec-type", "draft-dflash"]
+                args += ["--spec-draft-model", draft.path]
+                args += ["--spec-draft-n-max", "15"]
+                // Adaptive disengage: when greedy acceptance drops below
+                // 0.4 (Muse's reasoning phase on open-ended prompts), the
+                // drafter stops proposing — measured net loss (7.5 t/s)
+                // vs baseline (10 t/s) without this. Structured/agentic
+                // prompts keep 60-75% acceptance and full speed.
+                args += ["--spec-draft-p-min", "0.4"]
+            }
+
             // Sampling defaults — shared with MLX.
-            args += ["--temp", "\(effTemp)",
-                     "--top-p", "\(effTopP)",
-                     "--top-k", "\(effTopK)",
-                     "--repeat-penalty", "\(effRepeatPenalty)"]
+            args += ["--temp", "\(effTemp)"]
+            // top-p/top-k/repeat-penalty skew the distribution the DFlash
+            // drafter verifies against, collapsing block acceptance
+            // (measured on Muse Glimmer: 63% -> 13%, 25 t/s -> 7 t/s).
+            // Omit them while a DFlash drafter is attached; temperature
+            // stays user-controlled.
+            if !dflashAttached {
+                args += ["--top-p", "\(effTopP)",
+                         "--top-k", "\(effTopK)",
+                         "--repeat-penalty", "\(effRepeatPenalty)"]
+            }
             if settings.seed > 0 {
                 args += ["--seed", "\(settings.seed)"]
             }
@@ -1362,6 +1397,20 @@ class ServerManager {
         }.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).first
     }
 
+    /// Find a matching `dflash-*.gguf` DFlash drafter for a model.
+    /// Same-directory companion lookup (e.g. Muse Glimmer's
+    /// dflash-kquant.gguf next to the main model file).
+    private func findDflashDraftModel(for modelURL: URL) -> URL? {
+        let dir = modelURL.deletingLastPathComponent()
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil
+        ) else { return nil }
+        return entries.filter {
+            $0.lastPathComponent.hasPrefix("dflash-") && $0.pathExtension == "gguf"
+        }.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).first
+    }
+
 
 
     /// Split a free-form "extra args" string into argv-style tokens.
@@ -1542,7 +1591,7 @@ class ServerManager {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.unloadModel(model)
-                self.postNotification(title: "LLM Switcher",
+                self.postNotification(title: "LM Switcher",
                                       body: "Unloaded \(model.name) — idle for \(minutes) min.")
             }
         }
@@ -1565,7 +1614,7 @@ class ServerManager {
 
     // MARK:   Agent action notifications
     //
-    //  llm-switcher-mcp appends one JSON line per successful mutation to
+    //  lm-switcher-mcp appends one JSON line per successful mutation to
     //  events.jsonl; we drain the file each tick and post a notification
     //  per event (gated by the notifyAgentActions setting). Draining even
     //  when notifications are off keeps the file from growing unbounded.
@@ -1602,7 +1651,7 @@ class ServerManager {
             for ev in parsed {
                 var body = "Agent \(ev.action) \(ev.model)"
                 if let port = ev.port { body += " on :\(port)" }
-                self.postNotification(title: "LLM Switcher", body: body)
+                self.postNotification(title: "LM Switcher", body: body)
             }
         }
     }
@@ -1736,8 +1785,12 @@ class ServerManager {
         // Chat template override: empty = use built-in template.
         settings.chatTemplatePath = d.string(forKey: "chatTemplatePath") ?? ""
 
-        // MTP toggle: off by default (was historically a net loss on Metal).
-        settings.enableMtp = d.bool(forKey: "enableMtp")
+        // MTP toggle: ON by default when unset (matches the CLI's
+        // pm_bool default — both surfaces must agree).
+        settings.enableMtp = d.object(forKey: "enableMtp") as? Bool ?? true
+
+        // DFlash drafter toggle: on by default (absent key reads as true).
+        settings.enableDflash = d.object(forKey: "enableDflash") as? Bool ?? true
 
         // MCP agent access: off by default — absent key reads as false.
         settings.mcpEnabled = d.bool(forKey: "mcpEnabled")
@@ -1791,6 +1844,7 @@ class ServerManager {
         d.set(settings.globalExtraArgs, forKey: "globalExtraArgs")
         d.set(settings.chatTemplatePath, forKey: "chatTemplatePath")
         d.set(settings.enableMtp, forKey: "enableMtp")
+        d.set(settings.enableDflash, forKey: "enableDflash")
         d.set(settings.mcpEnabled, forKey: "mcpEnabled")
         d.set(settings.allowSwapLoads, forKey: "allowSwapLoads")
         d.set(settings.notifyAgentActions, forKey: "notifyAgentActions")

@@ -1,6 +1,6 @@
 // =============================================================================
 //  MenuView.swift
-//  LLM Switcher — menu bar dropdown content
+//  LM Switcher — menu bar dropdown content
 // =============================================================================
 
 import SwiftUI
@@ -548,7 +548,7 @@ struct MenuView: View {
     /// into the moment it's needed.
     private var firstRunView: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Welcome to LLM Switcher")
+            Text("Welcome to LM Switcher")
                 .font(.system(size: 13, weight: .bold))
             Text("Run AI models entirely on this Mac. Three steps and you're chatting.")
                 .font(.system(size: 11))

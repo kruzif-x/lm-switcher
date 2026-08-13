@@ -1,6 +1,6 @@
 // =============================================================================
 //  SettingsView.swift
-//  LLM Switcher — settings window (Global / Per-Model / Help / About)
+//  LM Switcher — settings window (Global / Per-Model / Help / About)
 // =============================================================================
 
 import SwiftUI
@@ -17,6 +17,7 @@ private struct GlobalSettingsModifier: ViewModifier {
     @Binding var defaultCtxSize: String
     @Binding var globalExtraArgs: String
     @Binding var enableMtp: Bool
+    @Binding var enableDflash: Bool
     @Binding var mcpEnabled: Bool
     @Binding var allowSwapLoads: Bool
     @Binding var notifyAgentActions: Bool
@@ -42,7 +43,7 @@ private struct GlobalSettingsModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .modifier(ServerDefaultsModifier(manager: manager, modelsDir: $modelsDir, defaultPort: $defaultPort, defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs, enableMtp: $enableMtp, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, notifyAgentActions: $notifyAgentActions, ttlMinutesStr: $ttlMinutesStr))
+            .modifier(ServerDefaultsModifier(manager: manager, modelsDir: $modelsDir, defaultPort: $defaultPort, defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs, enableMtp: $enableMtp, enableDflash: $enableDflash, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, notifyAgentActions: $notifyAgentActions, ttlMinutesStr: $ttlMinutesStr))
             .modifier(KvCacheModifier(manager: manager, kvCacheTypeK: $kvCacheTypeK, kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention, thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning, llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath, chatTemplatePath: $chatTemplatePath))
             .modifier(PerfSamplingModifier(manager: manager, temperature: $temperature, topP: $topP, topK: $topK, repeatPenalty: $repeatPenalty, seedStr: $seedStr, cpuThreadsStr: $cpuThreadsStr, batchSizeStr: $batchSizeStr, mlock: $mlock, noMmap: $noMmap, mlxMaxKvSizeStr: $mlxMaxKvSizeStr))
     }
@@ -55,6 +56,7 @@ private struct ServerDefaultsModifier: ViewModifier {
     @Binding var defaultCtxSize: String
     @Binding var globalExtraArgs: String
     @Binding var enableMtp: Bool
+    @Binding var enableDflash: Bool
     @Binding var mcpEnabled: Bool
     @Binding var allowSwapLoads: Bool
     @Binding var notifyAgentActions: Bool
@@ -66,6 +68,7 @@ private struct ServerDefaultsModifier: ViewModifier {
             .onChange(of: defaultCtxSize) { _, v in if let c = manager.parseCtxInput(v) { manager.settings.defaultCtxSize = c } }
             .onChange(of: globalExtraArgs){ _, v in manager.settings.globalExtraArgs = v }
             .onChange(of: enableMtp)      { _, v in manager.settings.enableMtp = v }
+            .onChange(of: enableDflash)   { _, v in manager.settings.enableDflash = v }
             .onChange(of: mcpEnabled)     { _, v in manager.settings.mcpEnabled = v }
             .onChange(of: allowSwapLoads) { _, v in manager.settings.allowSwapLoads = v }
             .onChange(of: notifyAgentActions) { _, v in manager.settings.notifyAgentActions = v }
@@ -155,6 +158,7 @@ struct SettingsView: View {
     @State private var globalExtraArgs: String
     @State private var chatTemplatePath: String
     @State private var enableMtp: Bool
+    @State private var enableDflash: Bool
     @State private var mcpEnabled: Bool
     @State private var allowSwapLoads: Bool
     @State private var notifyAgentActions: Bool
@@ -186,6 +190,7 @@ struct SettingsView: View {
         _globalExtraArgs  = State(initialValue: manager.settings.globalExtraArgs)
         _chatTemplatePath = State(initialValue: manager.settings.chatTemplatePath)
         _enableMtp        = State(initialValue: manager.settings.enableMtp)
+        _enableDflash      = State(initialValue: manager.settings.enableDflash)
         _mcpEnabled       = State(initialValue: manager.settings.mcpEnabled)
         _allowSwapLoads   = State(initialValue: manager.settings.allowSwapLoads)
         _notifyAgentActions = State(initialValue: manager.settings.notifyAgentActions)
@@ -247,7 +252,7 @@ struct SettingsView: View {
             manager: manager,
             modelsDir: $modelsDir, defaultPort: $defaultPort,
             defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs,
-            enableMtp: $enableMtp, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, notifyAgentActions: $notifyAgentActions, ttlMinutesStr: $ttlMinutesStr, kvCacheTypeK: $kvCacheTypeK,
+            enableMtp: $enableMtp, enableDflash: $enableDflash, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, notifyAgentActions: $notifyAgentActions, ttlMinutesStr: $ttlMinutesStr, kvCacheTypeK: $kvCacheTypeK,
             kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention,
             thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning,
             llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath,
@@ -278,6 +283,7 @@ struct SettingsView: View {
         globalExtraArgs = d.globalExtraArgs
         chatTemplatePath = d.chatTemplatePath
         enableMtp       = d.enableMtp
+        enableDflash     = d.enableDflash
         mcpEnabled      = d.mcpEnabled
         allowSwapLoads  = d.allowSwapLoads
         notifyAgentActions = d.notifyAgentActions
@@ -319,6 +325,7 @@ struct SettingsView: View {
         globalExtraArgs = s.globalExtraArgs
         chatTemplatePath = s.chatTemplatePath
         enableMtp       = s.enableMtp
+        enableDflash     = s.enableDflash
         mcpEnabled      = s.mcpEnabled
         allowSwapLoads  = s.allowSwapLoads
         notifyAgentActions = s.notifyAgentActions
@@ -459,6 +466,13 @@ struct SettingsView: View {
                 tint: Color.orange
             )
             Divider().padding(.leading, 14)
+            toggleRow(
+                label: "DFlash",
+                hint: "Block-diffusion speculative decoding — ON by default, auto-skipped without a dflash-*.gguf companion",
+                isOn: $enableDflash,
+                tint: Color.purple
+            )
+            Divider().padding(.leading, 14)
             toggleRow(label: "Mlock", hint: "Lock model in RAM to prevent swap — GGUF only", isOn: $mlock)
             Divider().padding(.leading, 14)
             toggleRow(label: "No-mmap", hint: "Disable memory-mapped file loading — GGUF only", isOn: $noMmap)
@@ -490,7 +504,7 @@ struct SettingsView: View {
                     isOn: $notifyAgentActions
                 )
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Register:  claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp")
+                    Text("Register:  hermes mcp add lm-switcher --command ~/bin/lm-switcher-mcp")
                         .font(.system(size: 10, design: .monospaced))
                         .textSelection(.enabled)
                     Text("Hermes, opencode, and other clients: see Help → 7. Agent access (MCP)")
@@ -757,7 +771,7 @@ struct SettingsView: View {
     /// shared by the sidebar's count pill and the detail rows' badges.
     private static let overrideKeys = [
         "port", "ctx", "temperature", "topP", "topK", "repeatPenalty",
-        "kvCacheTypeK", "kvCacheTypeV", "thinkingEnabled", "enableMtp", "extraArgs",
+        "kvCacheTypeK", "kvCacheTypeV", "thinkingEnabled", "suppressReasoning", "enableMtp", "enableDflash", "extraArgs",
     ]
 
     private func overrideCount(for model: ModelEntry) -> Int {
@@ -1006,10 +1020,24 @@ struct SettingsView: View {
                         )).toggleStyle(.switch).controlSize(.small).labelsHidden().disabled(!overrideOn)
                     }
                     Divider().padding(.leading, 12)
+                    overrideRow(label: "Suppress reasoning", key: "suppressReasoning", model: model, overrideOn: overrideOn) {
+                        Toggle("", isOn: Binding<Bool>(
+                            get: { manager.perModelSetting("suppressReasoning", default: manager.settings.suppressReasoning, for: model) },
+                            set: { manager.setPerModelSetting($0, for: model, key: "suppressReasoning") }
+                        )).toggleStyle(.switch).controlSize(.small).labelsHidden().disabled(!overrideOn)
+                    }
+                    Divider().padding(.leading, 12)
                     overrideRow(label: "MTP", key: "enableMtp", model: model, overrideOn: overrideOn) {
                         Toggle("", isOn: Binding<Bool>(
                             get: { manager.perModelSetting("enableMtp", default: manager.settings.enableMtp, for: model) },
                             set: { manager.setPerModelSetting($0, for: model, key: "enableMtp") }
+                        )).toggleStyle(.switch).controlSize(.small).labelsHidden().disabled(!overrideOn)
+                    }
+                    Divider().padding(.leading, 12)
+                    overrideRow(label: "DFlash", key: "enableDflash", model: model, overrideOn: overrideOn) {
+                        Toggle("", isOn: Binding<Bool>(
+                            get: { manager.perModelSetting("enableDflash", default: manager.settings.enableDflash, for: model) },
+                            set: { manager.setPerModelSetting($0, for: model, key: "enableDflash") }
                         )).toggleStyle(.switch).controlSize(.small).labelsHidden().disabled(!overrideOn)
                     }
                     Divider().padding(.leading, 12)
@@ -1040,7 +1068,9 @@ struct SettingsView: View {
                             manager.setPerModelSetting(d.kvCacheTypeK, for: model, key: "kvCacheTypeK")
                             manager.setPerModelSetting(d.kvCacheTypeV, for: model, key: "kvCacheTypeV")
                             manager.setPerModelSetting(d.thinkingEnabled, for: model, key: "thinkingEnabled")
+                            manager.setPerModelSetting(d.suppressReasoning, for: model, key: "suppressReasoning")
                             manager.setPerModelSetting(d.enableMtp, for: model, key: "enableMtp")
+                            manager.setPerModelSetting(d.enableDflash, for: model, key: "enableDflash")
                             manager.setPerModelSetting(d.globalExtraArgs, for: model, key: "extraArgs")
                             manager.refreshTrigger += 1
                         }
@@ -1065,7 +1095,7 @@ struct SettingsView: View {
                     // Sections — task-oriented: get started → daily use →
                     // tune → connect → fix. Reference material last.
                     helpSection(number: "1", title: "Getting started", id: "s1", proxy: proxy) {
-                        helpEntry("LLM Switcher runs AI models entirely on your Mac.",
+                        helpEntry("LM Switcher runs AI models entirely on your Mac.",
                                   "No account, no cloud, no data leaving your machine. You download model files; this app starts and stops them for you.",
                                   mono: false)
                         helpEntry("Step 0 — Install an engine (one-time)",
@@ -1156,6 +1186,8 @@ struct SettingsView: View {
                                       detail: "Strips Gemma 4's reasoning_content field; applied as --reasoning off --reasoning-format none.")
                             helpEntry("MTP (speed boost)", "Lets supported models write several words at a time. Leave ON; models without MTP simply ignore it.",
                                       detail: "Detected via companion mtp-*.gguf (same folder or MTP/ subfolder) or -MTP- in the filename; attached with --spec-type draft-mtp.")
+                            helpEntry("DFlash (speed boost)", "Block-diffusion speculative decoding for Muse Glimmer and similar models. Leave ON; skipped automatically when no dflash-*.gguf companion sits next to the model.",
+                                      detail: "Attached with --spec-type draft-dflash --spec-draft-model <dflash-*.gguf> --spec-draft-n-max 15. On M2 Max this takes Muse Glimmer Q4 from ~9 to ~25 t/s. Mutually exclusive with MTP — DFlash is skipped when an MTP head is attached.")
                             helpEntry("Mlock", "Pins the model into RAM so macOS can never move it to disk. Only enable with plenty of spare memory. GGUF only.",
                                       detail: "Not related to \"Allow swap for agent loads\": Mlock governs the OS's treatment of a model already in memory, for every load, agent or not.")
                             helpEntry("No-mmap", "Loads the model into memory up front instead of streaming from disk. Can help on some setups; fine to ignore. GGUF only.")
@@ -1189,7 +1221,7 @@ struct SettingsView: View {
                                       detail: "Thinking ON or OFF is genuinely disputed for tool-calling reliability — see the Thinking mode entry above. More importantly: if a model loops or fumbles tool calls, that's usually a harness-configuration or quantization issue (community reports point at both far more often than sampling settings), not something these numbers alone will fix.",
                                       mono: false)
                             helpEntry("Creative writing", "Temp 1.0 · Top-P 0.95 · Top-K 40 · Repeat penalty 1.1 · Thinking OFF.")
-                            helpEntry("Not covered here: min_p.", "Qwen's docs also recommend min_p=0 for both modes. LLM Switcher doesn't expose a min_p field, so there's nothing to set — llama-server uses its own default.",
+                            helpEntry("Not covered here: min_p.", "Qwen's docs also recommend min_p=0 for both modes. LM Switcher doesn't expose a min_p field, so there's nothing to set — llama-server uses its own default.",
                                       mono: false)
                         }
                     }
@@ -1242,7 +1274,7 @@ struct SettingsView: View {
 
                     helpSection(number: "6", title: "Vision models (Gemma 4 / Qwen2-VL)", id: "s6", proxy: proxy) {
                         helpEntry("mmproj auto-pairing",
-                                  "Vision-capable models (Gemma 4, Qwen2-VL, and others) require a companion mmproj-*.gguf projection file for image processing. LLM Switcher finds and attaches it automatically — no configuration needed.")
+                                  "Vision-capable models (Gemma 4, Qwen2-VL, and others) require a companion mmproj-*.gguf projection file for image processing. LM Switcher finds and attaches it automatically — no configuration needed.")
 
                         // mmproj folder rules — highlighted
                         VStack(alignment: .leading, spacing: 6) {
@@ -1289,14 +1321,15 @@ struct SettingsView: View {
                         .padding(.bottom, 8)
 
                         helpEntry("mtp-*.gguf exclusion", "MTP encoder heads are excluded from the model list — they are not standalone models. When MTP is ON, the app finds the head (same folder or MTP/ subfolder) and attaches it via --spec-type draft-mtp automatically.")
-                        helpEntry("Reasoning suppression (Gemma 4)", "Applied automatically via --reasoning off --reasoning-format none. Turn OFF in Settings only if your client handles reasoning_content natively.")
+                        helpEntry("dflash-*.gguf exclusion", "DFlash block-diffusion drafters (e.g. Muse Glimmer's dflash-kquant.gguf) are excluded from the model list. When DFlash is ON, the app finds the drafter next to the model and attaches it via --spec-type draft-dflash automatically.")
+                        helpEntry("Reasoning suppression (Gemma 4)", "Applied automatically via --reasoning off --reasoning-format none. Now per-model overridable (Per-Model tab → Suppress reasoning) — keep ON for Gemma 4, turn OFF for Muse Glimmer, whose thinking leaks raw into output while suppressed.", detail: "Set per model with model.<hash>.suppressReasoning or the Per-Model tab. Muse Glimmer with suppression ON also collapses DFlash drafter acceptance.")
                         helpEntry("Chat template bugs (Gemma 4)", "The standard Gemma 4 template has 4 bugs that break multi-turn tool calling. Use a custom .jinja template via Global → Backends → Chat template for agentic harnesses.")
                     }
 
                     helpSection(number: "7", title: "Agent access (MCP)", id: "s7", proxy: proxy) {
                         Group {
                             helpEntry("Let AI assistants drive.",
-                                      "Claude Code, Hermes, opencode, and other AI agents can list, load, and switch your models themselves — your assistant says \"I need the coding model\" and makes it happen. MCP is the standard plug that makes this work.",
+                                      "Hermes, opencode, and other MCP clients can list, load, and switch your models themselves — your assistant says \"I need the coding model\" and makes it happen. MCP is the standard plug that makes this work.",
                                       mono: false)
                             helpLinks([("What is MCP?", "https://modelcontextprotocol.io")])
                             helpEntry("It's OFF by default, and you're always in charge.",
@@ -1304,15 +1337,15 @@ struct SettingsView: View {
                                       mono: false)
                         }
                         Group {
-                            helpEntry("Register — Claude Code", "One Terminal command (after turning the toggle ON):", mono: false)
-                            helpCode(["claude mcp add --scope user llm-switcher -- ~/bin/llm-switcher-mcp"])
+                            helpEntry("Register — Hermes", "One Terminal command (after turning the toggle ON):", mono: false)
+                            helpCode(["hermes mcp add lm-switcher --command ~/bin/lm-switcher-mcp"])
                             helpEntry("Register — Hermes", "Add under mcp_servers: in ~/.hermes/config.yaml, then restart the gateway:", mono: false)
-                            helpCode(["llm-switcher:",
-                                      "  command: /Users/YOU/bin/llm-switcher-mcp",
+                            helpCode(["lm-switcher:",
+                                      "  command: /Users/YOU/bin/lm-switcher-mcp",
                                       "  args: []",
                                       "  timeout: 300"])
                             helpEntry("Register — anything else (opencode, pi, …)",
-                                      "Configure a local/stdio MCP server with command ~/bin/llm-switcher-mcp and no arguments.",
+                                      "Configure a local/stdio MCP server with command ~/bin/lm-switcher-mcp and no arguments.",
                                       detail: "Standard JSON-RPC 2.0 over stdio. Tools: status, list_models, load_model, unload_model, unload_all, switch_model, get_settings. Every response embeds a fresh state snapshot.",
                                       mono: false)
                         }
@@ -1546,7 +1579,7 @@ struct SettingsView: View {
                             .foregroundStyle(Color.accentColor)
                             .frame(width: 72, height: 72)
                     }
-                    Text("LLM Switcher")
+                    Text("LM Switcher")
                         .font(.title2).fontWeight(.medium)
                     Text("Version 1.3.0")
                         .font(.subheadline).foregroundStyle(.secondary)
@@ -1556,7 +1589,7 @@ struct SettingsView: View {
 
                 // Description
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("LLM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages llama-server (GGUF) and mlx_lm.server (Apple MLX) processes on your behalf — each model gets its own port, starts on demand, and stops cleanly when you unload it.")
+                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages llama-server (GGUF) and mlx_lm.server (Apple MLX) processes on your behalf — each model gets its own port, starts on demand, and stops cleanly when you unload it.")
                         .font(.body).foregroundStyle(.secondary)
                     Text("Discovered models appear in the menu bar dropdown. Click one to load it, right-click for single-model actions, or use the bulk controls to load and unload multiple models at once. All settings — context size, KV cache, sampling, per-model overrides — are persisted and shared with the companion llama CLI, so the terminal and the app always stay in sync.")
                         .font(.body).foregroundStyle(.secondary)

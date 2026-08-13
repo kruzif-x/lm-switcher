@@ -1,6 +1,6 @@
 // =============================================================================
 //  DomainTypes.swift
-//  LLM Switcher — value types shared across the app
+//  LM Switcher — value types shared across the app
 // =============================================================================
 //  ModelBackend, ModelEntry, ModelState, and AppSettings. Extracted from the
 //  former single-file LlamaMenubarApp.swift (audit A-1: split >3000-line file).
@@ -211,14 +211,19 @@ struct AppSettings {
     /// ON by default — silently skipped for models without MTP support.
     var enableMtp: Bool = true
 
+    /// DFlash block-diffusion speculative decoding (Muse Glimmer's
+    /// dflash-kquant.gguf companion drafter). ON by default — silently
+    /// skipped for models without a dflash-*.gguf companion.
+    var enableDflash: Bool = true
+
     /// Master toggle for MCP agent access (MCP_SPEC §3.9). The external
-    /// llm-switcher-mcp server re-reads this key on every tools/call and
+    /// lm-switcher-mcp server re-reads this key on every tools/call and
     /// refuses all tools while OFF. The app itself never acts on it.
     var mcpEnabled: Bool = false
 
     /// Permit agent-initiated loads that exceed free RAM (MCP_SPEC §3.7).
     /// OFF (default): the MCP swap guard refuses loads that would swap.
-    /// Consumed only by llm-switcher-mcp; the app itself never acts on it.
+    /// Consumed only by lm-switcher-mcp; the app itself never acts on it.
     var allowSwapLoads: Bool = false
 
     /// Post a macOS notification when an agent loads/unloads a model via

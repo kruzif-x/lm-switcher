@@ -1,5 +1,5 @@
 // =============================================================================
-//  ByteFormat.swift — llm-switcher-mcp
+//  ByteFormat.swift — lm-switcher-mcp
 //  Base-1024 human formatting (MCP_SPEC §3.6.5): one decimal below 10,
 //  none at or above.
 // =============================================================================

@@ -1,5 +1,5 @@
 // =============================================================================
-//  SystemMetrics.swift — SHARED between the app and llm-switcher-mcp
+//  SystemMetrics.swift — SHARED between the app and lm-switcher-mcp
 //  RAM / memory pressure / swap / per-process RSS (MCP_SPEC §3.6).
 //  Clean-room implementations on public Apple APIs only.
 //

@@ -1,12 +1,12 @@
 // =============================================================================
 //  LlamaMenubarApp.swift
-//  LLM Switcher — a macOS menu bar app for managing local LLM models
+//  LM Switcher — a macOS menu bar app for managing local LLM models
 // =============================================================================
 //
 //  PURPOSE
 //  -------
 //  This file is the entire source of the menu bar (status bar) component of
-//  "LLM Switcher". It runs as a `MenuBarExtra` (a SwiftUI scene introduced in
+//  "LM Switcher". It runs as a `MenuBarExtra` (a SwiftUI scene introduced in
 //  macOS 13) and lives in the system menu bar next to the clock.
 //
 //  WHAT IT DOES
@@ -156,7 +156,7 @@ final class SettingsWindowHost: ObservableObject {
         // `.resizable` because we set a fixed content size and don't want
         // the user to be able to mess with it.
         let win = NSWindow(contentViewController: hosting)
-        win.title = "LLM Switcher Settings"
+        win.title = "LM Switcher Settings"
         win.setContentSize(NSSize(width: 580, height: 520))
         win.styleMask = [.titled, .closable, .miniaturizable]
 

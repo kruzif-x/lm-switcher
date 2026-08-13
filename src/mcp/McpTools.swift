@@ -1,5 +1,5 @@
 // =============================================================================
-//  McpTools.swift — llm-switcher-mcp
+//  McpTools.swift — lm-switcher-mcp
 //  Tool registry, schemas, dispatch (MCP_SPEC §3.3–3.4).
 //  Every response — success or error — embeds a fresh state snapshot.
 // =============================================================================
@@ -59,7 +59,7 @@ enum McpTools {
         Prefs.sync()
         guard Prefs.bool("mcpEnabled") else {
             return failure("agent_access_disabled",
-                "Agent access is disabled. The user can enable it in LLM Switcher → Settings → Global → Agent access (MCP). Running models are unaffected.")
+                "Agent access is disabled. The user can enable it in LM Switcher → Settings → Global → Agent access (MCP). Running models are unaffected.")
         }
         switch name {
         case "status":        return payload(["ok": true])
@@ -116,7 +116,7 @@ enum McpTools {
         // suppress reasoning, notify-on-agent-actions) report as OFF to
         // agents whenever the user had never touched it in Settings.
         let boolDefaults: [String: Bool] = [
-            "enableMtp": true, "mcpEnabled": false, "allowSwapLoads": false,
+            "enableMtp": true, "enableDflash": true, "mcpEnabled": false, "allowSwapLoads": false,
             "flashAttention": true, "thinkingEnabled": true, "suppressReasoning": true,
             "mlock": false, "noMmap": false, "notifyAgentActions": true,
         ]
@@ -127,7 +127,7 @@ enum McpTools {
 
         let suffixes = ["overrideEnabled", "port", "ctx", "temperature", "topP", "topK",
                         "repeatPenalty", "kvCacheTypeK", "kvCacheTypeV", "thinkingEnabled",
-                        "enableMtp", "extraArgs", "pinned"]
+                        "suppressReasoning", "enableMtp", "enableDflash", "extraArgs", "pinned"]
         var perModel: [String: Any] = [:]
         for m in discoverModels() {
             var overrides: [String: Any] = [:]

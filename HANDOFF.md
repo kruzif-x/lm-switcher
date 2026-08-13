@@ -1,8 +1,35 @@
-# LLM Switcher — Project Handoff
+# LM Switcher — Project Handoff
+
+## 2026-08-12 — DFlash drafter + per-model reasoning suppression (v1.4.0)
+
+Shipped in this session:
+- **DFlash support**: auto-attach `dflash-*.gguf` companions
+  (`--spec-type draft-dflash --spec-draft-model <file> --spec-draft-n-max
+  15 --spec-draft-p-min 0.4`), `enableDflash` setting (default true),
+  Settings toggle + per-model override row, Help entries.
+- **dflash-*.gguf exclusion** in all three discovery surfaces (Swift
+  `ggufEntry`, CLI `list_all_models`, MCP `StateReader.discoverModels`).
+- **Per-model `suppressReasoning`** (Settings row + `pm()` in loadModel).
+- **CLI per-model overrides**: `pm()`/`pm_bool()` helpers now make the
+  CLI (and MCP loads, which shell out to it) honor all `model.<hash>.*`
+  keys, not just port/ctx.
+- **DFlash-aware sampling**: top-p/top-k/repeat-penalty omitted when a
+  drafter is attached.
+
+Measured findings baked into the code/docs (Muse Glimmer, M2 Max):
+- top-p/top-k collapse DFlash acceptance 63% → 13% (25 → 7.5 t/s).
+- Acceptance is prompt-dependent (structured 60-79%, open-ended 13%
+  during reasoning); `--spec-draft-p-min 0.4` disengages adaptively.
+- q8_0/q4_0 KV cache costs ~23% on muse-glimmer; use f16/f16 per-model.
+- `--reasoning off` garbles Muse output; needs per-model
+  suppressReasoning OFF.
+
+Per-model overrides live for Muse Glimmer under `model.402d4751948a.*`
+(KV f16/f16, suppressReasoning 0, temperature 0).
 
 ## What This Is
 
-macOS menu bar app for managing local LLM models (GGUF + MLX). Swift (~5000 lines across 5 files) + bash CLI (~710 lines). Written by Roland Chia. Version 1.1.0.
+macOS menu bar app for managing local LLM models (GGUF + MLX). Swift (~5000 lines across 5 files) + bash CLI (~710 lines). Written by Roland Chia. Version 1.4.0.
 
 **What it does:** discovers `.gguf` files and MLX model directories under a configurable path, spawns `llama-server` (GGUF) or `mlx_lm.server` (MLX) processes — one per model on its own port — tracks PIDs/ports/context, reconciles with externally-launched processes via `ps`, persists settings to UserDefaults, watches the models directory for live changes, and handles macOS sleep/wake.
 
@@ -15,7 +42,7 @@ macOS menu bar app for managing local LLM models (GGUF + MLX). Swift (~5000 line
 ## File Structure
 
 ```
-llm-switcher/
+lm-switcher/
 ├── src/
 │   ├── LlamaMenubarApp.swift   # @main MenuBarExtra + SettingsWindowHost ~205 lines
 │   ├── DomainTypes.swift        # ModelBackend, ModelEntry, ModelState, AppSettings
@@ -57,16 +84,16 @@ vim ~/Projects/llm-switcher/src/ServerManager.swift
 swiftc -parse-as-library -typecheck -framework SwiftUI -framework AppKit src/*.swift
 
 # Kill running instance
-pkill -f llama-menubar; sleep 1
+pkill -f lm-switcher; sleep 1
 
 # Build + install (copies src/*.swift → ~/bin, compiles as one module)
 cd ~/Projects/llm-switcher && bash scripts/install.sh
 
-# Launch
-open ~/Applications/LLM\ Switcher.app
+# Launch (or restart the LaunchAgent: launchctl kickstart -k gui/$(id -u)/local.llama-menubar)
+open ~/Applications/LM\ Switcher.app
 
 # Verify symbol in binary
-nm ~/Applications/LLM\ Switcher.app/Contents/MacOS/llama-menubar \
+nm ~/Applications/LM\ Switcher.app/Contents/MacOS/lm-switcher \
   | grep -i "switchModel\|portIsFree\|unloadSelected"
 
 # Push to Gitea
@@ -150,7 +177,7 @@ OLD (wait-then-read):  hung >8s — pipe-buffer deadlock      ✗
 
 ## Single-Instance Guard (H-5)
 
-`ServerManager.acquireSingleInstanceLock()` uses `flock(LOCK_EX | LOCK_NB)` on `/tmp/llm-switcher.lock`. Second instance self-terminates. Verified live.
+`ServerManager.acquireSingleInstanceLock()` uses `flock(LOCK_EX | LOCK_NB)` on `/tmp/lm-switcher.lock`. Second instance self-terminates. Verified live.
 
 ## Known Issues / Deferred
 

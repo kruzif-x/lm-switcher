@@ -1,4 +1,4 @@
-<title>LLM Switcher — UI Redesign Mockup</title>
+<title>LM Switcher — UI Redesign Mockup</title>
 <style>
   :root {
     --desk1:#E2E5EB; --desk2:#C9CED8;
@@ -270,7 +270,7 @@
 </style>
 
 <header class="page">
-  <div class="eyebrow">Design proposal · LLM Switcher 1.3 · interactive mockup</div>
+  <div class="eyebrow">Design proposal · LM Switcher 1.3 · interactive mockup</div>
   <h1>The dropdown becomes a console.</h1>
   <p class="lede">Three screens: the redesigned <strong>menu bar panel</strong> (fully operable below — real model names, real memory math), the <strong>Per-Model master-detail</strong> rebuild, and the <strong>first-run</strong> state. Numbered notes map to the proposal phases.</p>
   <div class="try">TRY&nbsp;IT → hover rows · hover a stopped model &amp; watch the memory bar · click ⧉ · press ⏹ then Undo · click 🕘</div>
@@ -311,7 +311,7 @@
         <h4>Agent activity</h4>
         <div class="aev"><span class="who">Hermes</span><span class="what">loaded OmniCoder 9B on :8081</span><span class="t">2m</span></div>
         <div class="aev"><span class="who">idle unload</span><span class="what">Qwythos 9B — 30 min idle</span><span class="t">1h</span></div>
-        <div class="aev"><span class="who">Claude Code</span><span class="what">switched to Qwen3 Coder 25B</span><span class="t">3h</span></div>
+        <div class="aev"><span class="who">Hermes</span><span class="what">switched to Qwen3 Coder 25B</span><span class="t">3h</span></div>
         <div class="aev"><span class="who">guard</span><span class="what">refused SuperGemma 26B — wouldn't fit</span><span class="t">3h</span></div>
       </div>
     </div>
@@ -375,7 +375,7 @@
     <div class="macpanel" style="width:312px;">
       <div class="inner">
         <div class="fr">
-          <h3>Welcome to LLM Switcher</h3>
+          <h3>Welcome to LM Switcher</h3>
           <p class="sub">Run AI models entirely on this Mac. Three steps and you're chatting.</p>
           <div class="warnrow"><b>⚠</b><span><b>llama-server not found.</b> Install the engine, then come back:</span></div>
           <div class="step done">
@@ -430,7 +430,7 @@
     { id:'e4b',  name:'Gemma 4 E4B',          quant:'Q5_K_M', backend:'GGUF', file:'gemma-4-e4b-q5_k_m-imat.gguf',                    est:8.0,  running:true,  port:8090, pinned:true  },
     { id:'omni', name:'OmniCoder 9B',          quant:'Q4_K_M', backend:'GGUF', file:'omnicoder-9b-q4_k_m.gguf',                        est:6.3,  running:false, port:8081, pinned:false },
     { id:'orni', name:'Ornith 1.0 9B',         quant:'Q5_K_M', backend:'GGUF', file:'deepreinforce-ai_Ornith-1.0-9B-Q5_K_M.gguf',      est:7.4,  running:false, port:0,    pinned:false },
-    { id:'qwy',  name:'Qwythos 9B · 1M ctx',   quant:'Q4_K_M', backend:'GGUF', file:'Qwythos-9B-Claude-Mythos-5-1M-MTP-Q4_K_M.gguf',   est:6.5,  running:false, port:0,    pinned:false },
+    { id:'qwy',  name:'Qwythos 9B · 1M ctx',   quant:'Q4_K_M', backend:'GGUF', file:'Qwythos-9B-Mythos-5-1M-MTP-Q4_K_M.gguf',   est:6.5,  running:false, port:0,    pinned:false },
     { id:'glm',  name:'GLM-4.7 Flash 23B',     quant:'Q4_K_XL',backend:'GGUF', file:'GLM-4.7-Flash-REAP-23B-A3B-UD-Q4_K_XL.gguf',      est:14.8, running:false, port:0,    pinned:false, err:'port 8090 in use — right-click → Port, or view log' },
     { id:'qwen', name:'Qwen3 Coder REAP 25B',  quant:'Q4_K_M', backend:'GGUF', file:'cerebras_Qwen3-Coder-REAP-25B-A3B-Q4_K_M.gguf',   est:15.9, running:false, port:0,    pinned:false },
     { id:'sg',   name:'SuperGemma 4 26B',      quant:'Q4_K_M', backend:'GGUF', file:'supergemma4-26b-abliterated-multimodal-Q4_K_M.gguf', est:18.1, running:false, port:0, pinned:false },

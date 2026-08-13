@@ -1,5 +1,5 @@
 // =============================================================================
-//  StateReader.swift — llm-switcher-mcp
+//  StateReader.swift — lm-switcher-mcp
 //  Live-truth reads: PID files, ps, lsof, UserDefaults (MCP_SPEC §3.5).
 //  The MCP holds NO state in memory between calls — everything here is
 //  re-read per tool call so user actions in the app are seen immediately.
@@ -76,6 +76,7 @@ func discoverModels() -> [DiscoveredModel] {
         if base.hasSuffix(".gguf") {
             // Exclusions must stay in sync with the CLI + Swift ggufEntry.
             if base.hasPrefix("mmproj-") || base.hasPrefix("mtp-")
+                || base.hasPrefix("dflash-")
                 || base.hasPrefix("modernbert-embed-") { continue }
             out.append(DiscoveredModel(backend: "GGUF", path: full, name: base))
         } else if base == "config.json" {
@@ -272,7 +273,7 @@ func stateSnapshot() -> [String: Any] {
     let external = listeningPorts()
     for (port, occupant) in external where port >= defaultPort && port <= defaultPort + 200 {
         if let name = ourPorts[port] {
-            portsJson["\(port)"] = ["occupied_by": name, "source": "llm-switcher"]
+            portsJson["\(port)"] = ["occupied_by": name, "source": "lm-switcher"]
         } else {
             portsJson["\(port)"] = ["occupied_by": occupant, "source": "external"]
         }

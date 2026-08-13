@@ -1,4 +1,4 @@
-# LLM Switcher — Per-Model Settings Bug Fix (In Progress)
+# LM Switcher — Per-Model Settings Bug Fix (In Progress)
 
 ## Date: 2026-06-29
 
@@ -6,10 +6,10 @@
 `/Users/rolandchia/Projects/llm-switcher/src/LlamaMenubarApp.swift`
 
 ## Build/Install
-- Source must be copied to `~/bin/llama-menubar.swift` before running install.sh
 - `cd /Users/rolandchia/Projects/llm-switcher && bash scripts/install.sh`
-- Install script compiles from `~/bin/llama-menubar.swift`, NOT from `src/`
-- Binary: `/Users/rolandchia/Applications/LLM Switcher.app/Contents/MacOS/llama-menubar`
+- install.sh copies `src/*.swift` to `~/bin/` itself, then compiles the
+  whole module — no manual pre-copy needed
+- Binary: `/Users/rolandchia/Applications/LM Switcher.app/Contents/MacOS/lm-switcher`
 - Verify changes in binary: `strings <binary> | grep "Settings apply on next"`
 
 ## Three Fixes Applied (all compiled, built, installed)

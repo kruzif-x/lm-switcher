@@ -1,9 +1,45 @@
 # Changelog
 
-All notable changes to LLM Switcher are documented in this file.
+All notable changes to LM Switcher are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.4.0] - 2026-08-12
+
+### Added
+- **DFlash drafter support** — auto-detects a `dflash-*.gguf` companion
+  (e.g. Muse Glimmer's `dflash-kquant.gguf`) next to a GGUF model and
+  attaches `--spec-type draft-dflash --spec-draft-model <file>
+  --spec-draft-n-max 15 --spec-draft-p-min 0.4`. New **DFlash** toggle in
+  Settings → Global → Inference (default ON, skipped when no companion
+  exists) plus a per-model override row. Mutually exclusive with MTP.
+- **dflash-*.gguf exclusion** — drafter files no longer appear as
+  standalone models in the menu bar, CLI (`llama list`), or MCP
+  (`StateReader.discoverModels`).
+- **Per-model `suppressReasoning` override** — reasoning suppression is
+  no longer global-only; it can be flipped per model (Settings →
+  Per-Model → Suppress reasoning, or `model.<hash>.suppressReasoning`).
+  Required for Muse Glimmer, whose thinking leaks raw into content when
+  `--reasoning off` is applied.
+- **CLI honors per-model overrides** — new `pm()`/`pm_bool()` helpers in
+  `src/llama` read `model.<hash>.<key>` first for temperature, topP,
+  topK, repeatPenalty, kvCacheTypeK/V, thinkingEnabled,
+  suppressReasoning, enableMtp, enableDflash (previously only port/ctx
+  were per-model in the CLI). MCP loads (which shell out to the CLI) now
+  behave like app loads.
+- **DFlash-aware sampling** — `--top-p`/`--top-k`/`--repeat-penalty` are
+  omitted when a DFlash drafter is attached (they skew the verification
+  distribution and collapse block acceptance: measured 63% → 13%,
+  25 → 7.5 t/s on Muse Glimmer). Temperature stays user-controlled.
+
+### Fixed
+- **Muse Glimmer speed trap** — q8_0/q4_0 KV cache costs ~23% on the
+  muse-glimmer arch (7.4 vs 9.7 t/s); suppressReasoning garbles its
+  output; the drafter was a net loss on open-ended prompts (7.5 vs 10
+  t/s baseline) until `--spec-draft-p-min 0.4` was added so llama.cpp
+  disengages the drafter adaptively. Documented in Help → Inference →
+  DFlash and the hf-model-research reference.
 
 ## [1.3.0] - 2026-07-13
 
@@ -59,12 +95,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - 2026-07-12
 
 ### Added
-- **Agent access (MCP)** — new standalone `llm-switcher-mcp` stdio server
-  (MCP over newline-delimited JSON-RPC 2.0) lets agents (Claude Code,
+- **Agent access (MCP)** — new standalone `lm-switcher-mcp` stdio server
+  (MCP over newline-delimited JSON-RPC 2.0) lets agents (Hermes,
   Hermes, opencode…) list, load, unload, and switch models. Gated by the
   new **Agent access (MCP)** toggle (Settings → Global → Inference card,
   below MTP; OFF by default — every tool call is refused while OFF).
-  Register with: `claude mcp add llm-switcher -- ~/bin/llm-switcher-mcp`.
+  Register with: `hermes mcp add lm-switcher --command ~/bin/lm-switcher-mcp`.
 - **Swap guard** — agent loads that would exceed free RAM (minus a fixed
   OS headroom) are refused with the largest context size that would fit,
   unless the new **Allow swap for agent loads** toggle is ON. Footprint is
@@ -229,7 +265,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shared state with menu bar app via UserDefaults
 - **Installer** (`install.sh`)
   - Compiles Swift to native binary
-  - Creates `~/Applications/LLM Switcher.app` bundle
+  - Creates `~/Applications/LM Switcher.app` bundle
   - Ad-hoc codesigning
   - Launch Services registration (Launchpad, Spotlight)
   - LaunchAgent for auto-start

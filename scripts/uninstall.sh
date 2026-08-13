@@ -1,11 +1,11 @@
 #!/bin/zsh
 # =============================================================================
-#  uninstall.sh — Remove LLM Switcher
+#  uninstall.sh — Remove LM Switcher
 # =============================================================================
 #
 #  PURPOSE
 #  -------
-#  Cleanly remove the LLM Switcher menu bar app, CLI, source files,
+#  Cleanly remove the LM Switcher menu bar app, CLI, source files,
 #  app bundle, LaunchAgent, runtime data, and saved settings.
 #
 #  WHAT IT DOES
@@ -16,7 +16,7 @@
 #  3. Unloads and removes the LaunchAgent.
 #  4. Removes the `.app` bundle from `~/Applications/`.
 #  5. Removes the legacy `.app` bundle from `~/bin/` (older installs).
-#  6. Removes the compiled binary, `llm-switcher-mcp` agent-access
+#  6. Removes the compiled binary, `lm-switcher-mcp` agent-access
 #     server, CLI script, Swift source, install scripts, and icon
 #     assets from `~/bin/`.
 #  7. Removes the runtime data directory (`~/.local/share/llama-menubar/`).
@@ -28,8 +28,8 @@
 #    other tools there).
 #  - It does NOT remove the `~/Applications/` directory.
 #  - It does NOT remove your models (`~/models/`) or your gguf cache.
-#  - It does NOT deregister `llm-switcher-mcp` from any MCP client
-#    (Claude Code, Hermes, etc.) — those keep their own config outside
+#  - It does NOT deregister `lm-switcher-mcp` from any MCP client
+#    (Hermes, opencode, etc.) — those keep their own config outside
 #    this app, so removing the binary would otherwise leave a dangling
 #    reference. The script prints a reminder at the end.
 #
@@ -52,7 +52,7 @@ BIN_DIR="${1:-$HOME/bin}"
 
 # App bundle location (the new, recommended one).
 APP_DIR="$HOME/Applications"
-APP_BUNDLE="$APP_DIR/LLM Switcher.app"
+APP_BUNDLE="$APP_DIR/LM Switcher.app"
 
 # Legacy location (older versions of the installer put it here).
 OLD_APP_BUNDLE="$BIN_DIR/llama-menubar.app"
@@ -103,10 +103,13 @@ if [[ -d "$LLAMA_DIR/pids" ]]; then
     rm -rf "$LLAMA_DIR/pids"
 fi
 
-# Safety net: kill any remaining processes whose command line references
-# our config. This is broader than the PID-file approach but harmless.
-if pgrep -f "llama-server.*cache/llama.cpp\|mlx_lm.server" >/dev/null 2>&1; then
-    pkill -f "llama-server.*cache/llama.cpp" 2>/dev/null || true
+# Safety net: kill any remaining servers launched from the models dir.
+# (The PID-file loop above is authoritative; this catches anything the
+# PID files missed. We match the models dir specifically — the old
+# "llama-server.*cache/llama.cpp" pattern never matched our servers.)
+_SAFETY_DIR=$(defaults read local.llama-menubar modelsDir 2>/dev/null || echo "")
+if [[ -n "$_SAFETY_DIR" ]] && pgrep -f "llama-server.*${_SAFETY_DIR}\|mlx_lm.server" >/dev/null 2>&1; then
+    pkill -f "llama-server.*${_SAFETY_DIR}" 2>/dev/null || true
     pkill -f "mlx_lm.server" 2>/dev/null || true
     echo "  ✓ All model servers stopped"
 fi
@@ -141,14 +144,14 @@ fi
 # delete the .app bundle underneath it.
 
 echo "==> Stopping menu bar app..."
-pkill -f "llm-switcher" 2>/dev/null || true
+pkill -f "lm-switcher" 2>/dev/null || true
 sleep 1
 
 
 # -----------------------------------------------------------------------------
 # Step 4: Remove the .app bundle(s)
 # -----------------------------------------------------------------------------
-# We remove BOTH the new `~/Applications/LLM Switcher.app` and the
+# We remove BOTH the new `~/Applications/LM Switcher.app` and the
 # legacy `~/bin/llama-menubar.app` (in case the user upgraded from
 # an older install).
 
@@ -172,16 +175,16 @@ fi
 echo "==> Removing files from $BIN_DIR..."
 
 # Compiled binary.
-if [[ -f "$BIN_DIR/llm-switcher" ]]; then
-    rm -f "$BIN_DIR/llm-switcher"
-    echo "  ✓ llm-switcher binary removed"
+if [[ -f "$BIN_DIR/lm-switcher" ]]; then
+    rm -f "$BIN_DIR/lm-switcher"
+    echo "  ✓ lm-switcher binary removed"
 fi
 
 # MCP agent-access server (separate binary; may not exist if that
 # build failed or the user is on a pre-1.2.0 install).
-if [[ -f "$BIN_DIR/llm-switcher-mcp" ]]; then
-    rm -f "$BIN_DIR/llm-switcher-mcp"
-    echo "  ✓ llm-switcher-mcp removed"
+if [[ -f "$BIN_DIR/lm-switcher-mcp" ]]; then
+    rm -f "$BIN_DIR/lm-switcher-mcp"
+    echo "  ✓ lm-switcher-mcp removed"
 fi
 
 # CLI script.
@@ -266,9 +269,9 @@ echo "  rmdir ~/bin   # (only if empty)"
 echo ""
 echo "Note: ~/Applications/ is left intact. If empty, you can remove it too."
 echo ""
-echo "If you registered the MCP agent-access server (llm-switcher-mcp)"
+echo "If you registered the MCP agent-access server (lm-switcher-mcp)"
 echo "with any client, deregister it there too — this script can't reach"
 echo "into their config:"
-echo "  claude mcp remove llm-switcher          # Claude Code"
-echo "  # Hermes: remove the llm-switcher entry from"
+echo "  hermes mcp remove lm-switcher"
+echo "  # Hermes: remove the lm-switcher entry from"
 echo "  #   ~/.hermes/config.yaml → mcp_servers:, then restart the gateway"

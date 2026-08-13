@@ -1,12 +1,12 @@
-# LLM Switcher
+# LM Switcher
 
 A macOS menu bar app + CLI for managing local LLM models (GGUF and Apple MLX).
 
-![LLM Switcher icon](assets/AppIcon.png)
+![LM Switcher icon](assets/AppIcon.png)
 
 ## What is this?
 
-LLM Switcher is a native macOS app that lives in your menu bar (next to the clock). It lets you:
+LM Switcher is a native macOS app that lives in your menu bar (next to the clock). It lets you:
 
 - 🔍 **Discover** GGUF and MLX models in a directory of your choice (recursive scan)
 - ▶️ **Load** any model with one click (spawns the right backend: `llama-server` or `mlx_lm.server`)
@@ -14,8 +14,9 @@ LLM Switcher is a native macOS app that lives in your menu bar (next to the cloc
 - 🔄 **Run multiple models simultaneously**, each on its own port (e.g. one chat model on :8080, an embedder on :8081)
 - 🎨 **Auto-pair** `mmproj-*.gguf` projection files with their vision-capable base models (with fallback matching for QAT/generic naming)
 - 🧠 **MTP exclusion** — `mtp-*.gguf` encoder files are excluded from the model list; loaded automatically by llama-server
+- ⚡ **DFlash drafter support** — auto-detects `dflash-*.gguf` companions (e.g. Muse Glimmer) and attaches them via `--spec-type draft-dflash`, with adaptive disengage (`--spec-draft-p-min 0.4`); DFlash toggle in Settings → Global → Inference
 - 📝 **Chat Template Override** — configure a custom `.jinja` or `.json` template for agentic harnesses (opencode, pi)
-- 🤖 **Gemma 4 ready** — auto-applies `--reasoning off --reasoning-format none` so OpenAI-compatible clients (opencode, pi, OpenClaw) don't break on `reasoning_content`
+- 🤖 **Gemma 4 ready** — auto-applies `--reasoning off --reasoning-format none` so OpenAI-compatible clients (opencode, pi, OpenClaw) don't break on `reasoning_content` (per-model overridable — Muse Glimmer needs it OFF)
 - ⚙️ **Tune per-model port, context size, and extra args** via a settings window
 - 🔌 **Sync** with externally-launched servers (started by the companion CLI or by hand)
 - 📁 **Show up in Launchpad, Spotlight, and `~/Applications/`** like a real Mac app
@@ -26,7 +27,7 @@ A companion shell command `llama` provides the same functionality from your term
 
 ### mmproj Auto-Pairing with Fallback Matching
 
-Vision-capable GGUF models (e.g. Gemma 3, Gemma 4) need a separate **mmproj** (multimodal projection) file to process images. LLM Switcher automatically finds and attaches the right `--mmproj` flag when loading a model.
+Vision-capable GGUF models (e.g. Gemma 3, Gemma 4) need a separate **mmproj** (multimodal projection) file to process images. LM Switcher automatically finds and attaches the right `--mmproj` flag when loading a model.
 
 **How it works:**
 
@@ -54,7 +55,7 @@ The same `findCompanion(for:prefix:)` helper is used for both Swift and bash, en
 
 These files are **not standalone models** — they're encoder heads that `llama-server` loads automatically from the model's metadata when the `--mmproj` is attached. If they appeared in the model list, users would try to load them directly and get confusing errors.
 
-**What LLM Switcher does:**
+**What LM Switcher does:**
 - **Excludes** `mtp-*.gguf` files from the model list (files starting with `mtp-` prefix)
 - **Does NOT exclude** files containing `-mtp-` as an infix (e.g. `gemma-3-mtp-Q4_K_M.gguf`) — those are standalone models
 
@@ -74,6 +75,35 @@ MTP is **ON by default** — the app auto-detects whether a model supports it (c
 If you want to experiment with MTP on your own hardware, toggle "Enable MTP" in **Settings → Global**. This passes `--spec-type draft-mtp` to llama-server. It persists across restarts via UserDefaults.
 
 The companion `llama` CLI also supports this via `LLAMA_ENABLE_MTP=true`.
+
+### DFlash (Block-Diffusion Speculative Decoding)
+
+**DFlash** is a block-diffusion speculative-decoding technique where a small
+companion network (the "drafter") proposes entire blocks of 16 tokens in a
+single forward pass; the main model verifies them in parallel. Meta's Muse
+Glimmer ships a drafter as `dflash-kquant.gguf` next to the main model file.
+
+- **Auto-detect**: a `dflash-*.gguf` in the same directory as a GGUF model
+  is attached automatically with `--spec-type draft-dflash
+  --spec-draft-model <file> --spec-draft-n-max 15 --spec-draft-p-min 0.4`.
+- **Exclusion**: `dflash-*.gguf` files never appear in the model list
+  (menu bar, `llama list`, MCP) — same treatment as `mtp-*`.
+- **DFlash toggle (Settings → Global → Inference)**: ON by default,
+  silently skipped when no companion exists. Also available as a
+  per-model override.
+- **Sampling interaction**: while a DFlash drafter is attached, the app
+  omits `--top-p`/`--top-k`/`--repeat-penalty` — they skew the
+  distribution the drafter verifies against and collapse block
+  acceptance (measured on Muse Glimmer: 63% → 13%, 25 → 7.5 t/s).
+  Temperature remains user-controlled; note the drafter's full speedup
+  only materializes at low temperature (greedy).
+- **Adaptive disengage**: `--spec-draft-p-min 0.4` makes llama.cpp stop
+  drafting when greedy acceptance drops below 0.4 (Muse's long reasoning
+  phase on open-ended prompts), avoiding a net slowdown (7.5 t/s with a
+  stuck drafter vs 10 t/s baseline).
+- **Muse Glimmer specifics**: use f16/f16 KV cache per-model (q8_0/q4_0
+  costs ~23% on this arch) and turn per-model **Suppress reasoning** OFF
+  (it garbles Muse's thinking output).
 
 ### Chat Template Override
 
@@ -121,7 +151,7 @@ Highlights:
 - The full annotated `llama-server` command line for both variants
 - Why `--reasoning off --reasoning-format none` is required (Gemma 4
   emits a `reasoning_content` field that crashes OpenAI-compatible
-  clients; LLM Switcher applies these flags automatically)
+  clients; LM Switcher applies these flags automatically)
 - Decision table: when to use the built-in chat template vs a custom
   `.jinja` (Gemma 4 is the only common model that needs an override)
 - Manual verification steps (server logs, `/v1/models`, GGUF metadata
@@ -129,7 +159,7 @@ Highlights:
 
 ## Screenshot
 
-![LLM Switcher menu dropdown](assets/screenshot-menu.png)
+![LM Switcher menu dropdown](assets/screenshot-menu.png)
 
 ## Quick start
 
@@ -142,8 +172,8 @@ cd ~/Projects/LLM-Switcher
 
 This will:
 1. Compile `LlamaMenubarApp.swift` to a binary
-2. Wrap it in `~/Applications/LLM Switcher.app`
-3. Compile the `llm-switcher-mcp` agent-access server to `~/bin` (a build
+2. Wrap it in `~/Applications/LM Switcher.app`
+3. Compile the `lm-switcher-mcp` agent-access server to `~/bin` (a build
    failure here only warns — it never blocks the app install)
 4. Install the `llama` CLI to `~/bin/llama`
 5. Install a LaunchAgent so the app starts at login
@@ -197,6 +227,7 @@ llama help                       # full usage
 The app **automatically excludes** these files from the model list (they're not standalone chat models):
 - `mmproj-*.gguf` — vision projection, auto-paired with vision-capable base models
 - `mtp-*.gguf` — multi-token prediction head, loaded automatically by llama-server
+- `dflash-*.gguf` — DFlash block-diffusion drafter, attached automatically via `--spec-type draft-dflash`
 - `modernbert-embed-*.gguf` — embedding model used by the gbrain system
 
 ## Settings
@@ -208,7 +239,7 @@ Open Settings from the menu bar dropdown (⚙ Settings…).
   timer, extra args
 - **Backends** — `llama-server` / `mlx_lm.server` paths, chat template override
 - **Inference** — flash attention, thinking mode, reasoning suppression, MTP,
-  mlock, no-mmap
+  DFlash, mlock, no-mmap
 - **Agent access (MCP)** — allow agent control, allow swap for agent loads,
   notify on agent actions (see [Agent control (MCP)](#agent-control-mcp))
 - **Advanced** (collapsed) — KV cache type, sampling, CPU threads/batch size,
@@ -217,7 +248,8 @@ Open Settings from the menu bar dropdown (⚙ Settings…).
 **Per-Model tab** — a sidebar of every discovered model (running state +
 an override-count badge) next to a detail pane for the selected model.
 Flip "Override Global Settings" to edit that model's port, context,
-sampling, KV cache, thinking, MTP, and extra args independently; each
+sampling, KV cache, thinking, reasoning suppression, MTP, DFlash, and
+extra args independently; each
 field is tagged **OVERRIDE** or **GLOBAL** so it's obvious at a glance
 what's actually customized versus just inherited. Load / Unload / Switch
 buttons live right in the header.
@@ -235,34 +267,34 @@ LLAMA_CHAT_TEMPLATE=""       # optional chat template override
 
 ## Agent control (MCP)
 
-LLM Switcher ships a standalone MCP server, `llm-switcher-mcp` (installed
-to `~/bin`), that lets agents — Claude Code, Hermes, opencode, anything
+LM Switcher ships a standalone MCP server, `lm-switcher-mcp` (installed
+to `~/bin`), that lets agents — Hermes, opencode, anything
 speaking MCP over stdio — manage your local models. It is **OFF by
 default**: enable **Agent access (MCP)** in Settings → Global (Inference
 card, below MTP) before registering.
 
 ```bash
-# Claude Code (--scope user makes it available in every project)
-claude mcp add --scope user llm-switcher -- ~/bin/llm-switcher-mcp
+# Hermes (available to every project)
+hermes mcp add lm-switcher --command ~/bin/lm-switcher-mcp
 ```
 
 ```yaml
 # Hermes — add under mcp_servers: in ~/.hermes/config.yaml,
 # then restart the gateway
 mcp_servers:
-  llm-switcher:
-    command: /Users/you/bin/llm-switcher-mcp   # absolute path
+  lm-switcher:
+    command: /Users/you/bin/lm-switcher-mcp   # absolute path
     args: []
     timeout: 300        # loads block until healthy (default 180 s)
 ```
 
 Any other MCP client (opencode, pi, …): configure a **local/stdio**
-server whose command is `~/bin/llm-switcher-mcp` with no arguments — the
+server whose command is `~/bin/lm-switcher-mcp` with no arguments — the
 server speaks standard JSON-RPC 2.0 over stdio, newline-delimited. For
 opencode that looks like:
 
 ```json
-"mcp": { "llm-switcher": { "type": "local", "command": ["~/bin/llm-switcher-mcp"] } }
+"mcp": { "lm-switcher": { "type": "local", "command": ["~/bin/lm-switcher-mcp"] } }
 ```
 
 | Tool | What it does |
@@ -360,11 +392,11 @@ Both the menu bar app and the CLI can:
 The Swift app requires macOS 13+ (uses `MenuBarExtra`, `@Observable`, `Settings` scene).
 
 ```bash
-# Compile just the Swift source (manual, no bundle)
+# Manual compile of the full module (no bundle)
 swiftc -parse-as-library -O \
     -framework SwiftUI -framework AppKit \
-    src/LlamaMenubarApp.swift \
-    -o llama-menubar
+    src/*.swift \
+    -o lm-switcher
 
 # Full build + install (recommended)
 ./scripts/install.sh
