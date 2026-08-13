@@ -5,6 +5,25 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-08-13
+
+### Fixed
+- **CLI/MCP loads now honor the app's saved `defaultCtxSize`/`defaultPort`**
+  — previously the CLI fell back to a hardcoded 4096 ctx (vs the app's
+  65536), so MCP-driven loads silently launched at 4096 while menu-bar
+  loads used the setting, and MCP swap-guard estimates diverged from the
+  actual launch. Env overrides (`LLAMA_CTX_SIZE`/`LLAMA_PORT`) still win.
+- **PID file migration shim** — pre-8250ec5 binaries wrote
+  `$PIDS_DIR/<hash>.pid`; the current scheme is `<hash>.<basename>.pid`.
+  `pidfile_for` now falls back to a legacy file holding a live PID, so
+  servers loaded by an older CLI can still be `status`/`unload`ed after
+  upgrading the binary.
+- **MCP `readRunning` hash extraction** — `StateReader` parsed the pid
+  file stem with `dropLast(4)`, which on the new `<hash>.<basename>.pid`
+  naming produced a bogus hash (`<hash>.<basename>`), so `unload_model`
+  reported "not running" and refused to stop the server. Now the hash is
+  the first dot-separated component (handles both naming schemes).
+
 ## [1.4.0] - 2026-08-12
 
 ### Added

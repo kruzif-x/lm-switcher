@@ -1,7 +1,7 @@
 # LM Switcher — Model Switching Handoff
 
 **Date:** 2026-06-29
-**Repo:** `/Users/rolandchia/Projects/llm-switcher`
+**Repo:** `/Users/rolandchia/Projects/lm-switcher`
 
 ---
 
@@ -180,11 +180,11 @@ func switchModel(_ model: ModelEntry) {
 
 ```bash
 # 1. Edit source
-vim ~/Projects/llm-switcher/src/ServerManager.swift   # (or any src/*.swift)
+vim ~/Projects/lm-switcher/src/ServerManager.swift   # (or any src/*.swift)
 
 # 2. Build + install (install.sh copies src/*.swift to ~/bin, compiles,
 #    rebuilds the .app bundle and rewrites the LaunchAgent plist)
-cd ~/Projects/llm-switcher && bash scripts/install.sh
+cd ~/Projects/lm-switcher && bash scripts/install.sh
 
 # 3. Restart the LaunchAgent so the running app picks up the new binary
 launchctl bootout gui/$(id -u)/local.llama-menubar 2>/dev/null
@@ -194,5 +194,5 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.llama-menubar.plis
 strings ~/Applications/LM\ Switcher.app/Contents/MacOS/lm-switcher | grep "search string"
 
 # 5. Push to Gitea
-cd ~/Projects/llm-switcher && git add -A && git commit -m "msg" && git push
+cd ~/Projects/lm-switcher && git add -A && git commit -m "msg" && git push
 ```

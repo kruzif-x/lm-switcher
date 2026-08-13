@@ -142,7 +142,10 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
     let pidsDir = llamaDir + "/pids"
     for f in (try? FileManager.default.contentsOfDirectory(atPath: pidsDir)) ?? []
     where f.hasSuffix(".pid") {
-        let hash = String(f.dropLast(4))
+        // Stem is `<hash>` (legacy pre-8250ec5) or `<hash>.<basename>`
+        // (current). Hash is always the first dot-separated component.
+        let stem = String(f.dropLast(4))
+        let hash = stem.split(separator: ".").first.map(String.init) ?? stem
         guard !hash.isEmpty,
               let content = try? String(contentsOfFile: pidsDir + "/" + f, encoding: .utf8),
               let first = content.split(separator: "\n").first,

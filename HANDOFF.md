@@ -35,7 +35,7 @@ macOS menu bar app for managing local LLM models (GGUF + MLX). Swift (~5000 line
 
 ## Repo
 
-- **Local:** `/Users/rolandchia/Projects/llm-switcher`
+- **Local:** `/Users/rolandchia/Projects/lm-switcher`
 - **Gitea origin:** `http://localhost:3000/admin/llm-switcher.git`
 - **Arrakis:** `http://192.168.1.244:3000/polaris/llm-switcher.git` (remote: `arrakis`)
 
@@ -78,7 +78,7 @@ The Swift app was split from a single ~3250-line file into 5 files (commit b707b
 
 ```bash
 # Edit source in src/
-vim ~/Projects/llm-switcher/src/ServerManager.swift
+vim ~/Projects/lm-switcher/src/ServerManager.swift
 
 # Type-check all files (fast — returns in ~1s)
 swiftc -parse-as-library -typecheck -framework SwiftUI -framework AppKit src/*.swift
@@ -87,7 +87,7 @@ swiftc -parse-as-library -typecheck -framework SwiftUI -framework AppKit src/*.s
 pkill -f lm-switcher; sleep 1
 
 # Build + install (copies src/*.swift → ~/bin, compiles as one module)
-cd ~/Projects/llm-switcher && bash scripts/install.sh
+cd ~/Projects/lm-switcher && bash scripts/install.sh
 
 # Launch (or restart the LaunchAgent: launchctl kickstart -k gui/$(id -u)/local.llama-menubar)
 open ~/Applications/LM\ Switcher.app
@@ -97,7 +97,7 @@ nm ~/Applications/LM\ Switcher.app/Contents/MacOS/lm-switcher \
   | grep -i "switchModel\|portIsFree\|unloadSelected"
 
 # Push to Gitea
-cd ~/Projects/llm-switcher \
+cd ~/Projects/lm-switcher \
   && git add -A && git commit -m "msg" \
   && git push origin main && git push arrakis main
 ```

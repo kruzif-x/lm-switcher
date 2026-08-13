@@ -1,7 +1,7 @@
 # LM Switcher — Scout Audit Report
 
 **Date:** 2025-06-29  
-**Repo:** `/Users/rolandchia/Projects/llm-switcher`
+**Repo:** `/Users/rolandchia/Projects/lm-switcher`
 **Auditor:** Automated scout audit  
 **Files reviewed:**
 - `src/LlamaMenubarApp.swift` (2984 lines)

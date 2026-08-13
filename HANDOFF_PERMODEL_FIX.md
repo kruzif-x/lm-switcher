@@ -3,10 +3,10 @@
 ## Date: 2026-06-29
 
 ## Source File
-`/Users/rolandchia/Projects/llm-switcher/src/LlamaMenubarApp.swift`
+`/Users/rolandchia/Projects/lm-switcher/src/LlamaMenubarApp.swift`
 
 ## Build/Install
-- `cd /Users/rolandchia/Projects/llm-switcher && bash scripts/install.sh`
+- `cd /Users/rolandchia/Projects/lm-switcher && bash scripts/install.sh`
 - install.sh copies `src/*.swift` to `~/bin/` itself, then compiles the
   whole module — no manual pre-copy needed
 - Binary: `/Users/rolandchia/Applications/LM Switcher.app/Contents/MacOS/lm-switcher`

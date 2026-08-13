@@ -97,8 +97,13 @@ mkdir -p "$LOGS_DIR" || { echo "Cannot create logs dir $LOGS_DIR" >&2; exit 1; }
 # setting (same UserDefaults domain — keeps CLI and app scanning the SAME
 # tree, as the settings-sync design intends), then ~/models.
 MODELS_DIR="${LLAMA_MODELS_DIR:-$(defaults read local.llama-menubar modelsDir 2>/dev/null || echo "$HOME/models")}"
-PORT="${LLAMA_PORT:-8080}"                       # default port
-CTX_SIZE="${LLAMA_CTX_SIZE:-4096}"               # default ctx size (tokens)
+# Port/ctx defaults: env override, then the app's saved setting (same
+# UserDefaults domain — keeps CLI/MCP loads identical to menu-bar loads;
+# without this a CLI/MCP load silently uses 4096 ctx while the app uses
+# defaultCtxSize, and MCP swap-guard estimates diverge from reality), then
+# a hard fallback.
+PORT="${LLAMA_PORT:-$(defaults read local.llama-menubar defaultPort 2>/dev/null || echo 8080)}"
+CTX_SIZE="${LLAMA_CTX_SIZE:-$(defaults read local.llama-menubar defaultCtxSize 2>/dev/null || echo 4096)}"
 CHAT_TEMPLATE="${LLAMA_CHAT_TEMPLATE:-}"          # optional chat template path
 ENABLE_MTP="${LLAMA_ENABLE_MTP:-true}"             # enable MTP (on by default, auto-detected per model)
 
@@ -128,7 +133,18 @@ pidfile_for() {
     local b; b=$(basename "$path" 2>/dev/null)
     local s; s=$(echo "$b" | tr '/ ' '__')
     # Hash-first so the stem is unique even when basenames match.
-    echo "$PIDS_DIR/${hash}.${s}.pid"
+    local canonical="$PIDS_DIR/${hash}.${s}.pid"
+    # Migration shim: pre-8250ec5 binaries wrote `$hash.pid` (no basename).
+    # If the canonical file is absent but a legacy file holds a LIVE pid,
+    # return the legacy path so status/unload can still manage that server.
+    if [[ ! -f "$canonical" && -f "$PIDS_DIR/${hash}.pid" ]]; then
+        local lpid; lpid=$(head -1 "$PIDS_DIR/${hash}.pid" 2>/dev/null | tr -d '[:space:]')
+        if [[ "$lpid" =~ ^[0-9]+$ ]] && kill -0 "$lpid" 2>/dev/null; then
+            echo "$PIDS_DIR/${hash}.pid"
+            return
+        fi
+    fi
+    echo "$canonical"
 }
 
 # Print the log file path for a given (id_hash, model_path).
