@@ -690,14 +690,16 @@ cmd_status() {
             local argline; argline=$(ps -o args= -p "$pid" 2>/dev/null)
             local port
             port=$(echo "$argline" | grep -oE '\--port [0-9]+' | awk '{print $2}')
-            # Extract the model file/dir name. Use bash regex (BASH_REMATCH)
-            # so paths containing spaces are captured intact — `-m` is greedy
-            # up to the last `.gguf` (matching the Swift H-3 fix), and
-            # `--model` is bounded by the trailing ` --host` the loader always
-            # appends.
+            # Extract the model file/dir name. `-m` can point at paths with
+            # spaces, and the argline also contains MORE .gguf paths
+            # (--spec-draft-model dflash-kquant.gguf, --mmproj ...), so the
+            # old greedy regex `(.+\.gguf)` matched the LAST .gguf (the
+            # drafter). Instead: cut everything before " -m ", then cut at
+            # the FIRST ".gguf" (lazy semantics, space-safe).
             local mpath="" mname
-            if [[ "$argline" =~ \ -m\ (.+\.gguf) ]]; then
-                mpath="${BASH_REMATCH[1]}"
+            if [[ "$argline" == *" -m "* ]]; then
+                local rest="${argline#*-m }"
+                mpath="${rest%%.gguf*}.gguf"
             elif [[ "$argline" =~ \ --model\ (.+)\ --host ]]; then
                 mpath="${BASH_REMATCH[1]}"
             fi
