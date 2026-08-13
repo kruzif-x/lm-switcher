@@ -27,6 +27,35 @@ import UserNotifications
 @Observable
 class ServerManager {
 
+    // MARK:   Threading invariant (A3)
+    // -----------------------------------------------------------------------------
+    //  `modelStates`, `processes`, `selected`, `models`, `recentAgentEvents`,
+    //  and `switchingTo` are plain value/dictionary types. `@Observable` does
+    //  NOT make them thread-safe — concurrent read/modify from a background
+    //  queue while SwiftUI reads them on main is a data race.
+    //
+    //  This class's invariant: ALL mutation of these properties happens on the
+    //  main thread. Background work (the `ps` spawn, the `Thread.sleep` poll,
+    //  the `/slots` fetch) runs on `syncQueue` and hops back to main
+    //  (`DispatchQueue.main.async`/`.sync`) before touching any state.
+    //
+    //  A3: rather than annotate the class `@MainActor` (which compiles but
+    //  whose interaction with the existing `DispatchQueue.main.sync` hops can
+    //  mask races via implicit runtime hops), we enforce the invariant with a
+    //  debug-build assertion at every mutation entry point. This fails fast
+    //  in development if a future change calls a mutator off-main, and
+    //  compiles to nothing in release.
+    @inline(__always)
+    private func assertMain(_ ctx: String = #function) {
+        #if DEBUG
+        // dispatchPrecondition traps if the current queue is not main,
+        // catching any future off-main mutation at development time. In
+        // release builds the whole body is compiled out.
+        dispatchPrecondition(condition: .onQueue(DispatchQueue.main))
+        #endif
+        _ = ctx   // referenced so #function is always used (avoids unused-warning in release)
+    }
+
     // MARK:   Public state
 
     /// All models found on disk. Refreshed by `refreshModels()`.
@@ -114,7 +143,13 @@ class ServerManager {
     /// it — closing would drop the lock.
     static func acquireSingleInstanceLock() -> Bool {
         let lockPath = NSTemporaryDirectory() + "lm-switcher.lock"
-        let fd = open(lockPath, O_CREAT | O_RDWR, 0o644)
+        // A6 fix: O_NOFOLLOW refuses to open a symlink at the lock path,
+        // closing a redirect vector where a local attacker who can write
+        // the per-user temp dir points the lock file at an attacker-chosen
+        // target. Mode 0o600 keeps the lock file owner-only (it never holds
+        // sensitive data, but restrictive defaults are cheap). O_CREAT|O_RDWR
+        // creates it if absent and opens read/write for the flock.
+        let fd = open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
         guard fd != -1 else {
             // If we can't even open the lock file, fail open (allow launch)
             // rather than locking the user out of their own app.
@@ -673,7 +708,7 @@ class ServerManager {
 
     /// Start a server for the given model. No-op if it's already running.
     func loadModel(_ model: ModelEntry) {
-
+        assertMain()   // A3: all state mutation must happen on main
 
 
         // Don't start a second instance of the same model.
@@ -857,8 +892,17 @@ class ServerManager {
 
         // Append any extra args (per-model override or global).
         // We use a small parser to handle quoted args.
-        // Reconcile: strip --no-mmap if the toggle already handles it.
-        var cleanExtra = effExtraArgs
+        // A4 fix: strip any `--host` the user supplied in extra args. The
+        // app deliberately binds to 127.0.0.1 (loopback) so the unauthenticated
+        // OpenAI-compatible endpoint is NOT exposed on the LAN. Since
+        // llama-server/mlx honor the LAST `--host`, appending a user-supplied
+        // `--host 0.0.0.0` AFTER our loopback binding would silently rebind
+        // the server to all interfaces — a real security footgun for a
+        // copy-pasted settings string. We drop `--host` (and its value) from
+        // extras so the loopback binding always wins. Users who genuinely
+        // want LAN exposure can run the CLI directly with explicit flags.
+        // Also strip `--no-mmap` when the toggle already handles it.
+        var cleanExtra = stripHostFlag(from: effExtraArgs)
         if settings.noMmap && cleanExtra.contains("--no-mmap") {
             cleanExtra = cleanExtra.replacingOccurrences(of: "--no-mmap", with: "")
                 .trimmingCharacters(in: .whitespaces)
@@ -965,6 +1009,7 @@ class ServerManager {
     /// (and falls back to SIGKILL after a short wait). Also handles
     /// externally-launched processes by killing them by PID.
     func unloadModel(_ model: ModelEntry) {
+        assertMain()   // A3: all state mutation must happen on main
         // Send SIGTERM via exactly one path:
         //   - Owned process (`processes[id]`): use `Process.terminate()`
         //     which sends SIGTERM and lets the `terminationHandler`
@@ -1001,6 +1046,7 @@ class ServerManager {
     /// `collectExternalStatesFromPS()` here — a hanging `ps` would block
     /// the main thread and freeze the menu bar / prevent quitting.
     func unloadAll() {
+        assertMain()   // A3: all state mutation must happen on main
         // Iterate over a snapshot of keys (we mutate `modelStates` inside
         // `unloadModel`).
         for id in Array(processes.keys) {
@@ -1046,6 +1092,7 @@ class ServerManager {
     /// IDs that were unloaded are also removed from `selected` so the UI's
     /// checkboxes reflect the new state.
     func unloadSelected(_ ids: Set<String>) {
+        assertMain()   // A3: all state mutation must happen on main
         for id in ids {
             guard state(forID: id).isRunning else { continue }
             if let m = models.first(where: { $0.id == id }) {
@@ -1419,7 +1466,7 @@ class ServerManager {
     private func parseArgs(_ s: String) -> [String] {
         var args: [String] = []
         var current = ""
-        var inQuote = false
+        var quoteChar: Character? = nil   // A5 fix: track which quote is open
         var escaped = false
         for ch in s {
             // M-8 fix: honor backslash escapes. A `\` makes the next char
@@ -1430,9 +1477,17 @@ class ServerManager {
                 escaped = false
             } else if ch == "\\" {
                 escaped = true
-            } else if ch == "\"" || ch == "'" {
-                inQuote.toggle()
-            } else if ch == " " && !inQuote {
+            } else if (ch == "\"" || ch == "'") && quoteChar == nil {
+                // Opening a quote.
+                quoteChar = ch
+            } else if ch == quoteChar {
+                // Closing the SAME quote char that opened it. This fixes the
+                // bug where `--prompt "it's"` toggled quote state on `'`
+                // inside a double-quoted string, mis-splitting into three
+                // tokens instead of two. POSIX shells only close on the
+                // matching opener.
+                quoteChar = nil
+            } else if ch == " " && quoteChar == nil {
                 if !current.isEmpty { args.append(current); current = "" }
             } else {
                 current.append(ch)
@@ -1442,6 +1497,30 @@ class ServerManager {
         if escaped { current.append("\\") }
         if !current.isEmpty { args.append(current) }
         return args
+    }
+
+    /// A4 fix: remove a `--host <value>` (or `--host=<value>`) pair from a
+    /// free-form extra-args string. The app forces `--host 127.0.0.1` for
+    /// loopback security; a user-supplied `--host` in extra args must not
+    /// override that (llama-server/mlx honor the LAST occurrence). Tokenizes
+    /// with `parseArgs` so the strip respects quoting, then drops `--host`
+    /// and its following token (or the `=` form). `--port` is left alone —
+    /// port selection is handled by the app's allocator and a user override
+    /// there is not a security boundary.
+    private func stripHostFlag(from s: String) -> String {
+        let tokens = parseArgs(s)
+        var filtered: [String] = []
+        var skipNext = false
+        for tok in tokens {
+            if skipNext { skipNext = false; continue }
+            if tok == "--host" {
+                skipNext = true        // drop the value token too
+                continue
+            }
+            if tok.hasPrefix("--host=") { continue }
+            filtered.append(tok)
+        }
+        return filtered.joined(separator: " ")
     }
 
     // MARK: - Sync with external processes
@@ -1455,15 +1534,33 @@ class ServerManager {
     /// Clears stale entries and garbage-collects models no longer on disk.
     /// Must be called on the main thread (accesses `@Observable` state).
     private func mergeExternalStates(_ externalStates: [String: (pid: Int32, port: Int, ctx: Int)]) {
+        assertMain()   // A3: called from syncWithRunningProcesses' main hop
         // Merge: for each external process, mark its model as running
         // with the observed PID/port/ctx.
         for (id, ext) in externalStates {
             var s = modelStates[id] ?? ModelState()
             let wasRunning = s.isRunning
             s.isRunning = true
-            s.pid = ext.pid
-            s.port = ext.port
-            s.ctxSize = ext.ctx
+            // A1 fix: don't let a `ps` parse clobber the authoritative
+            // port/ctx of a model THIS app launched. `ps` output can be
+            // truncated (long command lines get cut, dropping --port or
+            // --ctx-size), and the previous code unconditionally overwrote
+            // our known-good values every 3s — making an app-owned model
+            // flicker to "port 0" if its line was truncated. For app-owned
+            // models we keep our own port/ctx; for purely external models
+            // (CLI-launched) we trust `ps` as the only source. When `ps`
+            // parsed a 0 for port/ctx, always keep any existing non-zero
+            // value rather than blanking it.
+            let appOwned = processes[id] != nil
+            if appOwned {
+                s.pid = s.pid ?? ext.pid
+                if s.port == 0, ext.port > 0 { s.port = ext.port }
+                if s.ctxSize == 0, ext.ctx > 0 { s.ctxSize = ext.ctx }
+            } else {
+                s.pid = ext.pid
+                if ext.port > 0 || s.port == 0 { s.port = ext.port }
+                if ext.ctx > 0 || s.ctxSize == 0 { s.ctxSize = ext.ctx }
+            }
             modelStates[id] = s
             // Only auto-check on transition to running (newly discovered).
             // Don't re-insert on every poll — that would override a user uncheck.
@@ -1623,9 +1720,29 @@ class ServerManager {
         let path = NSHomeDirectory() + "/.local/share/llama-menubar/events.jsonl"
         guard let fh = FileHandle(forUpdatingAtPath: path) else { return }
         defer { try? fh.close() }
+        // A7 fix: take an exclusive advisory lock for the read+truncate
+        // window. The MCP process appends one JSONL line per agent action;
+        // without a lock, a line appended between our `readDataToEndOfFile`
+        // and our `truncate(atOffset: 0)` would be destroyed (the truncate
+        // zeros it out). `flock(LOCK_EX)` blocks the MCP's append briefly
+        // (or the MCP retries) so the consume is atomic. LOCK_NB avoids
+        // blocking this sync-tick caller if the MCP holds the lock — we
+        // simply skip this tick and retry next cycle.
+        let fd = fh.fileDescriptor
+        if flock(fd, LOCK_EX | LOCK_NB) != 0 { return }
+        // Under the exclusive lock the MCP cannot append between our read and
+        // truncate, so reading to EOF then zeroing is atomic and no events
+        // are lost. (Without the lock, a line appended in that window would
+        // be destroyed by the truncate.)
         let data = fh.readDataToEndOfFile()
-        guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+        guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else {
+            _ = flock(fd, LOCK_UN)
+            return
+        }
+        // Seek back to start and truncate to 0 (we've consumed everything).
+        try? fh.seek(toOffset: 0)
         try? fh.truncate(atOffset: 0)
+        _ = flock(fd, LOCK_UN)
 
         // Parse first, regardless of the notify toggle — the Agent
         // Activity feed is pull-based history and must not depend on
@@ -1711,34 +1828,47 @@ class ServerManager {
             let s = String(line)
             guard s.contains("llama-server") || s.contains("mlx_lm.server") else { continue }
 
+            // A2 fix: use NSRegularExpression with an explicit capture group
+            // for the model path, instead of slicing the full match by a
+            // hardcoded `dropFirst(dropLen)` count. The slice approach worked
+            // only by coincidence (the prefix length happened to match), and
+            // it returned the full match range rather than group 1. Capture
+            // groups are robust to pattern tweaks.
             let mPattern: String
-            let dropLen: Int
             if s.contains("llama-server") {
                 // H-3 fix: allow spaces inside the path. The old pattern
                 // `-m (\/[^\s]+\.gguf)` stopped at the first space, so a
                 // model at "/Users/x/My Models/g.gguf" captured only
                 // "/Users/x/My" and never matched a known ModelEntry.
                 // GGUF paths always end in `.gguf`, so match lazily up to
-                // the LAST `.gguf` on the argument (the path can't contain
-                // a literal `.gguf ` mid-string in practice). `.*?` is
-                // lazy; anchoring on `\.gguf` keeps it from swallowing
-                // trailing flags.
+                // the FIRST `.gguf` (the base model always comes before
+                // --mmproj / --spec-draft-model companions).
                 mPattern = #"-m (\/.+?\.gguf)"#
-                dropLen = 3
             } else {
                 // MLX `--model` points at a directory (no extension). Match
                 // everything up to the next ` --` flag boundary or end of
                 // line, so spaces in the directory name are preserved.
                 mPattern = #"--model (\/.+?)(?= --|$)"#
-                dropLen = 8
             }
-            guard let m = s.range(of: mPattern, options: .regularExpression) else { continue }
-            var pathStr = String(s[m].dropFirst(dropLen))
-            pathStr.trimEnd()
+            var pathStr: String?
+            if let re = try? NSRegularExpression(pattern: mPattern, options: []) {
+                let nsr = NSRange(s.startIndex..., in: s)
+                if let m = re.firstMatch(in: s, options: [], range: nsr),
+                   m.numberOfRanges >= 2, let r = Range(m.range(at: 1), in: s) {
+                    pathStr = String(s[r])
+                }
+            }
+            guard var path = pathStr else { continue }
+            path = path.trimmingCharacters(in: .whitespaces)
 
             let trimmed = s.drop(while: { $0 == " " })
             let pidStr = trimmed.prefix(while: { $0.isNumber })
-            let pid: Int32 = Int32(pidStr) ?? 0
+            // A2 fix: reject pid == 0. A garbled/truncated `ps` line that
+            // fails to parse previously coerced to 0; `kill(0, 0)` then
+            // reported "alive" forever (pid 0 is always testable), so the
+            // model got stuck showing as running with PID 0. Drop the line
+            // instead — better to miss a model than to wedge its state.
+            guard let pid = Int32(pidStr), pid > 0 else { continue }
 
             var port = 0
             if let pm = s.range(of: #"--port (\d+)"#, options: .regularExpression) {
@@ -1748,7 +1878,7 @@ class ServerManager {
             if let pm = s.range(of: #"--ctx-size (\d+)"#, options: .regularExpression) {
                 ctx = Int(String(s[pm].split(separator: " ").last ?? "0")) ?? 0
             }
-            externalStates[pathStr] = (pid, port, ctx)
+            externalStates[path] = (pid, port, ctx)
         }
         return externalStates
     }

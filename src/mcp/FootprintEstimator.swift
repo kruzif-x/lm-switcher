@@ -44,8 +44,19 @@ enum FootprintEstimator {
             maxCtx = geom.maxContext
             let bytesK: Double, bytesV: Double
             if model.backend == "GGUF" {
-                bytesK = kvBytesPerElement(Prefs.string("kvCacheTypeK", default: "q8_0"))
-                bytesV = kvBytesPerElement(Prefs.string("kvCacheTypeV", default: "q4_0"))
+                // M5 fix (MCP_SPEC §3.7): per-model KV cache types WIN over
+                // the global setting, mirroring the app/CLI launch precedence.
+                // The previous code read only the global keys, so a model with
+                // a per-model kvCacheTypeV=q8_0 was LAUNCHED with q8 but
+                // ESTIMATED using the global q4 — under-counting footprint and
+                // potentially letting a load through that actually swaps.
+                // That defeats the entire purpose of the swap guard.
+                let gK = (perModelValue("kvCacheTypeK", hash: model.hash) as? String)
+                    ?? Prefs.string("kvCacheTypeK", default: "q8_0")
+                let gV = (perModelValue("kvCacheTypeV", hash: model.hash) as? String)
+                    ?? Prefs.string("kvCacheTypeV", default: "q4_0")
+                bytesK = kvBytesPerElement(gK)
+                bytesV = kvBytesPerElement(gV)
             } else {
                 bytesK = 2.0; bytesV = 2.0   // MLX KV is f16
                 let cap = Prefs.int("mlxMaxKvSize")

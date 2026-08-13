@@ -40,6 +40,12 @@
 # because some commands (like `which`) intentionally return non-zero.
 set -e
 
+# B1 fix: explicit umask. Installed binaries must be world-executable/readable
+# (0755), so we use 022 here — NOT the 077 used by the runtime `llama` CLI
+# (whose PID/log files are owner-only). This keeps the install artifacts
+# correct regardless of the caller's inherited umask.
+umask 022
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -54,6 +60,15 @@ BIN_DIR="${1:-$HOME/bin}"
 # Resolve the repo's src/ relative to this script so a fresh clone works.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/../src"
+
+# B3 fix: verify the source tree exists BEFORE `cp "$SRC_DIR"/*.swift` —
+# under zsh (this script's shebang) a non-matching glob is a hard error that
+# would abort with a cryptic message and leave a partial install.
+if [[ ! -d "$SRC_DIR" ]]; then
+    echo "Source directory not found: $SRC_DIR" >&2
+    echo "Run install.sh from within the lm-switcher repo." >&2
+    exit 1
+fi
 
 # Compiled binary (intermediate; copied into the .app bundle).
 COMPILED_BIN="$BIN_DIR/lm-switcher"
@@ -255,6 +270,21 @@ if ! cmp -s "$SRC_DIR/llama" "$BIN_DIR/llama" 2>/dev/null; then
 fi
 chmod +x "$BIN_DIR/llama"
 
+# B4 fix: also install uninstall.sh into $BIN_DIR. The `llama` CLI's
+# `cmd_uninstall` does `exec "$HOME/bin/uninstall.sh"`, which previously
+# always failed because install.sh never copied the uninstaller there — so
+# `llama uninstall` was non-functional out of the box. Resolve from the
+# repo (sibling of this script) so a fresh clone works.
+_UNINSTALL_SRC="$SCRIPT_DIR/uninstall.sh"
+if [[ -f "$_UNINSTALL_SRC" ]]; then
+    if ! cmp -s "$_UNINSTALL_SRC" "$BIN_DIR/uninstall.sh" 2>/dev/null; then
+        cp "$_UNINSTALL_SRC" "$BIN_DIR/uninstall.sh"
+    fi
+    chmod +x "$BIN_DIR/uninstall.sh"
+    echo "  ✓ uninstall.sh installed → $BIN_DIR/uninstall.sh"
+fi
+unset _UNINSTALL_SRC
+
 
 # -----------------------------------------------------------------------------
 # Step 7: Install the LaunchAgent
@@ -295,7 +325,7 @@ cat > "$PLIST_FILE" <<EOF
 EOF
 
 # Load the LaunchAgent now (idempotent — if already loaded, this is a no-op).
-launchctl bootstrap gui/$(id -u) "$PLIST_FILE" 2>/dev/null || true
+launchctl bootstrap gui/"$(id -u)" "$PLIST_FILE" 2>/dev/null || true
 
 
 # -----------------------------------------------------------------------------

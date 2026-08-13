@@ -71,16 +71,25 @@ LLAMA_SERVER="${LLAMA_SERVER:-/opt/homebrew/bin/llama-server}"
 # Absolute path to the mlx_lm.server entry script (pip --user install).
 MLX_SERVER="${MLX_SERVER:-$HOME/Library/Python/3.14/bin/mlx_lm.server}"
 
+# B1 fix: restrictive umask. PID files and server logs (which capture
+# stdout/stderr — model paths, sometimes verbose content) must be
+# owner-only. The default umask (022) leaves them world-readable (644),
+# leaking the directory structure and server ports to other local users
+# on shared Macs. 077 makes all subsequently-created files mode 600.
+umask 077
+
 # Ensure the base directory exists before doing anything else. Using
 # `mkdir -p` is idempotent — safe to call even if the directory is present.
-mkdir -p "$LLAMA_DIR"
+# B3 fix: guard the critical mkdir — a failed state dir must not cascade
+# into confusing "file not found" errors downstream.
+mkdir -p "$LLAMA_DIR" || { echo "Cannot create state dir $LLAMA_DIR" >&2; exit 1; }
 
 # Subdirectories for per-process state. We keep one PID file and one log
 # file per loaded model so multiple instances don't trample each other.
 PIDS_DIR="$LLAMA_DIR/pids"
-mkdir -p "$PIDS_DIR"
+mkdir -p "$PIDS_DIR" || { echo "Cannot create pids dir $PIDS_DIR" >&2; exit 1; }
 LOGS_DIR="$LLAMA_DIR/logs"
-mkdir -p "$LOGS_DIR"
+mkdir -p "$LOGS_DIR" || { echo "Cannot create logs dir $LOGS_DIR" >&2; exit 1; }
 
 # User-overridable settings. Each is a `:- default` expression: if the
 # variable is unset or empty, use the default.
@@ -97,23 +106,49 @@ ENABLE_MTP="${LLAMA_ENABLE_MTP:-true}"             # enable MTP (on by default, 
 # -----------------------------------------------------------------------------
 # Path helpers
 # -----------------------------------------------------------------------------
-# Model "ids" in the Swift app are absolute paths. We need a stable,
-# filesystem-safe representation to use as a filename for PID/log files.
-# We do this by taking the basename and replacing `/` and ` ` with `_`.
-# For example, `/Users/foo/gguf/my model.gguf` becomes `my_model.gguf`.
+# Callers pass the model's `id_hash` (first 12 hex chars of MD5 of the
+# absolute path — see id_hash() below). It is already unique per absolute
+# path and filesystem-safe (hex digits only), so we use it directly as the
+# filename stem.
+#
+# B2 fix: the previous helpers derived the stem from the BASENAME only
+# (`tr '/ ' '__'`). Two models with the same filename in different
+# directories (e.g. ~/a/gemma.gguf and ~/b/gemma.gguf) produced the SAME
+# stem, so the second load overwrote the first's PID file and the first
+# process was orphaned (never killed by `unload`). Using the path-derived
+# hash makes the stem unique per absolute path, matching the Swift app's
+# `ModelEntry.id` semantics.
+#
+# The basename is kept in the filename for human readability of `logs/`
+# and `status`, but the hash is what disambiguates.
 
-# Print the PID file path for a given model path.
+# Print the PID file path for a given (id_hash, model_path).
 pidfile_for() {
-    local b; b=$(basename "$1")          # take the filename
-    local s; s=$(echo "$b" | tr '/ ' '__')  # replace separators
-    echo "$PIDS_DIR/${s}.pid"
+    local hash="$1" path="${2:-}"
+    local b; b=$(basename "$path" 2>/dev/null)
+    local s; s=$(echo "$b" | tr '/ ' '__')
+    # Hash-first so the stem is unique even when basenames match.
+    echo "$PIDS_DIR/${hash}.${s}.pid"
 }
 
-# Print the log file path for a given model path.
+# Print the log file path for a given (id_hash, model_path).
 logfile_for() {
-    local b; b=$(basename "$1")
+    local hash="$1" path="${2:-}"
+    local b; b=$(basename "$path" 2>/dev/null)
     local s; s=$(echo "$b" | tr '/ ' '__')
-    echo "$LOGS_DIR/${s}.log"
+    echo "$LOGS_DIR/${hash}.${s}.log"
+}
+
+# B2 fix: refuse to write through a symlink. A pre-placed symlink at the
+# PID/log path could redirect an `echo > $pf` (truncate) onto an
+# attacker-chosen file. Returns 0 (safe) only if the path is absent or a
+# regular file. Called before every write.
+_not_symlink() {
+    local target="$1"
+    [[ -e "$target" ]] || return 0          # absent → safe to create
+    [[ -L "$target" ]] && return 1          # symlink → refuse
+    [[ -f "$target" ]] && return 0          # regular file → safe
+    return 1                                # dir/device/etc → refuse
 }
 
 
@@ -229,29 +264,31 @@ $line"
 # answer simple questions like "is this model loaded?" and "what port
 # is it on?".
 
-# Is a model with the given id-hash currently running? We treat the model
-# as running iff its PID file exists AND the process it points to is alive.
+# Is a model with the given (id_hash, path) currently running? We treat
+# the model as running iff its PID file exists AND the process it points
+# to is alive.
 is_loaded() {
-    local id="$1"
-    local pidfile; pidfile=$(pidfile_for "$id")
+    local id="$1" path="${2:-}"
+    local pidfile; pidfile=$(pidfile_for "$id" "$path")
     [[ -f "$pidfile" ]] || return 1
-    local pid; pid=$(cat "$pidfile" 2>/dev/null)
-    [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+    local pid; pid=$(head -1 "$pidfile" 2>/dev/null | tr -d '[:space:]')
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
 }
 
-# What port is the model with the given id-hash listening on? Reads the
-# second line of the PID file (which we wrote as "PID --port N" for fast
-# recovery). Falls back to scanning `ps` if the second line is missing.
+# What port is the model with the given (id_hash, path) listening on?
+# Reads the second line of the PID file (which we wrote as
+# "PID --port N" for fast recovery). Falls back to scanning `ps`.
 get_port_for() {
-    local id="$1"
-    local pidfile; pidfile=$(pidfile_for "$id")
+    local id="$1" path="${2:-}"
+    local pidfile; pidfile=$(pidfile_for "$id" "$path")
     [[ -f "$pidfile" ]] || return 1
-    local pid; pid=$(cat "$pidfile")
+    local pid; pid=$(head -1 "$pidfile" 2>/dev/null | tr -d '[:space:]')
     # Prefer the embedded port info we wrote.
     local pp
     pp=$(grep -oE '\--port [0-9]+' "$pidfile" 2>/dev/null | awk '{print $2}')
     [[ -n "$pp" ]] && { echo "$pp"; return; }
     # Fall back: ask the live process.
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     ps -o args= -p "$pid" 2>/dev/null | grep -oE '\--port [0-9]+' | awk '{print $2}'
 }
 
@@ -381,8 +418,8 @@ load_model() {
     local id_hash; id_hash=$(id_hash "$path")
 
     # If the same model is already running on some port, no-op.
-    if is_loaded "$id_hash"; then
-        echo "● [$type] $name already loaded on port $(get_port_for "$id_hash")"
+    if is_loaded "$id_hash" "$path"; then
+        echo "● [$type] $name already loaded on port $(get_port_for "$id_hash" "$path")"
         return 0
     fi
 
@@ -595,14 +632,22 @@ load_model() {
 
     echo "Loading [$type] $name on :$port ..."
 
+    # Resolve PID/log paths up front (hash-first stem → unique per path).
+    local pf; pf=$(pidfile_for "$id_hash" "$path")
+    local lf; lf=$(logfile_for "$id_hash" "$path")
+
+    # B2 fix: refuse to write through a symlink — a pre-placed symlink
+    # could redirect the truncating `>` onto an attacker-chosen file.
+    _not_symlink "$pf" || { echo "✗ Refusing to write PID file (symlink?): $pf" >&2; return 1; }
+    _not_symlink "$lf" || { echo "✗ Refusing to write log file (symlink?): $lf" >&2; return 1; }
+
     # nohup detaches the child from the controlling terminal so it
     # survives the parent shell exiting. We redirect all output to a
     # per-model log file so the user can `tail -f` it.
-    nohup "$executable" "${args[@]}" > "$(logfile_for "$id_hash")" 2>&1 &
+    nohup "$executable" "${args[@]}" > "$lf" 2>&1 &
 
     # Capture the new PID and write the PID file.
     local newpid; newpid=$!
-    local pf; pf=$(pidfile_for "$id_hash")
     echo "$newpid" > "$pf"
     # Second line is the port — for fast get_port_for() without ps.
     echo "$newpid --port $port" >> "$pf"
@@ -644,18 +689,19 @@ load_model() {
     fi
 }
 
-# Stop a single model by id-hash and display name. The name is only used
-# for user-facing messages.
+# Stop a single model. Takes the PID file path and a display name (the
+# name is only used for user-facing messages). Passing the pidfile path
+# directly avoids re-deriving it and works uniformly for named and "all"
+# unloads.
 unload_model() {
-    local id_hash="$1"
+    local pidfile="$1"
     local name="$2"
-    local pidfile; pidfile=$(pidfile_for "$id_hash")
     if [[ ! -f "$pidfile" ]]; then
         echo "○ $name not loaded"
         return 0
     fi
-    local pid; pid=$(head -1 "$pidfile")
-    if kill -0 "$pid" 2>/dev/null; then
+    local pid; pid=$(head -1 "$pidfile" 2>/dev/null | tr -d '[:space:]')
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
         echo "Stopping $name (PID $pid) ..."
         # SIGTERM (default for `kill`) gives the process a chance to
         # shut down gracefully. We escalate to SIGKILL if it's still
@@ -684,9 +730,11 @@ cmd_status() {
     shopt -s nullglob
     for pf in "$PIDS_DIR"/*.pid; do
         [[ -f "$pf" ]] || continue
-        local id_hash; id_hash=$(basename "$pf" .pid)
-        local pid; pid=$(head -1 "$pf" 2>/dev/null)
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        # Filename stem is now "<hash>.<basename>.pid"; the hash is the
+        # part before the first dot.
+        local id_hash; id_hash=$(basename "$pf" .pid); id_hash="${id_hash%%.*}"
+        local pid; pid=$(head -1 "$pf" 2>/dev/null | tr -d '[:space:]')
+        if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
             local argline; argline=$(ps -o args= -p "$pid" 2>/dev/null)
             local port
             port=$(echo "$argline" | grep -oE '\--port [0-9]+' | awk '{print $2}')
@@ -771,8 +819,8 @@ cmd_unload() {
             shopt -s nullglob
             for pf in "$PIDS_DIR"/*.pid; do
                 [[ -f "$pf" ]] || continue
-                local id_hash; id_hash=$(basename "$pf" .pid)
-                local pid; pid=$(head -1 "$pf")
+                local id_hash; id_hash=$(basename "$pf" .pid); id_hash="${id_hash%%.*}"
+                local pid; pid=$(head -1 "$pf" 2>/dev/null | tr -d '[:space:]')
                 # L-12 fix: the old sed `s/.*\(...\).*//` deleted everything,
                 # leaving mname empty so the user saw "○  stopped" with no
                 # name. Extract the model file/dir name from the process args
@@ -782,7 +830,7 @@ cmd_unload() {
                     | grep -oE '(\-m|--model) [^ ]+' | head -1 \
                     | awk '{print $2}' | xargs -I{} basename {} 2>/dev/null)
                 [[ -z "$mname" ]] && mname="$id_hash"
-                unload_model "$id_hash" "$mname"
+                unload_model "$pf" "$mname"
             done
             shopt -u nullglob
         else
@@ -790,7 +838,8 @@ cmd_unload() {
             local path; path=$(echo "$line" | cut -d'|' -f2)
             local name; name=$(echo "$line" | cut -d'|' -f3)
             local id_hash; id_hash=$(id_hash "$path")
-            unload_model "$id_hash" "$name"
+            local pf; pf=$(pidfile_for "$id_hash" "$path")
+            unload_model "$pf" "$name"
         fi
     done
 }

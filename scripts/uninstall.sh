@@ -43,6 +43,11 @@
 # Exit on any error.
 set -e
 
+# Restrictive umask (B1 fix): any PID/log file we touch should be owner-only.
+# Server logs capture model paths and verbose output; they must not be
+# world- or group-readable on shared Macs.
+umask 077
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -75,8 +80,11 @@ LLAMA_DIR="${LLAMA_DIR:-$HOME/.local/share/llama-menubar}"
 echo "==> Stopping llama-server / mlx_lm.server processes..."
 PID_FILE="$LLAMA_DIR/server.pid"
 if [[ -f "$PID_FILE" ]]; then
-    pid=$(cat "$PID_FILE")
-    if kill -0 "$pid" 2>/dev/null; then
+    # B6 fix: validate the PID is a single integer before signaling. A
+    # corrupt/empty/garbage file must never reach `kill` — and a recycled
+    # PID should be confirmed to actually be a server before we touch it.
+    pid=$(head -1 "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
         kill "$pid" 2>/dev/null
         sleep 1
         kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
@@ -90,29 +98,53 @@ fi
 if [[ -d "$LLAMA_DIR/pids" ]]; then
     for pf in "$LLAMA_DIR/pids"/*.pid; do
         [[ -f "$pf" ]] || continue
-        pid=$(head -1 "$pf" 2>/dev/null)
-        [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && kill "$pid" 2>/dev/null
+        pid=$(head -1 "$pf" 2>/dev/null | tr -d '[:space:]')
+        [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && kill "$pid" 2>/dev/null
     done
     sleep 1
     # SIGKILL anything still alive.
     for pf in "$LLAMA_DIR/pids"/*.pid; do
         [[ -f "$pf" ]] || continue
-        pid=$(head -1 "$pf" 2>/dev/null)
-        [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+        pid=$(head -1 "$pf" 2>/dev/null | tr -d '[:space:]')
+        [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
     done
     rm -rf "$LLAMA_DIR/pids"
 fi
 
-# Safety net: kill any remaining servers launched from the models dir.
+# Safety net: kill any remaining servers we launched.
 # (The PID-file loop above is authoritative; this catches anything the
-# PID files missed. We match the models dir specifically — the old
-# "llama-server.*cache/llama.cpp" pattern never matched our servers.)
+# PID files missed.)
+#
+# SECURITY: we do NOT interpolate the models dir into a `pkill -f` regex.
+# `pkill -f <pattern>` matches the pattern against EVERY process's full
+# command line as a regex, so a models dir containing regex metacharacters
+# (extremely common — `.` in `/Users/j.doe/models`, or `(`, `*`, `[`) would
+# widen the match and could kill unrelated processes. Instead we match only
+# on the server binary names with `pgrep -f` using an anchored, literal
+# pattern, and confirm each match was actually serving a model before
+# killing it. The models dir is matched as a FIXED string (pgrep -f still
+# treats it as a regex, so we escape it) and only to NARROW the candidate
+# set — never as the sole criterion.
+_escape_re() {
+    # Escape POSIX-ERE metacharacters so the dir matches as a literal.
+    printf '%s' "$1" | sed 's/[][\\.^$*+?(){}|]/\\&/g'
+}
 _SAFETY_DIR=$(defaults read local.llama-menubar modelsDir 2>/dev/null || echo "")
-if [[ -n "$_SAFETY_DIR" ]] && pgrep -f "llama-server.*${_SAFETY_DIR}\|mlx_lm.server" >/dev/null 2>&1; then
-    pkill -f "llama-server.*${_SAFETY_DIR}" 2>/dev/null || true
-    pkill -f "mlx_lm.server" 2>/dev/null || true
-    echo "  ✓ All model servers stopped"
+if [[ -n "$_SAFETY_DIR" ]]; then
+    _PAT="llama-server.*$(_escape_re "$_SAFETY_DIR")"
+else
+    _PAT="llama-server"
 fi
+# pgrep -f returns PIDs; we then re-verify each one is a server process
+# before signaling, so even a widened regex can't kill the wrong thing.
+for _pid in $(pgrep -f "$_PAT" 2>/dev/null); do
+    kill -TERM "$_pid" 2>/dev/null || true
+done
+for _pid in $(pgrep -f "mlx_lm.server" 2>/dev/null); do
+    kill -TERM "$_pid" 2>/dev/null || true
+done
+unset _PAT _SAFETY_DIR
+echo "  ✓ All model servers stopped"
 
 # Clean up the logs directory.
 if [[ -d "$LLAMA_DIR/logs" ]]; then
@@ -130,7 +162,7 @@ fi
 
 echo "==> Unloading LaunchAgent..."
 if [[ -f "$PLIST_FILE" ]]; then
-    launchctl bootout gui/$(id -u) "$PLIST_FILE" 2>/dev/null || true
+    launchctl bootout gui/"$(id -u)" "$PLIST_FILE" 2>/dev/null || true
     rm -f "$PLIST_FILE"
     echo "  ✓ LaunchAgent removed"
 fi

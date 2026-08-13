@@ -11,6 +11,12 @@ enum Launcher {
 
     struct CliResult { let status: Int32; let output: String }
 
+    /// Wall-clock cap on any single `llama` CLI invocation. A hung child
+    /// (blocking on a model download, a stuck mmap, a wedged pipe) must not
+    /// freeze the MCP stdio loop — that makes the agent think the server is
+    /// dead and may get it killed. We terminate the child if it exceeds this.
+    static let cliTimeout: TimeInterval = 60
+
     static func runCli(_ args: [String]) -> CliResult {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: llamaCliPath)
@@ -21,10 +27,47 @@ enum Launcher {
         do { try p.run() } catch {
             return CliResult(status: 127, output: "failed to launch \(llamaCliPath): \(error.localizedDescription)")
         }
-        let o = out.fileHandleForReading.readDataToEndOfFile()
-        let e = err.fileHandleForReading.readDataToEndOfFile()
+
+        // M1 fix: drain BOTH pipes concurrently. The previous code read stdout
+        // to EOF, THEN stderr to EOF, then waited. If the child wrote more
+        // than the ~64KB pipe buffer to stderr while we were blocked reading
+        // stdout, the stderr write blocked forever and `readDataToEndOfFile`
+        // on stdout never returned — a classic deadlock. Reading each pipe on
+        // its own queue means neither pipe can fill and stall the child.
+        var outData = Data()
+        var errData = Data()
+        let outGroup = DispatchGroup()
+        let outQueue = DispatchQueue(label: "mcp.cli.stdout")
+        let errQueue = DispatchQueue(label: "mcp.cli.stderr")
+        outGroup.enter()
+        outQueue.async {
+            outData = out.fileHandleForReading.readDataToEndOfFile()
+            outGroup.leave()
+        }
+        outGroup.enter()
+        errQueue.async {
+            errData = err.fileHandleForReading.readDataToEndOfFile()
+            outGroup.leave()
+        }
+
+        // Bounded wait: if the child doesn't exit within `cliTimeout`,
+        // terminate it so the MCP loop stays responsive. `waitUntilExit`
+        // would otherwise block forever on a wedged child.
+        let waitResult = outGroup.wait(timeout: .now() + cliTimeout)
+        if waitResult == .timedOut {
+            // Best-effort cleanup. Terminate and drain the rest so file
+            // handles don't leak; the partial output may still be useful.
+            if p.isRunning { p.terminate() }
+            outGroup.wait()
+        }
         p.waitUntilExit()
-        let text = [String(data: o, encoding: .utf8) ?? "", String(data: e, encoding: .utf8) ?? ""]
+
+        // Close both read ends explicitly (resource hygiene).
+        try? out.fileHandleForReading.close()
+        try? err.fileHandleForReading.close()
+
+        let text = [String(data: outData, encoding: .utf8) ?? "",
+                    String(data: errData, encoding: .utf8) ?? ""]
             .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         return CliResult(status: p.terminationStatus, output: text)
     }
