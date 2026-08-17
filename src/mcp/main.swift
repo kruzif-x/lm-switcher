@@ -10,7 +10,7 @@
 
 import Foundation
 
-let serverVersion = "1.3.0"
+let serverVersion = "0.9b"
 
 /// M6 fix: advertise a version WE actually support, rather than echoing
 /// whatever protocolVersion the client sends. Echoing an attacker-chosen

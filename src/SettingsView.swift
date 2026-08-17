@@ -29,6 +29,9 @@ private struct GlobalSettingsModifier: ViewModifier {
     @Binding var suppressReasoning: Bool
     @Binding var llamaServerPath: String
     @Binding var mlxServerPath: String
+    @Binding var omlxServerPath: String
+    @Binding var omlxModelDir: String
+    @Binding var omlxPortStr: String
     @Binding var chatTemplatePath: String
     @Binding var temperature: Double
     @Binding var topP: Double
@@ -44,7 +47,7 @@ private struct GlobalSettingsModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .modifier(ServerDefaultsModifier(manager: manager, modelsDir: $modelsDir, defaultPort: $defaultPort, defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs, enableMtp: $enableMtp, enableDflash: $enableDflash, mcpEnabled: $mcpEnabled, allowSwapLoads: $allowSwapLoads, notifyAgentActions: $notifyAgentActions, ttlMinutesStr: $ttlMinutesStr))
-            .modifier(KvCacheModifier(manager: manager, kvCacheTypeK: $kvCacheTypeK, kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention, thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning, llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath, chatTemplatePath: $chatTemplatePath))
+            .modifier(KvCacheModifier(manager: manager, kvCacheTypeK: $kvCacheTypeK, kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention, thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning, llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath, omlxServerPath: $omlxServerPath, omlxModelDir: $omlxModelDir, omlxPortStr: $omlxPortStr, chatTemplatePath: $chatTemplatePath))
             .modifier(PerfSamplingModifier(manager: manager, temperature: $temperature, topP: $topP, topK: $topK, repeatPenalty: $repeatPenalty, seedStr: $seedStr, cpuThreadsStr: $cpuThreadsStr, batchSizeStr: $batchSizeStr, mlock: $mlock, noMmap: $noMmap, mlxMaxKvSizeStr: $mlxMaxKvSizeStr))
     }
 }
@@ -85,6 +88,9 @@ private struct KvCacheModifier: ViewModifier {
     @Binding var suppressReasoning: Bool
     @Binding var llamaServerPath: String
     @Binding var mlxServerPath: String
+    @Binding var omlxServerPath: String
+    @Binding var omlxModelDir: String
+    @Binding var omlxPortStr: String
     @Binding var chatTemplatePath: String
     func body(content: Content) -> some View {
         content
@@ -95,6 +101,9 @@ private struct KvCacheModifier: ViewModifier {
             .onChange(of: suppressReasoning) { _, v in manager.settings.suppressReasoning = v }
             .onChange(of: llamaServerPath)   { _, v in manager.settings.llamaServerPath = v }
             .onChange(of: mlxServerPath)     { _, v in manager.settings.mlxServerPath = v }
+            .onChange(of: omlxServerPath)    { _, v in manager.settings.omlxServerPath = v }
+            .onChange(of: omlxModelDir)      { _, v in manager.settings.omlxModelDir = v }
+            .onChange(of: omlxPortStr)       { _, v in manager.settings.omlxPort = Int(v) ?? 8000 }
             .onChange(of: chatTemplatePath)  { _, v in manager.settings.chatTemplatePath = v }
     }
 }
@@ -155,6 +164,9 @@ struct SettingsView: View {
     @State private var defaultCtxSize: String
     @State private var llamaServerPath: String
     @State private var mlxServerPath: String
+    @State private var omlxServerPath: String
+    @State private var omlxModelDir: String
+    @State private var omlxPortStr: String
     @State private var globalExtraArgs: String
     @State private var chatTemplatePath: String
     @State private var enableMtp: Bool
@@ -187,6 +199,9 @@ struct SettingsView: View {
         _defaultCtxSize = State(initialValue: manager.formatCtxDisplay(manager.settings.defaultCtxSize))
         _llamaServerPath  = State(initialValue: manager.settings.llamaServerPath)
         _mlxServerPath    = State(initialValue: manager.settings.mlxServerPath)
+        _omlxServerPath   = State(initialValue: manager.settings.omlxServerPath)
+        _omlxModelDir     = State(initialValue: manager.settings.omlxModelDir)
+        _omlxPortStr      = State(initialValue: "\(manager.settings.omlxPort)")
         _globalExtraArgs  = State(initialValue: manager.settings.globalExtraArgs)
         _chatTemplatePath = State(initialValue: manager.settings.chatTemplatePath)
         _enableMtp        = State(initialValue: manager.settings.enableMtp)
@@ -256,6 +271,7 @@ struct SettingsView: View {
             kvCacheTypeV: $kvCacheTypeV, flashAttention: $flashAttention,
             thinkingEnabled: $thinkingEnabled, suppressReasoning: $suppressReasoning,
             llamaServerPath: $llamaServerPath, mlxServerPath: $mlxServerPath,
+            omlxServerPath: $omlxServerPath, omlxModelDir: $omlxModelDir, omlxPortStr: $omlxPortStr,
             chatTemplatePath: $chatTemplatePath,
             temperature: $temperature, topP: $topP, topK: $topK,
             repeatPenalty: $repeatPenalty, seedStr: $seedStr,
@@ -280,6 +296,9 @@ struct SettingsView: View {
         defaultCtxSize  = manager.formatCtxDisplay(d.defaultCtxSize)
         llamaServerPath = d.llamaServerPath
         mlxServerPath   = d.mlxServerPath
+        omlxServerPath  = d.omlxServerPath
+        omlxModelDir    = d.omlxModelDir
+        omlxPortStr     = "\(d.omlxPort)"
         globalExtraArgs = d.globalExtraArgs
         chatTemplatePath = d.chatTemplatePath
         enableMtp       = d.enableMtp
@@ -322,6 +341,9 @@ struct SettingsView: View {
         defaultCtxSize  = manager.formatCtxDisplay(s.defaultCtxSize)
         llamaServerPath = s.llamaServerPath
         mlxServerPath   = s.mlxServerPath
+        omlxServerPath  = s.omlxServerPath
+        omlxModelDir    = s.omlxModelDir
+        omlxPortStr     = "\(s.omlxPort)"
         globalExtraArgs = s.globalExtraArgs
         chatTemplatePath = s.chatTemplatePath
         enableMtp       = s.enableMtp
@@ -422,6 +444,35 @@ struct SettingsView: View {
                 mlxServerPath = url.path
                 manager.settings.mlxServerPath = url.path
             }
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "omlx",
+                hint: "oMLX server binary — serves all models under the oMLX model dir on one port",
+                text: $omlxServerPath,
+                isDir: false,
+                checkExecutable: true
+            ) { url in
+                omlxServerPath = url.path
+                manager.settings.omlxServerPath = url.path
+            }
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "oMLX model dir",
+                hint: "Root scanned for oMLX-served models (MTP/VLM settings live in ~/.omlx/model_settings.json)",
+                text: $omlxModelDir,
+                isDir: true,
+                checkExecutable: false
+            ) { url in
+                omlxModelDir = url.path
+                manager.settings.omlxModelDir = url.path
+            }
+            Divider().padding(.leading, 14)
+            inlineFieldRow(
+                label: "oMLX port",
+                placeholder: "8000",
+                text: $omlxPortStr
+            )
+            .help("Shared TCP port for the oMLX server (all oMLX models).")
             Divider().padding(.leading, 14)
             pathRow(
                 label: "Chat template",
@@ -1581,7 +1632,7 @@ struct SettingsView: View {
                     }
                     Text("LM Switcher")
                         .font(.title2).fontWeight(.medium)
-                    Text("Version 1.3.0")
+                    Text("Version 0.9b (beta)")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.top, 24)
