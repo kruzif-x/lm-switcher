@@ -213,7 +213,20 @@ enum McpTools {
             path = p.isEmpty ? "/opt/homebrew/bin/llama-server" : p
         } else {
             let p = Prefs.string("mlxServerPath")
-            path = p.isEmpty ? NSHomeDirectory() + "/Library/Python/3.14/bin/mlx_lm.server" : p
+            if p.isEmpty {
+                // Fallback: newest Python user-install of mlx_lm.server.
+                let pyBase = NSHomeDirectory() + "/Library/Python"
+                var found = ""
+                if let dirs = try? FileManager.default.contentsOfDirectory(atPath: pyBase) {
+                    for d in dirs.sorted(by: >) where d != "." && d != ".." {
+                        let cand = "\(pyBase)/\(d)/bin/mlx_lm.server"
+                        if FileManager.default.isExecutableFile(atPath: cand) { found = cand; break }
+                    }
+                }
+                path = found
+            } else {
+                path = p
+            }
         }
         return FileManager.default.isExecutableFile(atPath: path) ? nil : path
     }

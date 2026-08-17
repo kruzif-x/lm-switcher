@@ -82,6 +82,11 @@ enum ModelBackend: String, CaseIterable, Identifiable {
     /// Apple MLX format. A directory containing `*.safetensors` and
     /// `config.json`. Served by `mlx_lm.server`.
     case mlx = "MLX"
+    /// oMLX server (jundot/omlx). One `omlx serve --model-dir` process
+    /// serves every model under the oMLX model directory on a single
+    /// port (default 8000). MTP/VLM settings live in oMLX's own
+    /// `~/.omlx/model_settings.json`, not in this app.
+    case omlx = "oMLX"
 
     /// `Identifiable` conformance uses the raw value (e.g. "GGUF").
     var id: String { rawValue }
@@ -89,10 +94,12 @@ enum ModelBackend: String, CaseIterable, Identifiable {
     /// The SF Symbol used to represent this backend in the UI.
     /// `doc.text` for GGUF (a generic file icon).
     /// `cpu`      for MLX (a chip icon, evoking Apple Silicon).
+    /// `server.rack` for oMLX (a multi-model server).
     var sfSymbol: String {
         switch self {
         case .gguf: return "doc.text"
         case .mlx: return "cpu"
+        case .omlx: return "server.rack"
         }
     }
 }
@@ -194,6 +201,18 @@ struct AppSettings {
 
     /// Absolute path to the `mlx_lm.server` entry point script.
     var mlxServerPath: String = ""
+
+    /// Absolute path to the `omlx` binary (oMLX server). Empty = auto-resolve
+    /// (default: `/opt/homebrew/bin/omlx`, else `/usr/local/bin/omlx`,
+    /// else `omlx` from PATH).
+    var omlxServerPath: String = ""
+
+    /// Root directory scanned for oMLX-served models (model subdirectories
+    /// containing `config.json` + `*.safetensors`). Empty = `~/models/omlx`.
+    var omlxModelDir: String = ""
+
+    /// TCP port for the single oMLX server (all oMLX models share it).
+    var omlxPort: Int = 8000
 
     /// Free-form string of extra args passed to every server process.
     /// Parsed with `parseArgs` in `ServerManager` to handle quoting.

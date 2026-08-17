@@ -55,38 +55,65 @@ func perModelValue(_ suffix: String, hash: String) -> Any? {
 // MARK: - Discovery (mirrors the CLI's list_all_models)
 
 struct DiscoveredModel {
-    let backend: String   // "GGUF" | "MLX"
+    let backend: String   // "GGUF" | "MLX" | "oMLX"
     let path: String
     let name: String
     var hash: String { idHash12(path) }
 }
 
 func discoverModels() -> [DiscoveredModel] {
-    let modelsDir = Prefs.string("modelsDir")
-    guard !modelsDir.isEmpty else { return [] }
     let fm = FileManager.default
-    guard let en = fm.enumerator(atPath: modelsDir) else { return [] }
-
     var out: [DiscoveredModel] = []
-    var mlxDirs = Set<String>()
-    for case let rel as String in en {
-        let base = (rel as NSString).lastPathComponent
-        if base.hasPrefix(".") { continue }
-        let full = modelsDir + "/" + rel
-        if base.hasSuffix(".gguf") {
-            // Exclusions must stay in sync with the CLI + Swift ggufEntry.
-            if base.hasPrefix("mmproj-") || base.hasPrefix("mtp-")
-                || base.hasPrefix("dflash-")
-                || base.hasPrefix("modernbert-embed-") { continue }
-            out.append(DiscoveredModel(backend: "GGUF", path: full, name: base))
-        } else if base == "config.json" {
-            let dir = (full as NSString).deletingLastPathComponent
-            if !mlxDirs.contains(dir),
-               let files = try? fm.contentsOfDirectory(atPath: dir),
-               files.contains(where: { $0.hasSuffix(".safetensors") }) {
-                mlxDirs.insert(dir)
-                out.append(DiscoveredModel(backend: "MLX", path: dir,
-                                           name: (dir as NSString).lastPathComponent))
+    // oMLX root known up front so the generic MLX scan below can skip it.
+    let omlxDir = Prefs.string("omlxModelDir", default: NSHomeDirectory() + "/models/omlx")
+    let modelsDir = Prefs.string("modelsDir")
+    if !modelsDir.isEmpty {
+        guard let en = fm.enumerator(atPath: modelsDir) else { return [] }
+        var mlxDirs = Set<String>()
+        for case let rel as String in en {
+            let base = (rel as NSString).lastPathComponent
+            if base.hasPrefix(".") { continue }
+            let full = modelsDir + "/" + rel
+            if base.hasSuffix(".gguf") {
+                // Exclusions must stay in sync with the CLI + Swift ggufEntry.
+                if base.hasPrefix("mmproj-") || base.hasPrefix("mtp-")
+                    || base.hasPrefix("dflash-")
+                    || base.hasPrefix("modernbert-embed-") { continue }
+                out.append(DiscoveredModel(backend: "GGUF", path: full, name: base))
+            } else if base == "config.json" {
+                let dir = (full as NSString).deletingLastPathComponent
+                if !mlxDirs.contains(dir),
+                   !dir.hasPrefix(omlxDir + "/"),
+                   let files = try? fm.contentsOfDirectory(atPath: dir),
+                   files.contains(where: { $0.hasSuffix(".safetensors") }) {
+                    mlxDirs.insert(dir)
+                    out.append(DiscoveredModel(backend: "MLX", path: dir,
+                                               name: (dir as NSString).lastPathComponent))
+                }
+            }
+        }
+    }
+
+    // oMLX: models under the oMLX root (org/model nesting, depth <= 2).
+    // One shared server on omlxPort serves all of them.
+    if !omlxDir.isEmpty, fm.fileExists(atPath: omlxDir) {
+        var visited = Set<String>()
+        if let en = fm.enumerator(atPath: omlxDir) {
+            for case let rel as String in en {
+                let depth = rel.split(separator: "/").count
+                guard depth <= 2 else { en.skipDescendants(); continue }
+                if (rel as NSString).lastPathComponent.hasPrefix(".") { continue }
+                let dir = omlxDir + "/" + rel
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue,
+                      !visited.contains(dir) else { continue }
+                if let files = try? fm.contentsOfDirectory(atPath: dir),
+                   files.contains(where: { $0.lowercased() == "config.json" }),
+                   files.contains(where: { $0.lowercased().hasSuffix(".safetensors") }) {
+                    visited.insert(dir)
+                    out.append(DiscoveredModel(backend: "oMLX", path: dir,
+                                               name: (dir as NSString).lastPathComponent))
+                }
             }
         }
     }
@@ -172,10 +199,27 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
     if let psOut = runCapture("/bin/ps", ["ax", "-o", "pid=,args="]) {
         for line in psOut.split(separator: "\n") {
             let text = String(line).trimmingCharacters(in: .whitespaces)
-            guard text.contains("llama-server") || text.contains("mlx_lm") else { continue }
+            guard text.contains("llama-server") || text.contains("mlx_lm")
+                || text.contains("omlx serve") || text.contains("omlx-server") else { continue }
             guard let sp = text.firstIndex(of: " "), let pid = Int32(text[..<sp]),
                   !seenPids.contains(pid) else { continue }
             let args = String(text[sp...])
+
+            // oMLX: one server serves every model under the oMLX root —
+            // map it onto all discovered oMLX entries (shared pid/port).
+            if args.contains("omlx serve") {
+                let omlxModels = models.filter { $0.backend == "oMLX" }
+                guard !omlxModels.isEmpty else { continue }
+                seenPids.insert(pid)
+                let port = Prefs.int("omlxPort", default: 8000)
+                for m in omlxModels {
+                    out.append(RunningModel(hash: m.hash, pid: pid, port: port, model: m,
+                                            displayName: m.name, backend: "oMLX", ctxSize: nil,
+                                            fromPidFile: false))
+                }
+                continue
+            }
+
             guard let path = firstMatch(#"(?:-m|--model) (\S+)"#, in: args),
                   let model = byPath[path] else { continue }   // not one of ours
             let port = firstMatch(#"--port (\d+)"#, in: args).flatMap(Int.init) ?? 0
@@ -198,9 +242,9 @@ func firstMatch(_ pattern: String, in text: String) -> String? {
 
 // MARK: - Health probe
 
-/// llama-server serves /health; mlx_lm.server serves /v1/models (§3.3).
+/// llama-server serves /health; mlx_lm.server and oMLX serve /v1/models (§3.3).
 func probeHealthy(port: Int, backend: String) -> Bool {
-    let path = backend == "MLX" ? "/v1/models" : "/health"
+    let path = (backend == "MLX" || backend == "oMLX") ? "/v1/models" : "/health"
     guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return false }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2.0
@@ -269,12 +313,19 @@ func stateSnapshot() -> [String: Any] {
         runningJson.append(entry)
     }
 
-    // Port map over the scan range [defaultPort, defaultPort+200].
+    // Port map over the scan range [defaultPort, defaultPort+200],
+    // plus the oMLX shared port (fixed at 8000 by convention, usually
+    // outside the llama.cpp scan range).
+    let omlxPort = Prefs.int("omlxPort", default: 8000)
+    var portLo = defaultPort
+    var portHi = defaultPort + 200
+    if omlxPort < portLo { portLo = omlxPort }
+    if omlxPort > portHi { portHi = omlxPort }
     let ourPorts = Dictionary(uniqueKeysWithValues: running.map { ($0.port, $0.displayName) })
     var portsJson: [String: Any] = [:]
     var nextFree = defaultPort
     let external = listeningPorts()
-    for (port, occupant) in external where port >= defaultPort && port <= defaultPort + 200 {
+    for (port, occupant) in external where port >= portLo && port <= portHi {
         if let name = ourPorts[port] {
             portsJson["\(port)"] = ["occupied_by": name, "source": "lm-switcher"]
         } else {

@@ -69,7 +69,22 @@ LLAMA_DIR="${LLAMA_DIR:-$HOME/.local/share/llama-menubar}"
 LLAMA_SERVER="${LLAMA_SERVER:-/opt/homebrew/bin/llama-server}"
 
 # Absolute path to the mlx_lm.server entry script (pip --user install).
-MLX_SERVER="${MLX_SERVER:-$HOME/Library/Python/3.14/bin/mlx_lm.server}"
+MLX_SERVER="${MLX_SERVER:-$(ls -d "$HOME"/Library/Python/*/bin/mlx_lm.server 2>/dev/null | tail -1)}"
+
+# oMLX (jundot/omlx) — one server serves every model under OMLX_MODEL_DIR
+# on a single OMLX_PORT (oMLX convention: 8000). Binary resolution:
+# OMLX_SERVER env, then the app's saved setting, then known install paths.
+OMLX_SERVER="${OMLX_SERVER:-$(defaults read local.llama-menubar omlxServerPath 2>/dev/null)}"
+if [[ -z "$OMLX_SERVER" ]]; then
+    for _c in /opt/homebrew/bin/omlx /usr/local/bin/omlx; do
+        [[ -x "$_c" ]] && OMLX_SERVER="$_c" && break
+    done
+fi
+OMLX_SERVER="${OMLX_SERVER:-omlx}"
+OMLX_MODEL_DIR="${OMLX_MODEL_DIR:-$(defaults read local.llama-menubar omlxModelDir 2>/dev/null)}"
+OMLX_MODEL_DIR="${OMLX_MODEL_DIR:-$HOME/models/omlx}"
+OMLX_PORT="${OMLX_PORT:-$(defaults read local.llama-menubar omlxPort 2>/dev/null)}"
+OMLX_PORT="${OMLX_PORT:-8000}"
 
 # B1 fix: restrictive umask. PID files and server logs (which capture
 # stdout/stderr — model paths, sometimes verbose content) must be
@@ -204,12 +219,27 @@ list_all_models() {
 
     # MLX: every directory that contains BOTH .safetensors and config.json.
     # We don't recurse into MLX dirs (each is a self-contained model), so
-    # we just iterate all directories returned by `find -type d`.
+    # we just iterate all directories returned by `find -type d`. The oMLX
+    # tree is owned by the omlx scan below — skip it here so models don't
+    # double-list.
     while IFS= read -r d; do
+        case "$d" in "$OMLX_MODEL_DIR"/*) continue ;; esac
         if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
             echo "mlx|$d|$(basename "$d")"
         fi
     done < <(find "$MODELS_DIR" -type d 2>/dev/null)
+
+    # oMLX: models under the oMLX root (org/model nesting, depth <= 2).
+    # All entries share ONE server on OMLX_PORT — loading any of them
+    # starts/stops the same `omlx serve` process. (The MLX scan above
+    # already skips this tree, so no exclusion needed here — including
+    # when OMLX_MODEL_DIR sits inside MODELS_DIR.)
+    [[ -d "$OMLX_MODEL_DIR" ]] || return 0
+    while IFS= read -r d; do
+        if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
+            echo "omlx|$d|$(basename "$d")"
+        fi
+    done < <(find "$OMLX_MODEL_DIR" -maxdepth 2 -type d 2>/dev/null)
 }
 
 
@@ -433,6 +463,13 @@ load_model() {
     local name; name=$(echo "$line" | cut -d'|' -f3)
     local id_hash; id_hash=$(id_hash "$path")
 
+    # oMLX: the shared server is the load unit — if it's already healthy
+    # on OMLX_PORT, this model is by definition loaded.
+    if [[ "$type" == "omlx" ]] && nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
+        echo "● [$type] $name already loaded on port $OMLX_PORT (shared oMLX server)"
+        return 0
+    fi
+
     # If the same model is already running on some port, no-op.
     if is_loaded "$id_hash" "$path"; then
         echo "● [$type] $name already loaded on port $(get_port_for "$id_hash" "$path")"
@@ -442,9 +479,12 @@ load_model() {
     # Pick a port: an explicit `load --port N` flag wins (ephemeral, never
     # persisted — used by the MCP for per-call overrides); then the
     # per-model saved port; otherwise the next free port from $PORT.
+    # oMLX ignores all of that — one fixed shared port.
     local preferred; preferred=$(per_model_port "$id_hash")
     local port
-    if [[ -n "$FORCE_PORT" && "$FORCE_PORT" -gt 0 ]]; then
+    if [[ "$type" == "omlx" ]]; then
+        port=$OMLX_PORT
+    elif [[ -n "$FORCE_PORT" && "$FORCE_PORT" -gt 0 ]]; then
         port=$FORCE_PORT
     elif [[ "$preferred" -gt 0 ]]; then
         port=$preferred
@@ -629,11 +669,17 @@ load_model() {
                 fi
             fi
         fi
-    else
+    elif [[ "$type" == "mlx" ]]; then
         # MLX: invoke mlx_lm.server. No mmproj, no explicit ctx (mlx
         # uses the model's own config).
         executable="$MLX_SERVER"
         args=("--model" "$path" "--host" "127.0.0.1" "--port" "$port")
+    elif [[ "$type" == "omlx" ]]; then
+        # oMLX: ONE shared server for every model under OMLX_MODEL_DIR on
+        # the fixed OMLX_PORT. No sampling/ctx args — oMLX handles MTP/VLM
+        # via ~/.omlx/model_settings.json. Binds 127.0.0.1 by default.
+        executable="$OMLX_SERVER"
+        args=("serve" "--model-dir" "$OMLX_MODEL_DIR" "--port" "$port")
     fi
 
     # Append any user-provided extra args (split on whitespace).
@@ -731,6 +777,22 @@ unload_model() {
     fi
     # Always remove the PID file, even if the process was already dead.
     rm -f "$pidfile"
+    # oMLX: one server, one pidfile per model entry. Sweep sibling
+    # pidfiles pointing at the same (now dead) pid so `status`/`unload`
+    # don't report the other oMLX models as still loaded.
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+        grep -l "^$pid\$" "$PIDS_DIR"/*.pid 2>/dev/null | while IFS= read -r f; do
+            rm -f "$f"
+        done
+        # The `omlx serve` parent spawns an `omlx-server` worker that
+        # outlives it — kill anything still listening on that port.
+        local port; port=$(sed -n '2s/.*--port \([0-9]*\).*/\1/p' "$pidfile" 2>/dev/null)
+        if [[ -n "$port" ]]; then
+            lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | while IFS= read -r p; do
+                kill -9 "$p" 2>/dev/null
+            done
+        fi
+    fi
 }
 
 
@@ -749,11 +811,18 @@ cmd_status() {
         # Filename stem is now "<hash>.<basename>.pid"; the hash is the
         # part before the first dot.
         local id_hash; id_hash=$(basename "$pf" .pid); id_hash="${id_hash%%.*}"
+        local id_hash_full; id_hash_full=$(basename "$pf" .pid)
         local pid; pid=$(head -1 "$pf" 2>/dev/null | tr -d '[:space:]')
         if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
             local argline; argline=$(ps -o args= -p "$pid" 2>/dev/null)
             local port
             port=$(echo "$argline" | grep -oE '\--port [0-9]+' | awk '{print $2}')
+            # oMLX servers may hide their flags behind the macOS python
+            # launcher env prefix — fall back to the port recorded in the
+            # pidfile's second line.
+            if [[ -z "$port" ]]; then
+                port=$(sed -n '2s/.*--port \([0-9]*\).*/\1/p' "$pf" 2>/dev/null)
+            fi
             # Extract the model file/dir name. `-m` can point at paths with
             # spaces, and the argline also contains MORE .gguf paths
             # (--spec-draft-model dflash-kquant.gguf, --mmproj ...), so the
@@ -761,13 +830,20 @@ cmd_status() {
             # drafter). Instead: cut everything before " -m ", then cut at
             # the FIRST ".gguf" (lazy semantics, space-safe).
             local mpath="" mname
-            if [[ "$argline" == *" -m "* ]]; then
+            if [[ "$argline" == *"omlx serve"* || "$argline" == *"omlx-server"* ]]; then
+                # oMLX carries no -m/--model; the pidfile stem encodes the
+                # model (<hash>.<basename>.pid).
+                mname="${id_hash_full#*.}"
+                [[ -z "$mname" || "$mname" == "$id_hash_full" ]] && mname="$id_hash"
+            elif [[ "$argline" == *" -m "* ]]; then
                 local rest="${argline#*-m }"
                 mpath="${rest%%.gguf*}.gguf"
             elif [[ "$argline" =~ \ --model\ (.+)\ --host ]]; then
                 mpath="${BASH_REMATCH[1]}"
             fi
-            [[ -n "$mpath" ]] && mname=$(basename "$mpath") || mname="$id_hash"
+            if [[ -z "$mname" ]]; then
+                [[ -n "$mpath" ]] && mname=$(basename "$mpath") || mname="$id_hash"
+            fi
             echo "● $mname  :$port  (PID $pid)"
             any=1
         else
@@ -851,11 +927,29 @@ cmd_unload() {
             shopt -u nullglob
         else
             local line; line=$(resolve_query "$q") || return 1
+            local type; type=$(echo "$line" | cut -d'|' -f1)
             local path; path=$(echo "$line" | cut -d'|' -f2)
             local name; name=$(echo "$line" | cut -d'|' -f3)
             local id_hash; id_hash=$(id_hash "$path")
             local pf; pf=$(pidfile_for "$id_hash" "$path")
-            unload_model "$pf" "$name"
+            if [[ "$type" == "omlx" && ! -f "$pf" ]] && nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
+                # Externally-launched oMLX server (no pidfile): stop the
+                # shared server — the `omlx serve` parent AND its
+                # `omlx-server` worker child, by port listener.
+                local spid; spid=$(pgrep -f "omlx[- ]serve" | head -1)
+                if [[ -n "$spid" ]]; then
+                    echo "Stopping $name (PID $spid) ..."
+                    kill "$spid" 2>/dev/null
+                    sleep 1
+                    kill -0 "$spid" 2>/dev/null && kill -9 "$spid" 2>/dev/null
+                    lsof -tiTCP:"$OMLX_PORT" -sTCP:LISTEN 2>/dev/null | while IFS= read -r p; do
+                        kill -9 "$p" 2>/dev/null
+                    done
+                    echo "✓ $name stopped"
+                fi
+            else
+                unload_model "$pf" "$name"
+            fi
         fi
     done
 }
@@ -996,7 +1090,7 @@ Config (env vars):
   LLAMA_CTX_SIZE    Default context size (default: 4096)
   LLAMA_EXTRA_ARGS  Extra args for llama-server
   LLAMA_SERVER      Path to llama-server (default: /opt/homebrew/bin/llama-server)
-  MLX_SERVER        Path to mlx_lm.server (default: ~/Library/Python/3.14/bin/mlx_lm.server)
+  MLX_SERVER        Path to mlx_lm.server (default: newest ~/Library/Python/*/bin)
 
 Examples:
   llama load gemma                       # load GGUF model

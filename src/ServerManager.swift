@@ -567,6 +567,14 @@ class ServerManager {
         // Recursive scan. We pass `baseDir` (currently unused) for
         // future expansion — e.g. computing relative paths for display.
         scanDirectory(dir, into: &entries, baseDir: dir)
+        // oMLX models live under their own root (one server, many models).
+        // Skip when the root is empty or identical to modelsDir (the scan
+        // above already picked them up as MLX-style dirs).
+        let omlxDir = URL(fileURLWithPath: resolvedOmlxModelDir())
+        if omlxDir.path != dir.path,
+           FileManager.default.fileExists(atPath: omlxDir.path) {
+            omlxEntries(at: omlxDir, depth: 0, into: &entries)
+        }
         // Dedupe by id and sort alphabetically by name.
         var seen = Set<String>()
         models = entries.filter { seen.insert($0.id).inserted }
@@ -607,7 +615,7 @@ class ServerManager {
             if name.hasPrefix(".") { continue }
 
             // Skip symlinks. A self-referential link (e.g. the common
-            // `models -> /Users/x/AI/models` inside the models dir) would
+            // `models -> /Users/<name>/models` inside the models dir) would
             // otherwise (a) feed the recursion a duplicate subtree and
             // (b) produce ModelEntry ids via the LINK path
             // (".../models/models/gguf/x.gguf") that never match the real
@@ -682,6 +690,9 @@ class ServerManager {
     /// (model configuration). The presence of both is a reliable
     /// heuristic — random data dirs won't have both.
     private func mlxEntry(at dir: URL, baseDir: URL) -> ModelEntry? {
+        // The oMLX tree is owned by the omlx scan — skip it here so models
+        // don't double-list (one server, backend .omlx, not .mlx).
+        if dir.path.hasPrefix(resolvedOmlxModelDir() + "/") { return nil }
         let fm = FileManager.default
         guard let contents = try? fm.contentsOfDirectory(
             at: dir,
@@ -698,6 +709,91 @@ class ServerManager {
             )
         }
         return nil
+    }
+
+    // MARK: - oMLX backend
+
+    /// Resolved oMLX model root (settings override, else `~/models/omlx`).
+    func resolvedOmlxModelDir() -> String {
+        if !settings.omlxModelDir.isEmpty { return settings.omlxModelDir }
+        return NSHomeDirectory() + "/models/omlx"
+    }
+
+    /// Resolved oMLX binary (settings override, else known install paths).
+    func resolvedOmlxServerPath() -> String {
+        if !settings.omlxServerPath.isEmpty { return settings.omlxServerPath }
+        let candidates = [
+            "/opt/homebrew/bin/omlx",
+            "/usr/local/bin/omlx",
+        ]
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
+            return c
+        }
+        return "omlx"   // last resort: PATH lookup
+    }
+
+    /// Walk the oMLX model root (org/model nesting, max depth 2) and collect
+    /// directories that look like models (config.json + *.safetensors).
+    /// Unlike MLX entries these all share ONE server process on omlxPort.
+    private func omlxEntries(at dir: URL, depth: Int, into entries: inout [ModelEntry]) {
+        guard depth < 2 else { return }
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for url in contents {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            if let files = try? fm.contentsOfDirectory(atPath: url.path),
+               files.contains(where: { $0.lowercased() == "config.json" }),
+               files.contains(where: { $0.lowercased().hasSuffix(".safetensors") }) {
+                entries.append(ModelEntry(
+                    id: url.path,
+                    name: url.lastPathComponent,
+                    path: url,
+                    backend: .omlx
+                ))
+            } else {
+                omlxEntries(at: url, depth: depth + 1, into: &entries)
+            }
+        }
+    }
+
+    /// Is an oMLX server currently healthy on the configured port?
+    private func omlxServerHealthy() -> Bool {
+        let port = settings.omlxPort > 0 ? settings.omlxPort : 8000
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models") else { return false }
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) { ok = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.0)
+        return ok
+    }
+
+    /// PID of a running oMLX server process, if any. The `omlx serve`
+    /// CLI spawns an `omlx-server` worker that outlives the parent, so
+    /// match both spellings.
+    private func omlxServerPid() -> Int32? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "pgrep -f 'omlx[- ]serve' | head -1"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return Int32(s)
+        } catch { return nil }
     }
 
     // MARK: - Load / Unload
@@ -885,10 +981,39 @@ class ServerManager {
             if settings.mlxMaxKvSize > 0 {
                 args += ["--max-kv-size", "\(settings.mlxMaxKvSize)"]
             }
+        case .omlx:
+            // oMLX: ONE server process serves every model under the oMLX
+            // model root on settings.omlxPort. Loading any oMLX entry =
+            // ensure the shared server is up; sampling/MTP/VLM config is
+            // handled by oMLX itself (~/.omlx/model_settings.json).
+            executable = resolvedOmlxServerPath()
+            // Already healthy → adopt the running server (externally
+            // launched or spawned by loading a sibling oMLX entry).
+            if omlxServerHealthy() {
+                if var s = modelStates[model.id] {
+                    s.isRunning = true
+                    s.pid = omlxServerPid()
+                    s.port = settings.omlxPort > 0 ? settings.omlxPort : 8000
+                    s.ctxSize = 0
+                    s.lastError = nil
+                    modelStates[model.id] = s
+                }
+                return
+            }
+            let root = resolvedOmlxModelDir()
+            args += ["serve", "--model-dir", root]
+            if settings.omlxPort > 0 {
+                args += ["--port", "\(settings.omlxPort)"]
+            }
+            // NOTE: no --host — oMLX binds 127.0.0.1 by default.
         }
 
         // Bind to localhost (security + convenience) and the chosen port.
-        args += ["--host", "127.0.0.1", "--port", "\(port)"]
+        // oMLX builds its own bind flags above (single fixed port); the
+        // gguf/mlx backends get the shared --host/--port pair.
+        if model.backend != .omlx {
+            args += ["--host", "127.0.0.1", "--port", "\(port)"]
+        }
 
         // Append any extra args (per-model override or global).
         // We use a small parser to handle quoted args.
@@ -922,9 +1047,12 @@ class ServerManager {
         // meaningless to someone who's never installed llama.cpp; the fix is
         // one copy-pasteable command away.
         if !FileManager.default.isExecutableFile(atPath: executable) {
-            let installHint = model.backend == .gguf
-                ? "brew install llama.cpp"
-                : "pip install mlx-lm"
+            let installHint: String
+            switch model.backend {
+            case .gguf: installHint = "brew install llama.cpp"
+            case .mlx: installHint = "pip install mlx-lm"
+            case .omlx: installHint = "brew install jundot/omlx/omlx — or install the oMLX wheel (see the oMLX docs)"
+            }
             var s = modelStates[model.id] ?? ModelState()
             s.isRunning = false
             s.pid = nil
@@ -1010,6 +1138,31 @@ class ServerManager {
     /// externally-launched processes by killing them by PID.
     func unloadModel(_ model: ModelEntry) {
         assertMain()   // A3: all state mutation must happen on main
+        // oMLX: one shared server. Unloading any oMLX entry stops the
+        // server (and with it, every oMLX model). Sibling entries pick
+        // up the stopped state on the next 3s sync.
+        if model.backend == .omlx {
+            if let pid = omlxServerPid() {
+                kill(pid, SIGTERM)
+                // The oMLX worker (`omlx-server`) may outlive the parent
+                // CLI process — kill anything still listening on the port.
+                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 4.0) { [self] in
+                    if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+                    let port = self.settings.omlxPort > 0 ? self.settings.omlxPort : 8000
+                    let t = Process()
+                    t.executableURL = URL(fileURLWithPath: "/bin/sh")
+                    t.arguments = ["-c", "lsof -tiTCP:\(port) -sTCP:LISTEN | xargs kill -9 2>/dev/null"]
+                    try? t.run()
+                }
+            }
+            for id in modelStates.keys {
+                guard let st = modelStates[id], st.isRunning,
+                      models.contains(where: { $0.id == id && $0.backend == .omlx }) else { continue }
+                modelStates[id] = ModelState(isRunning: false, pid: nil, port: 0, ctxSize: 0, lastError: nil)
+            }
+            selected.remove(model.id)
+            return
+        }
         // Send SIGTERM via exactly one path:
         //   - Owned process (`processes[id]`): use `Process.terminate()`
         //     which sends SIGTERM and lets the `terminationHandler`
@@ -1277,8 +1430,15 @@ class ServerManager {
                 return p
             }
         }
-        // 3. Fallback — keep the field populated; user can override.
-        return "\(home)/Library/Python/3.14/bin/mlx_lm.server"
+        // 3. Fallback — newest Python user-install; empty if none found.
+        let pyBase = home + "/Library/Python"
+        if let dirs = try? FileManager.default.contentsOfDirectory(atPath: pyBase) {
+            for d in dirs.sorted(by: >) where d != "." && d != ".." {
+                let p = "\(pyBase)/\(d)/bin/mlx_lm.server"
+                if FileManager.default.isExecutableFile(atPath: p) { return p }
+            }
+        }
+        return ""
     }
 
     /// Shared helper for finding companion GGUF files (e.g. mmproj) that
@@ -1826,7 +1986,23 @@ class ServerManager {
 
         for line in output.split(separator: "\n") {
             let s = String(line)
-            guard s.contains("llama-server") || s.contains("mlx_lm.server") else { continue }
+            guard s.contains("llama-server") || s.contains("mlx_lm.server")
+                || s.contains("omlx serve") || s.contains("omlx-server") else { continue }
+
+            // oMLX: one server serves every model under the oMLX root.
+            // Map it onto every discovered oMLX entry (shared pid/port).
+            // Match both the `omlx serve` parent and the `omlx-server`
+            // worker child (which outlives the parent).
+            if s.contains("omlx serve") || s.contains("omlx-server") {
+                let trimmed = s.drop(while: { $0 == " " })
+                let pidStr = trimmed.prefix(while: { $0.isNumber })
+                guard let pid = Int32(pidStr), pid > 0 else { continue }
+                let port = settings.omlxPort > 0 ? settings.omlxPort : 8000
+                for m in models where m.backend == .omlx {
+                    externalStates[m.id] = (pid: pid, port: port, ctx: 0)
+                }
+                continue
+            }
 
             // A2 fix: use NSRegularExpression with an explicit capture group
             // for the model path, instead of slicing the full match by a
@@ -1910,6 +2086,12 @@ class ServerManager {
             ?? "/opt/homebrew/bin/llama-server"
         settings.mlxServerPath = d.string(forKey: "mlxServerPath")
             ?? Self.discoverMLXServerPath()
+        // oMLX: binary auto-resolved at launch; dir defaults to ~/models/omlx;
+        // port 8000 is the oMLX convention.
+        settings.omlxServerPath = d.string(forKey: "omlxServerPath") ?? ""
+        settings.omlxModelDir = d.string(forKey: "omlxModelDir") ?? ""
+        settings.omlxPort = d.integer(forKey: "omlxPort")
+        if settings.omlxPort == 0 { settings.omlxPort = 8000 }
         // Global extra args default to empty.
         settings.globalExtraArgs = d.string(forKey: "globalExtraArgs") ?? ""
         // Chat template override: empty = use built-in template.
@@ -1971,6 +2153,9 @@ class ServerManager {
         d.set(settings.defaultCtxSize, forKey: "defaultCtxSize")
         d.set(settings.llamaServerPath, forKey: "llamaServerPath")
         d.set(settings.mlxServerPath, forKey: "mlxServerPath")
+        d.set(settings.omlxServerPath, forKey: "omlxServerPath")
+        d.set(settings.omlxModelDir, forKey: "omlxModelDir")
+        d.set(settings.omlxPort, forKey: "omlxPort")
         d.set(settings.globalExtraArgs, forKey: "globalExtraArgs")
         d.set(settings.chatTemplatePath, forKey: "chatTemplatePath")
         d.set(settings.enableMtp, forKey: "enableMtp")
