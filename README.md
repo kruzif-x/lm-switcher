@@ -431,3 +431,8 @@ See `CHANGELOG.md` for full version history.
 ## License
 
 Personal use. Modify and redistribute freely.
+
+## Support
+
+LM Switcher is free and open source. If it earns its menu-bar corner, a small
+sponsorship keeps the coffee flowing — [Sponsor on GitHub](https://github.com/sponsors/kruzif-x).
