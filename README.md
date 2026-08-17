@@ -16,7 +16,7 @@ app. Added the MCP so that my Hermes Agent could load and unload models as and w
 
 LM Switcher is a native macOS app that lives in your menu bar (next to the clock). It lets you:
 
-- 🔍 **Discover** GGUF and MLX models in a directory of your choice (recursive scan)
+- 🔍 **Discover** GGUF and MLX/oMLX models in a directory of your choice (recursive scan)
 - ▶️ **Load** any model with one click (spawns the right backend: `llama-server` or `mlx_lm.server`)
 - ⏹ **Unload** any model independently — no more "kill the wrong process" surprises
 - 🔄 **Run multiple models simultaneously**, each on its own port (e.g. one chat model on :8080, an embedder on :8081)
