@@ -1,6 +1,10 @@
 # LM Switcher
 
-A macOS menu bar app + CLI for managing local LLM models (GGUF and Apple MLX).
+A macOS menu bar app + CLI + MCP for managing local LLM models (GGUF and Apple MLX/oMLX).
+
+Made this initially for my wife, so that it would be easy for her to switch models instead of typing on the CLI, 
+then I expanded it with more features for my lazy self. I use Deepseek-v4-flash and GLM 5.2 to assist me to code this
+app. Added the MCP so that my Hermes Agent could load and unload models as and when it is needed.
 
 ![LM Switcher icon](assets/AppIcon.png)
 
