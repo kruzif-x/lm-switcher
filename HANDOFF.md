@@ -29,7 +29,7 @@ Per-model overrides live for Muse Glimmer under `model.402d4751948a.*`
 
 ## What This Is
 
-macOS menu bar app for managing local LLM models (GGUF + MLX). Swift (~5000 lines across 5 files) + bash CLI (~710 lines). Written by Roland Chia. Version 1.4.0.
+macOS menu bar app for managing local LLM models (GGUF + MLX). Swift (~5000 lines across 5 files) + bash CLI (~710 lines). Written by Roland Chia. Version 0.9b (beta).
 
 **What it does:** discovers `.gguf` files and MLX model directories under a configurable path, spawns `llama-server` (GGUF) or `mlx_lm.server` (MLX) processes — one per model on its own port — tracks PIDs/ports/context, reconciles with externally-launched processes via `ps`, persists settings to UserDefaults, watches the models directory for live changes, and handles macOS sleep/wake.
 

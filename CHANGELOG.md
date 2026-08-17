@@ -5,6 +5,23 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9b] - 2026-08-17
+
+**Beta release** — version renumbered to 0.9b to reflect beta status.
+
+### Added
+- **oMLX backend** (jundot/omlx): third model backend alongside GGUF/MLX.
+  - Discovery: scans `omlxModelDir` (default `~/AI/models/omlx`, org/model nesting depth ≤ 2) for dirs with `config.json` + `*.safetensors`; excluded from the generic MLX scan to prevent double-listing.
+  - One shared server per port: loading any oMLX entry ensures `omlx serve --model-dir <root> --port <omlxPort>` is up (health check first — externally-launched servers are adopted); unloading any entry stops the shared server.
+  - Settings: `omlxServerPath` (auto-resolve: `~/AI/envs/omlx-env/bin/omlx` → Homebrew → PATH), `omlxModelDir`, `omlxPort` (default 8000) — UI rows + UserDefaults + CLI env/defaults parity.
+  - MTP/VLM config is oMLX's own (`~/.omlx/model_settings.json`); the switcher passes no sampling flags.
+  - CLI: `llama list`/`load`/`status`/`unload` handle omlx entries (port-health load no-op, pidfile per entry, sibling pidfile sweep, port-listener kill).
+  - MCP: `list_models`/`status` report oMLX models with shared-server running state (ps-scan matches both `omlx serve` parent and `omlx-server` worker child).
+
+### Fixed
+- oMLX worker daemonization: `omlx serve` spawns an `omlx-server` child that outlives the parent — unload paths now kill by port listener (`lsof -tiTCP:<port>`) in addition to the recorded PID (app, CLI pidfile path, CLI external path).
+- CLI `status` name extraction: pidfile-stem fallback was clobbered by the empty-`mpath` fallback; port now falls back to the pidfile's second line when the macOS python launcher hides argv flags.
+
 ## [Unreleased] - 2026-08-13
 
 ### Fixed

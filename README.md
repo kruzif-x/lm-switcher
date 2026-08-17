@@ -4,6 +4,10 @@ A macOS menu bar app + CLI for managing local LLM models (GGUF and Apple MLX).
 
 ![LM Switcher icon](assets/AppIcon.png)
 
+> **Beta — v0.9b.** This is an early release of LM Switcher. The core model management
+> paths (discover / load / unload, GGUF + MLX + oMLX backends) are stable, but expect
+> rough edges; see the changelog for what landed so far.
+
 ## What is this?
 
 LM Switcher is a native macOS app that lives in your menu bar (next to the clock). It lets you:
@@ -416,7 +420,7 @@ Because that's the lightest-weight way to keep a tool always available on macOS 
 
 ## Version
 
-Current: **v1.3.0** — menu bar + Per-Model redesign, MCP agent access, idle auto-unload. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
+Current: **v0.9b** — beta. Menu bar + Per-Model redesign, MCP agent access, idle auto-unload, oMLX backend. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
 
 See `CHANGELOG.md` for full version history.
 
