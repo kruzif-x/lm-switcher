@@ -87,6 +87,11 @@ enum ModelBackend: String, CaseIterable, Identifiable {
     /// port (default 8000). MTP/VLM settings live in oMLX's own
     /// `~/.omlx/model_settings.json`, not in this app.
     case omlx = "oMLX"
+    /// MTPLX server (mtplx). Serves one model with native MTP speculative
+    /// decoding. Requires `mtplx_runtime.json` in the model directory.
+    /// Binary is `mtplx serve` (installed via pip, typically in the
+    /// oMLX env or a dedicated venv).
+    case mtplx = "MTPLX"
 
     /// `Identifiable` conformance uses the raw value (e.g. "GGUF").
     var id: String { rawValue }
@@ -95,11 +100,13 @@ enum ModelBackend: String, CaseIterable, Identifiable {
     /// `doc.text` for GGUF (a generic file icon).
     /// `cpu`      for MLX (a chip icon, evoking Apple Silicon).
     /// `server.rack` for oMLX (a multi-model server).
+    /// `forward` for MTPLX (fast-forward icon).
     var sfSymbol: String {
         switch self {
         case .gguf: return "doc.text"
         case .mlx: return "cpu"
         case .omlx: return "server.rack"
+        case .mtplx: return "forward"
         }
     }
 }
@@ -213,6 +220,19 @@ struct AppSettings {
 
     /// TCP port for the single oMLX server (all oMLX models share it).
     var omlxPort: Int = 8000
+
+    /// Absolute path to the `mtplx` binary. Empty = auto-resolve
+    /// (prefer: `~/AI/envs/omlx-env/bin/mtplx`, else PATH).
+    var mtplxServerPath: String = ""
+
+    /// TCP port for MTPLX server instances.
+    var mtplxPort: Int = 8085
+
+    /// MTPLX draft depth (1-3). Recommended: 3.
+    var mtplxDepth: Int = 3
+
+    /// MTPLX profile: turbo, sustained, exact, etc.
+    var mtplxProfile: String = "turbo"
 
     /// Free-form string of extra args passed to every server process.
     /// Parsed with `parseArgs` in `ServerManager` to handle quoting.

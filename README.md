@@ -8,7 +8,7 @@ app. Added the MCP so that my Hermes Agent could load and unload models as and w
 
 ![LM Switcher icon](assets/AppIcon.png)
 
-> **Beta — v0.9b.** This is an early release of LM Switcher. The core model management
+> **Beta — v0.92b.** This is an early release of LM Switcher. The core model management
 > paths (discover / load / unload, GGUF + MLX + oMLX backends) are stable, but expect
 > rough edges; see the changelog for what landed so far.
 
@@ -424,7 +424,7 @@ Because that's the lightest-weight way to keep a tool always available on macOS 
 
 ## Version
 
-Current: **v0.9b** — beta. Menu bar + Per-Model redesign, MCP agent access, idle auto-unload, oMLX backend. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
+Current: **v0.92b** — beta. Menu bar + Per-Model redesign, MCP agent access, idle auto-unload, oMLX + MTPLX backends. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
 
 See `CHANGELOG.md` for full version history.
 

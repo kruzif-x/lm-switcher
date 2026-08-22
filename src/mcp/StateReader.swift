@@ -86,9 +86,12 @@ func discoverModels() -> [DiscoveredModel] {
                    !dir.hasPrefix(omlxDir + "/"),
                    let files = try? fm.contentsOfDirectory(atPath: dir),
                    files.contains(where: { $0.hasSuffix(".safetensors") }) {
-                    mlxDirs.insert(dir)
-                    out.append(DiscoveredModel(backend: "MLX", path: dir,
-                                               name: (dir as NSString).lastPathComponent))
+                    // Skip MTPLX models (have mtplx_runtime.json) — they get .mtplx backend below.
+                    if !files.contains(where: { $0.lowercased() == "mtplx_runtime.json" }) {
+                        mlxDirs.insert(dir)
+                        out.append(DiscoveredModel(backend: "MLX", path: dir,
+                                                   name: (dir as NSString).lastPathComponent))
+                    }
                 }
             }
         }
@@ -113,6 +116,28 @@ func discoverModels() -> [DiscoveredModel] {
                     visited.insert(dir)
                     out.append(DiscoveredModel(backend: "oMLX", path: dir,
                                                name: (dir as NSString).lastPathComponent))
+                }
+            }
+        }
+    }
+
+    // MTPLX: directories with config.json + safetensors + mtplx_runtime.json.
+    // These sit inside modelsDir but were excluded from the MLX scan above.
+    if !modelsDir.isEmpty {
+        if let en = fm.enumerator(atPath: modelsDir) {
+            var mtplxDirs = Set<String>()
+            for case let rel as String in en {
+                guard !rel.contains("/.") else { continue }
+                let full = modelsDir + "/" + rel
+                if (rel as NSString).lastPathComponent == "mtplx_runtime.json" {
+                    let dir = (full as NSString).deletingLastPathComponent
+                    guard !mtplxDirs.contains(dir) else { continue }
+                    if let files = try? fm.contentsOfDirectory(atPath: dir),
+                       files.contains(where: { $0.hasSuffix(".safetensors") }) {
+                        mtplxDirs.insert(dir)
+                        out.append(DiscoveredModel(backend: "MTPLX", path: dir,
+                                                   name: (dir as NSString).lastPathComponent))
+                    }
                 }
             }
         }
@@ -200,7 +225,8 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
         for line in psOut.split(separator: "\n") {
             let text = String(line).trimmingCharacters(in: .whitespaces)
             guard text.contains("llama-server") || text.contains("mlx_lm")
-                || text.contains("omlx serve") || text.contains("omlx-server") else { continue }
+                || text.contains("omlx serve") || text.contains("omlx-server")
+                || text.contains("mtplx serve") else { continue }
             guard let sp = text.firstIndex(of: " "), let pid = Int32(text[..<sp]),
                   !seenPids.contains(pid) else { continue }
             let args = String(text[sp...])

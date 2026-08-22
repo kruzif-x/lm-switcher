@@ -575,6 +575,7 @@ class ServerManager {
            FileManager.default.fileExists(atPath: omlxDir.path) {
             omlxEntries(at: omlxDir, depth: 0, into: &entries)
         }
+        // MTPLX models are now discovered inline in scanDirectory()
         // Dedupe by id and sort alphabetically by name.
         var seen = Set<String>()
         models = entries.filter { seen.insert($0.id).inserted }
@@ -633,7 +634,20 @@ class ServerManager {
                 if let entry = mlxEntry(at: url, baseDir: baseDir) {
                     entries.append(entry)
                 } else {
-                    scanDirectory(url, into: &entries, baseDir: baseDir, depth: depth + 1)
+                    // MTPLX model? Check for mtplx_runtime.json.
+                    // The MTP companion is detected separately in mlxEntry
+                    // which returns nil when mtplx_runtime.json exists.
+                    if let files = try? fm.contentsOfDirectory(atPath: url.path),
+                       files.map({ $0.lowercased() }).contains("mtplx_runtime.json") {
+                        entries.append(ModelEntry(
+                            id: url.path,
+                            name: url.lastPathComponent,
+                            path: url,
+                            backend: .mtplx
+                        ))
+                    } else {
+                        scanDirectory(url, into: &entries, baseDir: baseDir, depth: depth + 1)
+                    }
                 }
             } else if url.pathExtension.lowercased() == "gguf" {
                 // Regular .gguf file: classify and add.
@@ -698,6 +712,10 @@ class ServerManager {
             at: dir,
             includingPropertiesForKeys: nil
         ) else { return nil }
+        // Skip MTPLX models — they have mtplx_runtime.json and are
+        // discovered by mtplxEntries() with backend .mtplx.
+        let names = contents.map { $0.lastPathComponent.lowercased() }
+        if names.contains("mtplx_runtime.json") { return nil }
         let hasSafetensors = contents.contains { $0.pathExtension.lowercased() == "safetensors" }
         let hasConfig = contents.contains { $0.lastPathComponent.lowercased() == "config.json" }
         if hasSafetensors && hasConfig {
@@ -730,6 +748,53 @@ class ServerManager {
             return c
         }
         return "omlx"   // last resort: PATH lookup
+    }
+
+    /// Resolved MTPLX binary (settings override, else common pip install paths).
+    func resolvedMtplxPath() -> String {
+        if !settings.mtplxServerPath.isEmpty { return settings.mtplxServerPath }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let candidates = [
+            home.appendingPathComponent("AI/envs/omlx-env/bin/mtplx").path,
+            home.appendingPathComponent(".local/bin/mtplx").path,
+            "/opt/homebrew/bin/mtplx",
+            "/usr/local/bin/mtplx",
+        ]
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
+            return c
+        }
+        return "mtplx"   // last resort: PATH lookup
+    }
+
+    /// Scan modelsDir for MTPLX-format model directories.
+    /// MTPLX models are directories containing config.json, *.safetensors,
+    /// AND mtplx_runtime.json (distinguishes them from plain MLX).
+    /// Uses FileManager.enumerator to recurse (like the CLI find).
+    private func mtplxEntries(at root: URL, into entries: inout [ModelEntry]) {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for case let url as URL in enumerator {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            guard let files = try? fm.contentsOfDirectory(atPath: url.path) else { continue }
+            let lower = files.map { $0.lowercased() }
+            if lower.contains("config.json") &&
+               lower.contains(where: { $0.hasSuffix(".safetensors") }) &&
+               lower.contains("mtplx_runtime.json") {
+                // Don't recurse into this dir — it IS the model.
+                enumerator.skipDescendants()
+                entries.append(ModelEntry(
+                    id: url.path,
+                    name: url.lastPathComponent,
+                    path: url,
+                    backend: .mtplx
+                ))
+            }
+        }
     }
 
     /// Walk the oMLX model root (org/model nesting, max depth 2) and collect
@@ -1006,12 +1071,21 @@ class ServerManager {
                 args += ["--port", "\(settings.omlxPort)"]
             }
             // NOTE: no --host — oMLX binds 127.0.0.1 by default.
+        case .mtplx:
+            // MTPLX: serve one model with native MTP speculative decoding.
+            executable = resolvedMtplxPath()
+            args += ["serve", "--model", model.path.path]
+            let mtpPort = perModelPort(for: model)
+            args += ["--port", "\(mtpPort != 0 ? mtpPort : settings.mtplxPort)"]
+            args += ["--depth", "\(settings.mtplxDepth)"]
+            args += ["--profile", settings.mtplxProfile]
+            args += ["--no-auth"]
+            // NOTE: mtplx binds 127.0.0.1 by default.
         }
 
         // Bind to localhost (security + convenience) and the chosen port.
-        // oMLX builds its own bind flags above (single fixed port); the
-        // gguf/mlx backends get the shared --host/--port pair.
-        if model.backend != .omlx {
+        // oMLX and MTPLX build their own bind flags (fixed port, localhost default).
+        if model.backend != .omlx && model.backend != .mtplx {
             args += ["--host", "127.0.0.1", "--port", "\(port)"]
         }
 
@@ -1052,6 +1126,7 @@ class ServerManager {
             case .gguf: installHint = "brew install llama.cpp"
             case .mlx: installHint = "pip install mlx-lm"
             case .omlx: installHint = "brew install jundot/omlx/omlx — or install the oMLX wheel (see the oMLX docs)"
+            case .mtplx: installHint = "pip install mtplx — install in ~/AI/envs/omlx-env with: source ~/AI/envs/omlx-env/bin/activate && pip install mtplx"
             }
             var s = modelStates[model.id] ?? ModelState()
             s.isRunning = false
@@ -2092,6 +2167,14 @@ class ServerManager {
         settings.omlxModelDir = d.string(forKey: "omlxModelDir") ?? ""
         settings.omlxPort = d.integer(forKey: "omlxPort")
         if settings.omlxPort == 0 { settings.omlxPort = 8000 }
+
+        // MTPLX settings.
+        settings.mtplxServerPath = d.string(forKey: "mtplxServerPath") ?? ""
+        let mp = d.integer(forKey: "mtplxPort")
+        settings.mtplxPort = mp == 0 ? 8085 : mp
+        let md = d.integer(forKey: "mtplxDepth")
+        settings.mtplxDepth = md == 0 ? 3 : md
+        settings.mtplxProfile = d.string(forKey: "mtplxProfile") ?? "turbo"
         // Global extra args default to empty.
         settings.globalExtraArgs = d.string(forKey: "globalExtraArgs") ?? ""
         // Chat template override: empty = use built-in template.
@@ -2156,6 +2239,10 @@ class ServerManager {
         d.set(settings.omlxServerPath, forKey: "omlxServerPath")
         d.set(settings.omlxModelDir, forKey: "omlxModelDir")
         d.set(settings.omlxPort, forKey: "omlxPort")
+        d.set(settings.mtplxServerPath, forKey: "mtplxServerPath")
+        d.set(settings.mtplxPort, forKey: "mtplxPort")
+        d.set(settings.mtplxDepth, forKey: "mtplxDepth")
+        d.set(settings.mtplxProfile, forKey: "mtplxProfile")
         d.set(settings.globalExtraArgs, forKey: "globalExtraArgs")
         d.set(settings.chatTemplatePath, forKey: "chatTemplatePath")
         d.set(settings.enableMtp, forKey: "enableMtp")

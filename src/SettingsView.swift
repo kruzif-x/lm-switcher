@@ -167,6 +167,10 @@ struct SettingsView: View {
     @State private var omlxServerPath: String
     @State private var omlxModelDir: String
     @State private var omlxPortStr: String
+    @State private var mtplxServerPath: String
+    @State private var mtplxPortStr: String
+    @State private var mtplxDepthStr: String
+    @State private var mtplxProfile: String
     @State private var globalExtraArgs: String
     @State private var chatTemplatePath: String
     @State private var enableMtp: Bool
@@ -202,6 +206,10 @@ struct SettingsView: View {
         _omlxServerPath   = State(initialValue: manager.settings.omlxServerPath)
         _omlxModelDir     = State(initialValue: manager.settings.omlxModelDir)
         _omlxPortStr      = State(initialValue: "\(manager.settings.omlxPort)")
+        _mtplxServerPath  = State(initialValue: manager.settings.mtplxServerPath)
+        _mtplxPortStr     = State(initialValue: "\(manager.settings.mtplxPort)")
+        _mtplxDepthStr    = State(initialValue: "\(manager.settings.mtplxDepth)")
+        _mtplxProfile     = State(initialValue: manager.settings.mtplxProfile)
         _globalExtraArgs  = State(initialValue: manager.settings.globalExtraArgs)
         _chatTemplatePath = State(initialValue: manager.settings.chatTemplatePath)
         _enableMtp        = State(initialValue: manager.settings.enableMtp)
@@ -277,6 +285,10 @@ struct SettingsView: View {
             repeatPenalty: $repeatPenalty, seedStr: $seedStr,
             cpuThreadsStr: $cpuThreadsStr, batchSizeStr: $batchSizeStr,
             mlock: $mlock, noMmap: $noMmap, mlxMaxKvSizeStr: $mlxMaxKvSizeStr))
+        .onChange(of: mtplxServerPath) { _, v in manager.settings.mtplxServerPath = v }
+        .onChange(of: mtplxPortStr)    { _, v in manager.settings.mtplxPort = Int(v) ?? 8085 }
+        .onChange(of: mtplxDepthStr)   { _, v in manager.settings.mtplxDepth = Int(v) ?? 3 }
+        .onChange(of: mtplxProfile)    { _, v in manager.settings.mtplxProfile = v }
     }
 
     // MARK: - Save / Restore
@@ -299,6 +311,10 @@ struct SettingsView: View {
         omlxServerPath  = d.omlxServerPath
         omlxModelDir    = d.omlxModelDir
         omlxPortStr     = "\(d.omlxPort)"
+        mtplxServerPath = d.mtplxServerPath
+        mtplxPortStr    = "\(d.mtplxPort)"
+        mtplxDepthStr   = "\(d.mtplxDepth)"
+        mtplxProfile    = d.mtplxProfile
         globalExtraArgs = d.globalExtraArgs
         chatTemplatePath = d.chatTemplatePath
         enableMtp       = d.enableMtp
@@ -344,6 +360,10 @@ struct SettingsView: View {
         omlxServerPath  = s.omlxServerPath
         omlxModelDir    = s.omlxModelDir
         omlxPortStr     = "\(s.omlxPort)"
+        mtplxServerPath = s.mtplxServerPath
+        mtplxPortStr    = "\(s.mtplxPort)"
+        mtplxDepthStr   = "\(s.mtplxDepth)"
+        mtplxProfile    = s.mtplxProfile
         globalExtraArgs = s.globalExtraArgs
         chatTemplatePath = s.chatTemplatePath
         enableMtp       = s.enableMtp
@@ -473,6 +493,28 @@ struct SettingsView: View {
                 text: $omlxPortStr
             )
             .help("Shared TCP port for the oMLX server (all oMLX models).")
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "mtplx",
+                hint: "MTPLX binary — serves one model with native MTP spec-decode (pip install mtplx)",
+                text: $mtplxServerPath,
+                isDir: false,
+                checkExecutable: true
+            ) { url in
+                mtplxServerPath = url.path
+                manager.settings.mtplxServerPath = url.path
+            }
+            Divider().padding(.leading, 14)
+            HStack(spacing: 0) {
+                shortFieldRow(label: "MTPLX port", placeholder: "8085", text: $mtplxPortStr)
+                    .help("TCP port for MTPLX server.")
+                Divider().frame(width: 1)
+                shortFieldRow(label: "Depth", placeholder: "3", text: $mtplxDepthStr)
+                    .help("MTP draft depth (1-3). 3 recommended.")
+                Divider().frame(width: 1)
+                shortFieldRow(label: "Profile", placeholder: "turbo", text: $mtplxProfile)
+                    .help("turbo, sustained, or exact.")
+            }
             Divider().padding(.leading, 14)
             pathRow(
                 label: "Chat template",
@@ -1150,8 +1192,8 @@ struct SettingsView: View {
                                   "No account, no cloud, no data leaving your machine. You download model files; this app starts and stops them for you.",
                                   mono: false)
                         helpEntry("Step 0 — Install an engine (one-time)",
-                                  "In Terminal: brew install llama.cpp — that covers GGUF models, which is all most people need. For Apple MLX models, also: pip install mlx-lm.",
-                                  detail: "Paths are auto-detected; override in Global → Backends. Defaults: /opt/homebrew/bin/llama-server and the newest Python user-install of mlx_lm.server.",
+                                  "In Terminal: brew install llama.cpp — that covers GGUF models, which is all most people need. For Apple MLX models, also: pip install mlx-lm. For MTPLX models (native MTP spec-decode — fastest Mac speedups), install: pip install mtplx.",
+                                  detail: "Paths are auto-detected; override in Global → Backends. Defaults: /opt/homebrew/bin/llama-server, the newest Python user-install of mlx_lm.server, and your active venv's mtplx (LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first).",
                                   mono: false)
                         helpEntry("Step 1 — Download a model",
                                   "Models are free files from Hugging Face (links below). Not sure what fits your Mac? Use the table in section 5 — e.g. with 16 GB of RAM, search \"Qwen3.5 9B GGUF\" and download the file ending in Q4_K_M.gguf.",
@@ -1225,7 +1267,10 @@ struct SettingsView: View {
                         Group {
                             helpSub("Backends card")
                             helpEntry("llama-server / mlx_lm.server", "Where the two engines live. Only touch these if you installed an engine somewhere unusual. A red \"not found\" tag means nothing executable exists at that path yet — install the engine (section 1) or fix the path.")
-                            helpEntry("Chat template", "Leave empty — the model's built-in template is right for normal chat. Set a custom .jinja file only if a coding agent misbehaves with tool calls.",
+                            helpEntry("mtplx", "MTPLX binary — the pipeline for models with native MTP spec-decode (e.g. Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed). Leave empty to auto-detect: LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first, then ~/.local/bin/mtplx, then PATH.", 
+                                      detail: "Recognized automatically when a model directory contains mtplx_runtime.json. One server per model, port/depth/profile configurable here and per-model.")
+                            helpEntry("MTPLX port · Depth · Profile", "Port for MTPLX servers (default 8085). Depth = MTP draft depth 1–3 (3 recommended — see measured results: depth 1–2 are no faster than AR on M2 Max, depth 3 is +38%). Profile: turbo (fastest), sustained, or exact.")
+                            helpEntry("Chat template", "Leave empty — the model's built-in template is right for normal chat. Set a custom .jinja file only if a coding agent misbehaves with tool calls. MTPLX models always use their own tokenizer template — the chat template field does not apply to them.",
                                       detail: "Passed as --chat-template-file. Needed mainly for Gemma 4 agentic use — see section 6.")
                         }
                         Group {
@@ -1235,7 +1280,7 @@ struct SettingsView: View {
                                       detail: "For tool-calling/agentic harnesses specifically, reports are mixed — some setups do better with it ON, some get more reliable tool calls with it OFF (a few harnesses mishandle tool calls made mid-\"thinking\"). Worth testing both ways with your model and harness rather than assuming. OFF sends --chat-template-kwargs {\"enable_thinking\":false}.")
                             helpEntry("Suppress reasoning", "Whether the thinking is SHOWN to your chat app. The model still reasons (if Thinking mode is ON); this just hides the internal monologue from apps that would crash or print it. Leave ON unless your app displays reasoning natively.",
                                       detail: "Strips Gemma 4's reasoning_content field; applied as --reasoning off --reasoning-format none.")
-                            helpEntry("MTP (speed boost)", "Lets supported models write several words at a time. Leave ON; models without MTP simply ignore it.",
+                            helpEntry("MTP (speed boost)", "Lets supported models write several words at a time. Leave ON; models without MTP simply ignore it. This toggle is for llama-server — MTPLX models (mtplx_runtime.json) handle their own MTP and ignore this setting.",
                                       detail: "Detected via companion mtp-*.gguf (same folder or MTP/ subfolder) or -MTP- in the filename; attached with --spec-type draft-mtp.")
                             helpEntry("DFlash (speed boost)", "Block-diffusion speculative decoding for Muse Glimmer and similar models. Leave ON; skipped automatically when no dflash-*.gguf companion sits next to the model.",
                                       detail: "Attached with --spec-type draft-dflash --spec-draft-model <dflash-*.gguf> --spec-draft-n-max 15. On M2 Max this takes Muse Glimmer Q4 from ~9 to ~25 t/s. Mutually exclusive with MTP — DFlash is skipped when an MTP head is attached.")
@@ -1632,7 +1677,7 @@ struct SettingsView: View {
                     }
                     Text("LM Switcher")
                         .font(.title2).fontWeight(.medium)
-                    Text("Version 0.9b (beta)")
+                    Text("Version 0.92b (beta)")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.top, 24)

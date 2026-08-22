@@ -86,6 +86,22 @@ OMLX_MODEL_DIR="${OMLX_MODEL_DIR:-$HOME/models/omlx}"
 OMLX_PORT="${OMLX_PORT:-$(defaults read local.llama-menubar omlxPort 2>/dev/null)}"
 OMLX_PORT="${OMLX_PORT:-8000}"
 
+# MTPLX (mtplx, native MTP spec-decode) — one server per model.
+# Binary: env var, then saved setting, then omlx-env pip install, then PATH.
+MTPLX_SERVER="${MTPLX_SERVER:-$(defaults read local.llama-menubar mtplxServerPath 2>/dev/null)}"
+if [[ -z "$MTPLX_SERVER" ]]; then
+    for _c in "$HOME/AI/envs/omlx-env/bin/mtplx" "$HOME/.local/bin/mtplx" /opt/homebrew/bin/mtplx; do
+        [[ -x "$_c" ]] && MTPLX_SERVER="$_c" && break
+    done
+fi
+MTPLX_SERVER="${MTPLX_SERVER:-mtplx}"
+MTPLX_PORT="${MTPLX_PORT:-$(defaults read local.llama-menubar mtplxPort 2>/dev/null)}"
+MTPLX_PORT="${MTPLX_PORT:-8085}"
+MTPLX_DEPTH="${MTPLX_DEPTH:-$(defaults read local.llama-menubar mtplxDepth 2>/dev/null)}"
+MTPLX_DEPTH="${MTPLX_DEPTH:-3}"
+MTPLX_PROFILE="${MTPLX_PROFILE:-$(defaults read local.llama-menubar mtplxProfile 2>/dev/null)}"
+MTPLX_PROFILE="${MTPLX_PROFILE:-turbo}"
+
 # B1 fix: restrictive umask. PID files and server logs (which capture
 # stdout/stderr — model paths, sometimes verbose content) must be
 # owner-only. The default umask (022) leaves them world-readable (644),
@@ -225,6 +241,8 @@ list_all_models() {
     while IFS= read -r d; do
         case "$d" in "$OMLX_MODEL_DIR"/*) continue ;; esac
         if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
+            # Skip MTPLX models (have mtplx_runtime.json)
+            [[ -f "$d/mtplx_runtime.json" ]] && continue
             echo "mlx|$d|$(basename "$d")"
         fi
     done < <(find "$MODELS_DIR" -type d 2>/dev/null)
@@ -234,12 +252,22 @@ list_all_models() {
     # starts/stops the same `omlx serve` process. (The MLX scan above
     # already skips this tree, so no exclusion needed here — including
     # when OMLX_MODEL_DIR sits inside MODELS_DIR.)
-    [[ -d "$OMLX_MODEL_DIR" ]] || return 0
+    if [[ -d "$OMLX_MODEL_DIR" ]]; then
+        while IFS= read -r d; do
+            if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
+                echo "omlx|$d|$(basename "$d")"
+            fi
+        done < <(find "$OMLX_MODEL_DIR" -maxdepth 2 -type d 2>/dev/null)
+    fi
+
+    # MTPLX: directories with config.json + safetensors + mtplx_runtime.json.
+    # These sit inside MODELS_DIR alongside MLX dirs — they were excluded from
+    # the MLX scan above so they appear here as 'mtplx' backend.
     while IFS= read -r d; do
-        if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
-            echo "omlx|$d|$(basename "$d")"
+        if [[ -f "$d/mtplx_runtime.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
+            echo "mtplx|$d|$(basename "$d")"
         fi
-    done < <(find "$OMLX_MODEL_DIR" -maxdepth 2 -type d 2>/dev/null)
+    done < <(find "$MODELS_DIR" -maxdepth 3 -type d 2>/dev/null)
 }
 
 
@@ -484,6 +512,9 @@ load_model() {
     local port
     if [[ "$type" == "omlx" ]]; then
         port=$OMLX_PORT
+    elif [[ "$type" == "mtplx" ]]; then
+        port=$(per_model_port "$id_hash")
+        [[ "$port" -le 0 ]] && port=$MTPLX_PORT
     elif [[ -n "$FORCE_PORT" && "$FORCE_PORT" -gt 0 ]]; then
         port=$FORCE_PORT
     elif [[ "$preferred" -gt 0 ]]; then
@@ -680,6 +711,12 @@ load_model() {
         # via ~/.omlx/model_settings.json. Binds 127.0.0.1 by default.
         executable="$OMLX_SERVER"
         args=("serve" "--model-dir" "$OMLX_MODEL_DIR" "--port" "$port")
+    elif [[ "$type" == "mtplx" ]]; then
+        # MTPLX: one server per model with native MTP spec-decode.
+        # Binds 127.0.0.1 by default (no --host needed).
+        executable="$MTPLX_SERVER"
+        args=("serve" "--model" "$path" "--port" "$port"
+              "--depth" "$MTPLX_DEPTH" "--profile" "$MTPLX_PROFILE" "--no-auth")
     fi
 
     # Append any user-provided extra args (split on whitespace).
