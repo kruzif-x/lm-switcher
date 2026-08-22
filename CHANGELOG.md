@@ -5,7 +5,7 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.92b] - 2026-08-23
+## [0.9.2b] - 2026-08-23
 
 **Beta release.**
 
@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **MTPLX backend** (ModelBackend.mtplx): fourth backend — MTP speculative-decoding via `mtplx serve`. Models are MLX dirs carrying `mtplx_runtime.json` (excluded from the MLX scan); one server per model, per-model port override or global `mtplxPort` (default 8085). Settings: `mtplxServerPath`, `mtplxPort`, `mtplxDepth` (1-3, default 3), `mtplxProfile` (turbo/sustained/exact). CLI (`llama list`/`load`/`status`/`unload`) and MCP (`list_models`/`load_model`/`unload_model`) parity.
 
 ### Changed
-- Version bumped to 0.92b (CFBundleShortVersionString/CFBundleVersion, MCP `serverVersion`, about panel, README, HANDOFF).
+- Version bumped to 0.9.2b (CFBundleShortVersionString/CFBundleVersion, MCP `serverVersion`, about panel, README, HANDOFF).
 
 ## [0.9b] - 2026-08-17
 
