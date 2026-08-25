@@ -1,4 +1,4 @@
-# LM Switcher
+# LM Switcher (MacOS Apple Silicon Only)
 
 A macOS menu bar app + CLI + MCP for managing local LLM models (GGUF and Apple MLX/oMLX/MTPLX).
 
