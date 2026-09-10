@@ -880,6 +880,13 @@ class ServerManager {
         let overrides = perModelOverrideEnabled(for: model)
         let preferredPort = overrides ? perModelPort(for: model) : 0
         let port = preferredPort > 0 ? preferredPort : nextAvailablePort()
+        // The port the server will ACTUALLY bind. oMLX and MTPLX ignore
+        // the generic `port` above (each uses its own fixed port), so
+        // track the real value in `statePort` for menu display + the
+        // Copy endpoint. Regression note (2026-09-10): MTPLX spawned on
+        // mtplxPort=8085 but state kept 8080 — the menu showed a port
+        // nobody was listening on.
+        var statePort = port
         let ctx = overrides ? perModelCtxSize(for: model) : settings.defaultCtxSize
 
         // Helper: get a setting value — per-model override if enabled + exists,
@@ -1067,6 +1074,7 @@ class ServerManager {
             }
             let root = resolvedOmlxModelDir()
             args += ["serve", "--model-dir", root]
+            statePort = settings.omlxPort > 0 ? settings.omlxPort : 8000
             if settings.omlxPort > 0 {
                 args += ["--port", "\(settings.omlxPort)"]
             }
@@ -1076,7 +1084,9 @@ class ServerManager {
             executable = resolvedMtplxPath()
             args += ["serve", "--model", model.path.path]
             let mtpPort = perModelPort(for: model)
-            args += ["--port", "\(mtpPort != 0 ? mtpPort : settings.mtplxPort)"]
+            let resolvedMtpPort = mtpPort != 0 ? mtpPort : settings.mtplxPort
+            args += ["--port", "\(resolvedMtpPort)"]
+            statePort = resolvedMtpPort
             args += ["--depth", "\(settings.mtplxDepth)"]
             args += ["--profile", settings.mtplxProfile]
             args += ["--no-auth"]
@@ -1185,7 +1195,7 @@ class ServerManager {
             var s = modelStates[model.id] ?? ModelState()
             s.isRunning = true
             s.pid = task.processIdentifier
-            s.port = port
+            s.port = statePort
             s.ctxSize = ctx
             s.lastError = nil   // clear any stale error from a prior failed load
             modelStates[model.id] = s
@@ -2061,8 +2071,14 @@ class ServerManager {
 
         for line in output.split(separator: "\n") {
             let s = String(line)
+            // MTPLX servers exec as `python -m mtplx.server.openai ...` —
+            // argv never contains "mtplx serve" (the CLI form is replaced
+            // by exec). Match the module name as well (2026-09-10 fix),
+            // otherwise externally/CLI-launched mtplx servers stay
+            // invisible to the 3s sync and can never be adopted.
             guard s.contains("llama-server") || s.contains("mlx_lm.server")
-                || s.contains("omlx serve") || s.contains("omlx-server") else { continue }
+                || s.contains("omlx serve") || s.contains("omlx-server")
+                || s.contains("mtplx.server") || s.contains("mtplx serve") else { continue }
 
             // oMLX: one server serves every model under the oMLX root.
             // Map it onto every discovered oMLX entry (shared pid/port).

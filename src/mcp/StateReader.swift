@@ -226,7 +226,7 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
             let text = String(line).trimmingCharacters(in: .whitespaces)
             guard text.contains("llama-server") || text.contains("mlx_lm")
                 || text.contains("omlx serve") || text.contains("omlx-server")
-                || text.contains("mtplx serve") else { continue }
+                || text.contains("mtplx.server") || text.contains("mtplx serve") else { continue }
             guard let sp = text.firstIndex(of: " "), let pid = Int32(text[..<sp]),
                   !seenPids.contains(pid) else { continue }
             let args = String(text[sp...])
@@ -246,7 +246,13 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
                 continue
             }
 
-            guard let path = firstMatch(#"(?:-m|--model) (\S+)"#, in: args),
+            // MTPLX: the argv carries `-P -m mtplx.server.openai` BEFORE
+            // `--model <dir>` — the generic `(?:-m|--model)` first match
+            // would capture "mtplx.server.openai" and never map to a
+            // model. Use the explicit `--model` form for mtplx lines.
+            let pathPattern = (args.contains("mtplx.server") || args.contains("mtplx serve"))
+                ? #"--model (\S+)"# : #"(?:-m|--model) (\S+)"#
+            guard let path = firstMatch(pathPattern, in: args),
                   let model = byPath[path] else { continue }   // not one of ours
             let port = firstMatch(#"--port (\d+)"#, in: args).flatMap(Int.init) ?? 0
             let ctx = firstMatch(#"--ctx-size (\d+)"#, in: args).flatMap(Int.init)

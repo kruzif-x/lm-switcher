@@ -5,6 +5,23 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **MTPLX showed the wrong port in the menu bar** — a MTPLX load spawned
+  the server on its real port (e.g. 8085) but the menu / Copy endpoint
+  displayed the generic `nextAvailablePort()` value (e.g. 8080).
+  `loadModel()` now stores the backend's resolved port (`statePort`:
+  per-model override / mtplxPort / omlxPort) in model state.
+- **MTPLX servers invisible to the 3s ps-sync** — the scan matched
+  `mtplx serve`, but the server actually runs as
+  `python -m mtplx.server.openai`, so externally-launched / CLI MTPLX
+  servers were never adopted (menu + MCP status showed nothing).
+  `collectExternalStatesFromPS` and the MCP `StateReader` now also match
+  `mtplx.server`; StateReader extracts MTPLX model paths via `--model`
+  (the generic `-m` match hit `-m mtplx.server.openai`).
+
 ## [0.9.2b] - 2026-08-23
 
 **Beta release.**
