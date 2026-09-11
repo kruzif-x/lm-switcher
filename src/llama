@@ -762,7 +762,10 @@ load_model() {
         if [[ "$_ds4_lname" == *qwen3.8* ]]; then
             _ds4_ple=$(find "$_ds4_dir" -maxdepth 1 -type f -iname '*PLE*.gguf' 2>/dev/null | head -1)
         fi
-        args=("-m" "$path" "--metal" "--prefill-chunk" "1024" "--port" "$port")
+        args=("-m" "$path" "--metal" "--prefill-chunk" "1024" "--port" "$port" "--cors")
+        # --cors adds Access-Control-Allow-* headers so local browser chat
+        # pages (file:// or other origins) can call the API. Loopback-only
+        # binding keeps it local.
         # The engine compiles its Metal kernels from metal/*.metal relative
         # to the working directory — point it at the engine checkout so
         # startup works from any launch directory (menu bar, MCP, CLI).

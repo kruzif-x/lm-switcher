@@ -1197,6 +1197,9 @@ class ServerManager {
             // lowest-memory choice; context comes from the global /
             // per-model ctx setting (64K is the docs' daily context).
             args += ["--metal", "--prefill-chunk", "1024"]
+            // --cors adds Access-Control-Allow-* headers so local browser
+            // chat pages (file:// or other origins) can call the API.
+            args += ["--cors"]
             if ctx > 0 {
                 args += ["--ctx", "\(ctx)"]
             }
