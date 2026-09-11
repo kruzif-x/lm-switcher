@@ -211,6 +211,9 @@ enum McpTools {
         if m.backend == "GGUF" {
             let p = Prefs.string("llamaServerPath")
             path = p.isEmpty ? "/opt/homebrew/bin/llama-server" : p
+        } else if m.backend == "DS4" {
+            let p = Prefs.string("ds4ServerPath")
+            path = p.isEmpty ? NSHomeDirectory() + "/Projects/ds4-metal/ds4-server" : p
         } else {
             let p = Prefs.string("mlxServerPath")
             if p.isEmpty {

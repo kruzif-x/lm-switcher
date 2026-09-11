@@ -171,6 +171,9 @@ struct SettingsView: View {
     @State private var mtplxPortStr: String
     @State private var mtplxDepthStr: String
     @State private var mtplxProfile: String
+    @State private var ds4ServerPath: String
+    @State private var ds4ModelDir: String
+    @State private var ds4PortStr: String
     @State private var globalExtraArgs: String
     @State private var chatTemplatePath: String
     @State private var enableMtp: Bool
@@ -210,6 +213,9 @@ struct SettingsView: View {
         _mtplxPortStr     = State(initialValue: "\(manager.settings.mtplxPort)")
         _mtplxDepthStr    = State(initialValue: "\(manager.settings.mtplxDepth)")
         _mtplxProfile     = State(initialValue: manager.settings.mtplxProfile)
+        _ds4ServerPath    = State(initialValue: manager.settings.ds4ServerPath)
+        _ds4ModelDir      = State(initialValue: manager.settings.ds4ModelDir)
+        _ds4PortStr       = State(initialValue: "\(manager.settings.ds4Port)")
         _globalExtraArgs  = State(initialValue: manager.settings.globalExtraArgs)
         _chatTemplatePath = State(initialValue: manager.settings.chatTemplatePath)
         _enableMtp        = State(initialValue: manager.settings.enableMtp)
@@ -289,6 +295,9 @@ struct SettingsView: View {
         .onChange(of: mtplxPortStr)    { _, v in manager.settings.mtplxPort = Int(v) ?? 8085 }
         .onChange(of: mtplxDepthStr)   { _, v in manager.settings.mtplxDepth = Int(v) ?? 3 }
         .onChange(of: mtplxProfile)    { _, v in manager.settings.mtplxProfile = v }
+        .onChange(of: ds4ServerPath)   { _, v in manager.settings.ds4ServerPath = v }
+        .onChange(of: ds4ModelDir)     { _, v in manager.settings.ds4ModelDir = v; manager.refreshModels() }
+        .onChange(of: ds4PortStr)      { _, v in manager.settings.ds4Port = Int(v) ?? 8090 }
     }
 
     // MARK: - Save / Restore
@@ -315,6 +324,9 @@ struct SettingsView: View {
         mtplxPortStr    = "\(d.mtplxPort)"
         mtplxDepthStr   = "\(d.mtplxDepth)"
         mtplxProfile    = d.mtplxProfile
+        ds4ServerPath   = d.ds4ServerPath
+        ds4ModelDir     = d.ds4ModelDir
+        ds4PortStr      = "\(d.ds4Port)"
         globalExtraArgs = d.globalExtraArgs
         chatTemplatePath = d.chatTemplatePath
         enableMtp       = d.enableMtp
@@ -364,6 +376,9 @@ struct SettingsView: View {
         mtplxPortStr    = "\(s.mtplxPort)"
         mtplxDepthStr   = "\(s.mtplxDepth)"
         mtplxProfile    = s.mtplxProfile
+        ds4ServerPath   = s.ds4ServerPath
+        ds4ModelDir     = s.ds4ModelDir
+        ds4PortStr      = "\(s.ds4Port)"
         globalExtraArgs = s.globalExtraArgs
         chatTemplatePath = s.chatTemplatePath
         enableMtp       = s.enableMtp
@@ -515,6 +530,36 @@ struct SettingsView: View {
                 shortFieldRow(label: "Profile", placeholder: "turbo", text: $mtplxProfile)
                     .help("turbo, sustained, or exact.")
             }
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "ds4-server",
+                hint: "DwarfStar engine — serves curated GGUFs (DeepSeek V4, GLM, Qwen3.8-Flash-Next); one server per model",
+                text: $ds4ServerPath,
+                isDir: false,
+                checkExecutable: true
+            ) { url in
+                ds4ServerPath = url.path
+                manager.settings.ds4ServerPath = url.path
+            }
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "DS4 model dir",
+                hint: "Directory with ds4-served GGUFs (default: the ds4-metal checkout's gguf/ folder)",
+                text: $ds4ModelDir,
+                isDir: true,
+                checkExecutable: false
+            ) { url in
+                ds4ModelDir = url.path
+                manager.settings.ds4ModelDir = url.path
+                manager.refreshModels()
+            }
+            Divider().padding(.leading, 14)
+            inlineFieldRow(
+                label: "DS4 port",
+                placeholder: "8090",
+                text: $ds4PortStr
+            )
+            .help("TCP port for DS4 server instances (default 8090).")
             Divider().padding(.leading, 14)
             pathRow(
                 label: "Chat template",
@@ -1270,6 +1315,10 @@ struct SettingsView: View {
                             helpEntry("mtplx", "MTPLX binary — the pipeline for models with native MTP spec-decode (e.g. Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed). Leave empty to auto-detect: LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first, then ~/.local/bin/mtplx, then PATH.", 
                                       detail: "Recognized automatically when a model directory contains mtplx_runtime.json. One server per model, port/depth/profile configurable here and per-model.")
                             helpEntry("MTPLX port · Depth · Profile", "Port for MTPLX servers (default 8085). Depth = MTP draft depth 1–3 (3 recommended — see measured results: depth 1–2 are no faster than AR on M2 Max, depth 3 is +38%). Profile: turbo (fastest), sustained, or exact.")
+                            helpEntry("ds4-server", "DwarfStar engine binary — a purpose-built Metal engine for curated large models (DeepSeek V4 Flash/PRO, GLM 5.x, Qwen3.8-Flash-Next). Leave empty to auto-detect ~/Projects/ds4-metal/ds4-server, then PATH.",
+                                      detail: "Models live in their own directory (default ~/Projects/ds4-metal/gguf) and are recognized automatically; one server per model. Qwen3.8-Flash-Next models additionally need their PLE sidecar next to the model file — LM Switcher attaches it automatically.")
+                            helpEntry("DS4 model dir · DS4 port", "Directory with ds4-served GGUFs (default: the ds4-metal checkout's gguf/ folder). Port for DS4 servers, default 8090 — clear of llama.cpp 8080, MTPLX 8085, and oMLX 8000.",
+                                      detail: "DS4 models launch at the daily settings measured for 64 GB Macs: 1024-token prefill chunks, MTP speculation with exact sampling, context from Context size above. Memory: ~44.8 GiB planned at 64K context, plus demand-paged PLE pages.")
                             helpEntry("Chat template", "Leave empty — the model's built-in template is right for normal chat. Set a custom .jinja file only if a coding agent misbehaves with tool calls. MTPLX models always use their own tokenizer template — the chat template field does not apply to them.",
                                       detail: "Passed as --chat-template-file. Needed mainly for Gemma 4 agentic use — see section 6.")
                         }
@@ -1677,7 +1726,7 @@ struct SettingsView: View {
                     }
                     Text("LM Switcher")
                         .font(.title2).fontWeight(.medium)
-                    Text("Version 0.9.2b (beta)")
+                    Text("Version 0.9.3b (beta)")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.top, 24)

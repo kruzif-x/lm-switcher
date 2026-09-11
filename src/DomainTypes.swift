@@ -92,6 +92,11 @@ enum ModelBackend: String, CaseIterable, Identifiable {
     /// Binary is `mtplx serve` (installed via pip, typically in the
     /// oMLX env or a dedicated venv).
     case mtplx = "MTPLX"
+    /// DwarfStar (ds4-server). A purpose-built Metal engine serving
+    /// curated GGUF models (DeepSeek V4 Flash/PRO, GLM 5.x,
+    /// Qwen3.8-Flash-Next). One server per model; Qwen3.8 models also
+    /// require their external PLE n-gram sidecar (passed as --ple).
+    case ds4 = "DS4"
 
     /// `Identifiable` conformance uses the raw value (e.g. "GGUF").
     var id: String { rawValue }
@@ -107,6 +112,7 @@ enum ModelBackend: String, CaseIterable, Identifiable {
         case .mlx: return "cpu"
         case .omlx: return "server.rack"
         case .mtplx: return "forward"
+        case .ds4: return "star"
         }
     }
 }
@@ -233,6 +239,19 @@ struct AppSettings {
 
     /// MTPLX profile: turbo, sustained, exact, etc.
     var mtplxProfile: String = "turbo"
+
+    /// Absolute path to the `ds4-server` binary (DwarfStar engine).
+    /// Empty = auto-resolve (`~/Projects/ds4-metal/ds4-server`, then PATH).
+    var ds4ServerPath: String = ""
+
+    /// Directory scanned for ds4-served GGUFs (the ds4-metal checkout's
+    /// `gguf/` directory by default). DS4 serves curated model files
+    /// only — llama.cpp-compatible GGUFs are not loadable by ds4-server.
+    var ds4ModelDir: String = ""
+
+    /// TCP port for DS4 server instances. Default 8090 — clear of
+    /// llama.cpp (defaultPort, 8080), MTPLX (8085) and oMLX (8000).
+    var ds4Port: Int = 8090
 
     /// Free-form string of extra args passed to every server process.
     /// Parsed with `parseArgs` in `ServerManager` to handle quoting.

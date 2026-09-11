@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3b] - 2026-09-11
+
+**Beta release.**
+
+### Added
+- **DS4 backend** (ModelBackend.ds4, "DwarfStar") — fifth backend: the purpose-built Metal engine (`ds4-server`, github.com/ivanfioravanti/ds4-metal, branch `qwen3.8-flash-next`) for curated large models (DeepSeek V4 Flash/PRO, GLM 5.x, Qwen3.8-Flash-Next). One server per model; discovery scans `ds4ModelDir` (default `~/Projects/ds4-metal/gguf`) for `.gguf` models — the `ds4flash.gguf` symlink and `*PLE*`/`mmproj-*` companions are skipped, and the tree is excluded from the generic GGUF scan in all three surfaces. Qwen3.8-Flash-Next models get their required PLE n-gram sidecar attached automatically (`--ple`). Launch defaults are the measured daily settings for 64 GB Macs: `--metal --prefill-chunk 1024` (plus `--chdir` to the engine directory so the runtime finds its Metal kernels from any launch CWD), context from the global/per-model ctx setting, and `--mtp --mtp-exact-sampling` gated by the MTP toggle (measured +22% decode — 26.6 vs 21.7 t/s at 64K, 81% acceptance — on an M2 Max 64GB, 2026-09-11). Settings: `ds4ServerPath` (auto-resolve `~/Projects/ds4-metal/ds4-server` → PATH), `ds4ModelDir`, `ds4Port` (default 8090 — clear of 8080/8085/8000). CLI (`llama list`/`load`/`status`/`unload`) and MCP (`list_models`/`load_model`/`status`/swap-guard/binary checks) parity.
+
 ### Fixed
 
 - **MTPLX showed the wrong port in the menu bar** — a MTPLX load spawned

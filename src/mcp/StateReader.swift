@@ -66,6 +66,7 @@ func discoverModels() -> [DiscoveredModel] {
     var out: [DiscoveredModel] = []
     // oMLX root known up front so the generic MLX scan below can skip it.
     let omlxDir = Prefs.string("omlxModelDir", default: NSHomeDirectory() + "/models/omlx")
+    let ds4Dir = Prefs.string("ds4ModelDir", default: NSHomeDirectory() + "/Projects/ds4-metal/gguf")
     let modelsDir = Prefs.string("modelsDir")
     if !modelsDir.isEmpty {
         guard let en = fm.enumerator(atPath: modelsDir) else { return [] }
@@ -79,6 +80,9 @@ func discoverModels() -> [DiscoveredModel] {
                 if base.hasPrefix("mmproj-") || base.hasPrefix("mtp-")
                     || base.hasPrefix("dflash-")
                     || base.hasPrefix("modernbert-embed-") { continue }
+                // The DS4 curated dir is owned by the DS4 scan below —
+                // those GGUFs load only in ds4-server.
+                if full.hasPrefix(ds4Dir + "/") { continue }
                 out.append(DiscoveredModel(backend: "GGUF", path: full, name: base))
             } else if base == "config.json" {
                 let dir = (full as NSString).deletingLastPathComponent
@@ -139,6 +143,21 @@ func discoverModels() -> [DiscoveredModel] {
                                                    name: (dir as NSString).lastPathComponent))
                     }
                 }
+            }
+        }
+    }
+    // DS4 (DwarfStar): curated GGUF dir, one server per model.
+    if !ds4Dir.isEmpty, fm.fileExists(atPath: ds4Dir) {
+        if let files = try? fm.contentsOfDirectory(atPath: ds4Dir) {
+            for f in files {
+                let l = f.lowercased()
+                guard l.hasSuffix(".gguf") else { continue }
+                guard !l.hasPrefix("mmproj-"), !l.contains("-ple-") else { continue }
+                let full = ds4Dir + "/" + f
+                // Skip the ds4flash.gguf convenience symlink.
+                if let attrs = try? fm.attributesOfItem(atPath: full),
+                   (attrs[.type] as? FileAttributeType) == .typeSymbolicLink { continue }
+                out.append(DiscoveredModel(backend: "DS4", path: full, name: f))
             }
         }
     }
@@ -226,7 +245,8 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
             let text = String(line).trimmingCharacters(in: .whitespaces)
             guard text.contains("llama-server") || text.contains("mlx_lm")
                 || text.contains("omlx serve") || text.contains("omlx-server")
-                || text.contains("mtplx.server") || text.contains("mtplx serve") else { continue }
+                || text.contains("mtplx.server") || text.contains("mtplx serve")
+                || text.contains("ds4-server") else { continue }
             guard let sp = text.firstIndex(of: " "), let pid = Int32(text[..<sp]),
                   !seenPids.contains(pid) else { continue }
             let args = String(text[sp...])
@@ -251,11 +271,13 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
             // would capture "mtplx.server.openai" and never map to a
             // model. Use the explicit `--model` form for mtplx lines.
             let pathPattern = (args.contains("mtplx.server") || args.contains("mtplx serve"))
-                ? #"--model (\S+)"# : #"(?:-m|--model) (\S+)"#
+                ? #"--model (\S+)"#
+                : (args.contains("ds4-server") ? #"-m (\/.+?\.gguf)"# : #"(?:-m|--model) (\S+)"#)
             guard let path = firstMatch(pathPattern, in: args),
                   let model = byPath[path] else { continue }   // not one of ours
             let port = firstMatch(#"--port (\d+)"#, in: args).flatMap(Int.init) ?? 0
             let ctx = firstMatch(#"--ctx-size (\d+)"#, in: args).flatMap(Int.init)
+                ?? firstMatch(#"--ctx (\d+)"#, in: args).flatMap(Int.init)
             out.append(RunningModel(hash: model.hash, pid: pid, port: port, model: model,
                                     displayName: model.name, backend: model.backend, ctxSize: ctx,
                                     fromPidFile: false))
@@ -274,9 +296,10 @@ func firstMatch(_ pattern: String, in text: String) -> String? {
 
 // MARK: - Health probe
 
-/// llama-server serves /health; mlx_lm.server and oMLX serve /v1/models (§3.3).
+/// llama-server serves /health; mlx_lm.server, oMLX and DS4 serve
+/// /v1/models (§3.3).
 func probeHealthy(port: Int, backend: String) -> Bool {
-    let path = (backend == "MLX" || backend == "oMLX") ? "/v1/models" : "/health"
+    let path = (backend == "MLX" || backend == "oMLX" || backend == "DS4") ? "/v1/models" : "/health"
     guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return false }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2.0
@@ -349,10 +372,13 @@ func stateSnapshot() -> [String: Any] {
     // plus the oMLX shared port (fixed at 8000 by convention, usually
     // outside the llama.cpp scan range).
     let omlxPort = Prefs.int("omlxPort", default: 8000)
+    let ds4Port = Prefs.int("ds4Port", default: 8090)
     var portLo = defaultPort
     var portHi = defaultPort + 200
     if omlxPort < portLo { portLo = omlxPort }
     if omlxPort > portHi { portHi = omlxPort }
+    if ds4Port < portLo { portLo = ds4Port }
+    if ds4Port > portHi { portHi = ds4Port }
     let ourPorts = Dictionary(uniqueKeysWithValues: running.map { ($0.port, $0.displayName) })
     var portsJson: [String: Any] = [:]
     var nextFree = defaultPort

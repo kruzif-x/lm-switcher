@@ -102,6 +102,23 @@ MTPLX_DEPTH="${MTPLX_DEPTH:-3}"
 MTPLX_PROFILE="${MTPLX_PROFILE:-$(defaults read local.llama-menubar mtplxProfile 2>/dev/null)}"
 MTPLX_PROFILE="${MTPLX_PROFILE:-turbo}"
 
+# DS4 (DwarfStar, ds4-server) — one server per model serving curated
+# GGUFs. Qwen3.8-Flash-Next models also need their external PLE sidecar
+# (attached automatically at load). Binary precedence: env var, then the
+# app's saved setting, then the ds4-metal checkout, then PATH. Default
+# model dir: the checkout's gguf/ directory.
+DS4_SERVER="${DS4_SERVER:-$(defaults read local.llama-menubar ds4ServerPath 2>/dev/null)}"
+if [[ -z "$DS4_SERVER" ]]; then
+    for _c in "$HOME/Projects/ds4-metal/ds4-server" /opt/homebrew/bin/ds4-server /usr/local/bin/ds4-server; do
+        [[ -x "$_c" ]] && DS4_SERVER="$_c" && break
+    done
+fi
+DS4_SERVER="${DS4_SERVER:-ds4-server}"
+DS4_PORT="${DS4_PORT:-$(defaults read local.llama-menubar ds4Port 2>/dev/null)}"
+DS4_PORT="${DS4_PORT:-8090}"
+DS4_MODEL_DIR="${DS4_MODEL_DIR:-$(defaults read local.llama-menubar ds4ModelDir 2>/dev/null)}"
+DS4_MODEL_DIR="${DS4_MODEL_DIR:-$HOME/Projects/ds4-metal/gguf}"
+
 # B1 fix: restrictive umask. PID files and server logs (which capture
 # stdout/stderr — model paths, sometimes verbose content) must be
 # owner-only. The default umask (022) leaves them world-readable (644),
@@ -268,6 +285,18 @@ list_all_models() {
             echo "mtplx|$d|$(basename "$d")"
         fi
     done < <(find "$MODELS_DIR" -maxdepth 3 -type d 2>/dev/null)
+
+    # DS4 (DwarfStar): curated gguf dir, one server per model. Skips the
+    # ds4flash.gguf symlink (find -type f excludes links) and sidecar
+    # companions (PLE / mmproj).
+    if [[ -d "$DS4_MODEL_DIR" ]]; then
+        while IFS= read -r f; do
+            local _ds4_bn; _ds4_bn=$(basename "$f")
+            local _ds4_bl; _ds4_bl=$(printf '%s' "$_ds4_bn" | tr '[:upper:]' '[:lower:]')
+            case "$_ds4_bl" in mmproj-*|*-ple-*) continue ;; esac
+            echo "ds4|$f|$_ds4_bn"
+        done < <(find "$DS4_MODEL_DIR" -maxdepth 1 -type f -name '*.gguf' 2>/dev/null)
+    fi
 }
 
 
@@ -515,6 +544,9 @@ load_model() {
     elif [[ "$type" == "mtplx" ]]; then
         port=$(per_model_port "$id_hash")
         [[ "$port" -le 0 ]] && port=$MTPLX_PORT
+    elif [[ "$type" == "ds4" ]]; then
+        port=$(per_model_port "$id_hash")
+        [[ "$port" -le 0 ]] && port=$DS4_PORT
     elif [[ -n "$FORCE_PORT" && "$FORCE_PORT" -gt 0 ]]; then
         port=$FORCE_PORT
     elif [[ "$preferred" -gt 0 ]]; then
@@ -717,6 +749,29 @@ load_model() {
         executable="$MTPLX_SERVER"
         args=("serve" "--model" "$path" "--port" "$port"
               "--depth" "$MTPLX_DEPTH" "--profile" "$MTPLX_PROFILE" "--no-auth")
+    elif [[ "$type" == "ds4" ]]; then
+        # DS4 (DwarfStar): one server per model, curated GGUFs.
+        # Qwen3.8-Flash-Next models REQUIRE the external PLE n-gram
+        # sidecar (--ple) or the load fails; attached here when the model
+        # name says Qwen3.8 and a *PLE*.gguf sits beside it. Binds
+        # 127.0.0.1 by default (no --host needed).
+        executable="$DS4_SERVER"
+        local _ds4_ple=""
+        local _ds4_dir; _ds4_dir=$(dirname "$path")
+        local _ds4_lname; _ds4_lname=$(basename "$path" | tr '[:upper:]' '[:lower:]')
+        if [[ "$_ds4_lname" == *qwen3.8* ]]; then
+            _ds4_ple=$(find "$_ds4_dir" -maxdepth 1 -type f -iname '*PLE*.gguf' 2>/dev/null | head -1)
+        fi
+        args=("-m" "$path" "--metal" "--prefill-chunk" "1024" "--port" "$port")
+        # The engine compiles its Metal kernels from metal/*.metal relative
+        # to the working directory — point it at the engine checkout so
+        # startup works from any launch directory (menu bar, MCP, CLI).
+        [[ "$DS4_SERVER" == */* ]] && args+=("--chdir" "$(dirname "$DS4_SERVER")")
+        [[ "$ctx" -gt 0 ]] && args+=("--ctx" "$ctx")
+        [[ -n "$_ds4_ple" ]] && args+=("--ple" "$_ds4_ple")
+        # MTP: measured +22% decode on M2 Max 64GB (2026-09-11); exact
+        # sampling keeps the ordinary distribution under speculation.
+        [[ "$(pm_bool enableMtp true)" == "true" ]] && args+=("--mtp" "--mtp-exact-sampling")
     fi
 
     # Append any user-provided extra args (split on whitespace).
@@ -756,8 +811,12 @@ load_model() {
     # binary can die after 1s. Poll the port for up to ~15s: success when
     # the port is listening, failure if the process dies first or we time
     # out. `nc -z` is the primary probe; `lsof` is the fallback if nc is
-    # unavailable.
-    local _deadline=$(( $(date +%s) + 15 ))
+    # unavailable. DS4 (ds4-server) loads a ~45 GiB resident model before
+    # its port binds — cold starts measure 15-20s — so it gets a longer
+    # grace window than llama-server/mlx.
+    local _grace=15
+    [[ "$type" == "ds4" ]] && _grace=90
+    local _deadline=$(( $(date +%s) + _grace ))
     local _ready=0
     while (( $(date +%s) < _deadline )); do
         # Process died → stop waiting (load failed).

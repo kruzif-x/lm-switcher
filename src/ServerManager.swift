@@ -575,6 +575,14 @@ class ServerManager {
            FileManager.default.fileExists(atPath: omlxDir.path) {
             omlxEntries(at: omlxDir, depth: 0, into: &entries)
         }
+        // DS4 (DwarfStar) models: curated GGUFs in their own directory
+        // (one server per model). The directory default is the ds4-metal
+        // checkout's gguf/ folder; ggufEntry() excludes that tree from
+        // the generic GGUF scan, so ds4Entries() is the single owner.
+        let ds4Dir = URL(fileURLWithPath: resolvedDs4ModelDir())
+        if FileManager.default.fileExists(atPath: ds4Dir.path) {
+            ds4Entries(at: ds4Dir, into: &entries)
+        }
         // MTPLX models are now discovered inline in scanDirectory()
         // Dedupe by id and sort alphabetically by name.
         var seen = Set<String>()
@@ -686,6 +694,10 @@ class ServerManager {
         if lname.hasPrefix("mtp-") { return nil }
         if lname.hasPrefix("modernbert-embed-") { return nil }
         if lname.hasPrefix("dflash-") { return nil }
+        // The DS4 curated directory is owned by the ds4 scan — those
+        // GGUFs load only in ds4-server (backend .ds4), never as plain
+        // GGUF entries (llama.cpp cannot read the ds4 packing).
+        if url.path.hasPrefix(resolvedDs4ModelDir() + "/") { return nil }
         // Exclude MTP assistant heads (arch *-assistant) that are not
         // standalone models. Quick GGUF header read to check architecture.
         if let arch = readGgufArchitecture(url), arch.hasSuffix("-assistant") {
@@ -764,6 +776,74 @@ class ServerManager {
             return c
         }
         return "mtplx"   // last resort: PATH lookup
+    }
+
+    // MARK: - DS4 backend
+
+    /// Resolved DS4 model directory (settings override, else the
+    /// ds4-metal checkout's `gguf/` directory).
+    func resolvedDs4ModelDir() -> String {
+        if !settings.ds4ModelDir.isEmpty { return settings.ds4ModelDir }
+        return NSHomeDirectory() + "/Projects/ds4-metal/gguf"
+    }
+
+    /// Resolved DS4 server binary (settings override, else the usual
+    /// ds4-metal checkout, else PATH lookup).
+    func resolvedDs4ServerPath() -> String {
+        if !settings.ds4ServerPath.isEmpty { return settings.ds4ServerPath }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let candidates = [
+            home.appendingPathComponent("Projects/ds4-metal/ds4-server").path,
+            "/opt/homebrew/bin/ds4-server",
+            "/usr/local/bin/ds4-server",
+        ]
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
+            return c
+        }
+        return "ds4-server"   // last resort: PATH lookup
+    }
+
+    /// Find the required external PLE n-gram sidecar for a model.
+    /// Qwen3.8-Flash-Next models refuse to load without one; other DS4
+    /// models don't use one. Returns the first `*PLE*.gguf` sitting next
+    /// to the model file, or nil.
+    private func findPleSidecar(for modelURL: URL) -> URL? {
+        let lname = modelURL.lastPathComponent.lowercased()
+        guard lname.contains("qwen3.8") else { return nil }
+        let dir = modelURL.deletingLastPathComponent()
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil
+        ) else { return nil }
+        for f in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let n = f.lastPathComponent.lowercased()
+            if n.hasSuffix(".gguf") && n.contains("ple") { return f }
+        }
+        return nil
+    }
+
+    /// Scan the DS4 curated directory for model files. One server per
+    /// model; the `ds4flash.gguf` convenience symlink and companion files
+    /// (PLE sidecar, mmproj) are not models.
+    private func ds4Entries(at root: URL, into entries: inout [ModelEntry]) {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for url in contents {
+            guard url.pathExtension.lowercased() == "gguf" else { continue }
+            if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true { continue }
+            let lname = url.lastPathComponent.lowercased()
+            if lname.hasPrefix("mmproj-") { continue }
+            if lname.contains("-ple-") { continue }
+            entries.append(ModelEntry(
+                id: url.path,
+                name: url.lastPathComponent,
+                path: url,
+                backend: .ds4
+            ))
+        }
     }
 
     /// Scan modelsDir for MTPLX-format model directories.
@@ -1091,11 +1171,48 @@ class ServerManager {
             args += ["--profile", settings.mtplxProfile]
             args += ["--no-auth"]
             // NOTE: mtplx binds 127.0.0.1 by default.
+        case .ds4:
+            // DS4 (DwarfStar): one server per model, curated GGUFs.
+            // Qwen3.8-Flash-Next models REQUIRE the external PLE n-gram
+            // sidecar (--ple) or the load fails.
+            executable = resolvedDs4ServerPath()
+            args += ["-m", model.path.path]
+            if let ple = findPleSidecar(for: model.path) {
+                args += ["--ple", ple.path]
+            }
+            // The engine compiles its Metal kernels from `metal/*.metal`
+            // relative to the working directory — point it at the engine
+            // checkout regardless of how we were launched (menu bar, MCP,
+            // CLI all spawn from different CWDs).
+            let ds4EngineDir = (executable as NSString).deletingLastPathComponent
+            if !ds4EngineDir.isEmpty {
+                args += ["--chdir", ds4EngineDir]
+            }
+            let ds4PreferredPort = perModelPort(for: model)
+            let resolvedDs4Port = ds4PreferredPort != 0 ? ds4PreferredPort : settings.ds4Port
+            args += ["--port", "\(resolvedDs4Port)"]
+            statePort = resolvedDs4Port
+            // Daily settings measured for a 64 GB Mac (M2 Max, 2026-09-11):
+            // 1024-token prefill chunks are throughput-neutral and the
+            // lowest-memory choice; context comes from the global /
+            // per-model ctx setting (64K is the docs' daily context).
+            args += ["--metal", "--prefill-chunk", "1024"]
+            if ctx > 0 {
+                args += ["--ctx", "\(ctx)"]
+            }
+            // MTP speculation: measured +22% decode (26.6 vs 21.7 t/s at
+            // 64K, 81% draft acceptance). --mtp-exact-sampling keeps the
+            // ordinary sampling distribution under speculation.
+            if effMtp {
+                args += ["--mtp", "--mtp-exact-sampling"]
+            }
+            // NOTE: ds4-server binds 127.0.0.1 by default.
         }
 
         // Bind to localhost (security + convenience) and the chosen port.
-        // oMLX and MTPLX build their own bind flags (fixed port, localhost default).
-        if model.backend != .omlx && model.backend != .mtplx {
+        // oMLX, MTPLX and DS4 build their own bind flags (fixed port,
+        // localhost default).
+        if model.backend != .omlx && model.backend != .mtplx && model.backend != .ds4 {
             args += ["--host", "127.0.0.1", "--port", "\(port)"]
         }
 
@@ -1137,6 +1254,7 @@ class ServerManager {
             case .mlx: installHint = "pip install mlx-lm"
             case .omlx: installHint = "brew install jundot/omlx/omlx — or install the oMLX wheel (see the oMLX docs)"
             case .mtplx: installHint = "pip install mtplx — install in ~/AI/envs/omlx-env with: source ~/AI/envs/omlx-env/bin/activate && pip install mtplx"
+            case .ds4: installHint = "build the DwarfStar engine: git clone -b qwen3.8-flash-next https://github.com/ivanfioravanti/ds4-metal && make -j8 (ds4-server lands at the repo root)"
             }
             var s = modelStates[model.id] ?? ModelState()
             s.isRunning = false
@@ -2078,7 +2196,8 @@ class ServerManager {
             // invisible to the 3s sync and can never be adopted.
             guard s.contains("llama-server") || s.contains("mlx_lm.server")
                 || s.contains("omlx serve") || s.contains("omlx-server")
-                || s.contains("mtplx.server") || s.contains("mtplx serve") else { continue }
+                || s.contains("mtplx.server") || s.contains("mtplx serve")
+                || s.contains("ds4-server") else { continue }
 
             // oMLX: one server serves every model under the oMLX root.
             // Map it onto every discovered oMLX entry (shared pid/port).
@@ -2102,14 +2221,15 @@ class ServerManager {
             // it returned the full match range rather than group 1. Capture
             // groups are robust to pattern tweaks.
             let mPattern: String
-            if s.contains("llama-server") {
+            if s.contains("llama-server") || s.contains("ds4-server") {
                 // H-3 fix: allow spaces inside the path. The old pattern
                 // `-m (\/[^\s]+\.gguf)` stopped at the first space, so a
                 // model at "/Users/x/My Models/g.gguf" captured only
                 // "/Users/x/My" and never matched a known ModelEntry.
                 // GGUF paths always end in `.gguf`, so match lazily up to
                 // the FIRST `.gguf` (the base model always comes before
-                // --mmproj / --spec-draft-model companions).
+                // --mmproj / --spec-draft-model companions, and ds4-server
+                // carries `-m <main> --ple <sidecar>` with the main first).
                 mPattern = #"-m (\/.+?\.gguf)"#
             } else {
                 // MLX `--model` points at a directory (no extension). Match
@@ -2143,6 +2263,12 @@ class ServerManager {
             }
             var ctx = 0
             if let pm = s.range(of: #"--ctx-size (\d+)"#, options: .regularExpression) {
+                ctx = Int(String(s[pm].split(separator: " ").last ?? "0")) ?? 0
+            }
+            // DS4 (ds4-server) uses `--ctx N`; the `--ctx-size` pattern
+            // above can never match it (no space after "--ctx"), so try
+            // the DS4 spelling as a fallback.
+            if ctx == 0, let pm = s.range(of: #"--ctx (\d+)"#, options: .regularExpression) {
                 ctx = Int(String(s[pm].split(separator: " ").last ?? "0")) ?? 0
             }
             externalStates[path] = (pid, port, ctx)
@@ -2191,6 +2317,12 @@ class ServerManager {
         let md = d.integer(forKey: "mtplxDepth")
         settings.mtplxDepth = md == 0 ? 3 : md
         settings.mtplxProfile = d.string(forKey: "mtplxProfile") ?? "turbo"
+
+        // DS4 (DwarfStar) settings.
+        settings.ds4ServerPath = d.string(forKey: "ds4ServerPath") ?? ""
+        settings.ds4ModelDir = d.string(forKey: "ds4ModelDir") ?? ""
+        let dsp = d.integer(forKey: "ds4Port")
+        settings.ds4Port = dsp == 0 ? 8090 : dsp
         // Global extra args default to empty.
         settings.globalExtraArgs = d.string(forKey: "globalExtraArgs") ?? ""
         // Chat template override: empty = use built-in template.
@@ -2259,6 +2391,9 @@ class ServerManager {
         d.set(settings.mtplxPort, forKey: "mtplxPort")
         d.set(settings.mtplxDepth, forKey: "mtplxDepth")
         d.set(settings.mtplxProfile, forKey: "mtplxProfile")
+        d.set(settings.ds4ServerPath, forKey: "ds4ServerPath")
+        d.set(settings.ds4ModelDir, forKey: "ds4ModelDir")
+        d.set(settings.ds4Port, forKey: "ds4Port")
         d.set(settings.globalExtraArgs, forKey: "globalExtraArgs")
         d.set(settings.chatTemplatePath, forKey: "chatTemplatePath")
         d.set(settings.enableMtp, forKey: "enableMtp")

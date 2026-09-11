@@ -84,7 +84,7 @@ enum FootprintEstimator {
 
     private static func weightsBytes(_ model: DiscoveredModel) -> UInt64 {
         let fm = FileManager.default
-        if model.backend == "GGUF" {
+        if model.backend == "GGUF" || model.backend == "DS4" {
             return ((try? fm.attributesOfItem(atPath: model.path))?[.size] as? UInt64) ?? 0
         }
         // MLX: Σ safetensors sizes (MoE file size ≈ fully mapped — conservative).
@@ -102,7 +102,10 @@ enum FootprintEstimator {
     struct Geometry { let kvHeadTotal: Int; let headDim: Int; let maxContext: Int? }
 
     private static func geometry(_ model: DiscoveredModel) -> Geometry? {
-        model.backend == "GGUF" ? ggufGeometry(model.path) : mlxGeometry(model.path)
+        if model.backend == "GGUF" || model.backend == "DS4" {
+            return ggufGeometry(model.path)
+        }
+        return mlxGeometry(model.path)
     }
 
     /// MLX config.json (§3.7).
