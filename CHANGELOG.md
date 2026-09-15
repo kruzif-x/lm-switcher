@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Beta release.**
 
+### Added
+- **Help tab now documents every backend.** oMLX had NO Help coverage at all despite
+  having its own settings rows: added `omlx` and `oMLX model dir · oMLX port` entries
+  (auto-detect order, the org/model ≤2-level discovery rule, single-SHARED-server
+  semantics — stopping any oMLX model stops them all — and the split where sampling /
+  MTP / VLM live in oMLX's own `~/.omlx/model_settings.json`). Refreshed the MTPLX
+  entries: the built-in web chat at `http://127.0.0.1:<port>/` plus `/dashboard/` and
+  `/docs` (so nobody installs Open WebUI for nothing), `mtplx tune --model <folder>
+  --depths 1,2,3` with the measured M2 Max 64 GB numbers (≈12 t/s plain vs ≈18 / 19 / 25
+  t/s at depth 1 / 2 / 3), and the pack install/update path (`mtplx pull` downloads to
+  `~/.mtplx/models/…` which the scan can't see — move the real folder into the Models
+  directory; update in place with `mtplx models --update <repo> --installed-path`).
+  §1 "Talk to it" now states MTPLX has a built-in chat page too (DS4 has none).
+  Every command quoted in the new Help text was verified against mtplx 2.11.2
+  (`tune --help`, `models --help`, `connect --help`).
+
 ### Fixed
 - **A second instance crashed with SIGTRAP instead of exiting** — `ServerManager`'s
   single-instance guard called `NSApp.terminate(nil)` at the top of `init()`, but `NSApp`
