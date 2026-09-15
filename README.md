@@ -397,7 +397,7 @@ Both the menu bar app and the CLI can:
 
 ## Build
 
-The Swift app requires macOS 13+ (uses `MenuBarExtra`, `@Observable`, `Settings` scene).
+The Swift app requires macOS 26+ on Apple Silicon. The build pins its deployment target explicitly (`-target arm64-apple-macos26.0` in `scripts/install.sh`) — the binary was always effectively macOS 26+ (it inherits the host OS version otherwise), and it uses `MenuBarExtra`, `@Observable` and the `Settings` scene.
 
 ```bash
 # Manual compile of the full module (no bundle)

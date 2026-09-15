@@ -30,12 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quarantine xattr), and the new "menu items hide SF Symbol images by default" behaviour
   does not apply — the panel is `MenuBarExtra` + `.menuBarExtraStyle(.window)` (a window,
   not an NSMenu) and every `.contextMenu` / `.pickerStyle(.menu)` here holds text-only
-  items. `.textFieldStyle(.roundedBorder)` is soft-deprecated in the 27 SDK
-  (compiler warning only; migrate to `.bordered` when the 27 SDK is adopted). Building
-  against the macOS 27 SDK requires Xcode 27 — the
-  27 SDK's SwiftUI turns `@State` into an external macro whose `SwiftUIMacros` plugin
-  ships only inside Xcode 27 (Command Line Tools alone cannot build SwiftUI against
-  `MacOSX27.0.sdk`).
+  items. Building against the macOS 27 SDK needs Xcode 27 — the 27 SDK's SwiftUI turns
+  `@State` into an external macro whose `SwiftUIMacros` plugin ships only inside Xcode 27
+  (Command Line Tools alone cannot build SwiftUI against `MacOSX27.0.sdk`). **The app now
+  builds with Xcode 27 against the macOS 27 SDK** (`LC_BUILD_VERSION: sdk 27.0, minos
+  26.0`) and that build is clean — 0 errors, 0 warnings; no `@State` migration was needed,
+  the ~41 `_x = State(initialValue: ...)` assignments in `SettingsView.init()` compile
+  unchanged under the macro-based `@State`.
+- **Deployment target pinned, docs corrected** — `scripts/install.sh` now passes
+  `-target arm64-apple-macos26.0` for both binaries. Without it swiftc silently inherits
+  the host OS version, which is how the shipped binary's `minos` became 26.0 while the
+  README claimed "macOS 13+". The README now says macOS 26+ on Apple Silicon.
+- **`.textFieldStyle(.roundedBorder)` deliberately kept** — the 27 SDK soft-deprecates it
+  in favour of `.bordered`, but `.bordered` is *only available in macOS 27.0 or newer*
+  (verified with `swiftc -typecheck`: "'bordered' is only available in macOS 27.0 or
+  newer"), so adopting it would raise the app's floor or force `if #available` branching
+  at every call site. `.roundedBorder` emits no warning today; migrate when the deployment
+  target moves to 27.
 
 ## [0.9.3b] - 2026-09-11
 

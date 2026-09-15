@@ -115,7 +115,14 @@ echo "==> Compiling lm-switcher (multi-file module)..."
 cp "$SRC_DIR"/*.swift "$BIN_DIR"/
 # Compile every .swift file together as one module. Swift's
 # whole-module optimization requires all sources in one invocation.
+#
+# The deployment target is pinned EXPLICITLY: without `-target`, swiftc
+# silently inherits the host OS version, so the binary's LC_BUILD_VERSION
+# minos drifted to 26.0 while README claimed "macOS 13+" (2026-09-15 audit).
+# Pinning keeps that honest and stops a future Xcode from quietly raising
+# the floor when the OS is upgraded.
 swiftc -parse-as-library -o "$COMPILED_BIN" -O \
+    -target arm64-apple-macos26.0 \
     -framework SwiftUI -framework AppKit \
     "$BIN_DIR"/*.swift
 
@@ -124,7 +131,9 @@ swiftc -parse-as-library -o "$COMPILED_BIN" -O \
 # can never block the app install — the `if` also keeps `set -e` from
 # aborting on failure.
 echo "==> Compiling lm-switcher-mcp (agent access server)..."
-if swiftc -O -o "$BIN_DIR/lm-switcher-mcp" "$SRC_DIR"/mcp/*.swift "$SRC_DIR/SystemMetrics.swift" 2>"$BIN_DIR/.mcp-build.log"; then
+if swiftc -o "$BIN_DIR/lm-switcher-mcp" -O \
+    -target arm64-apple-macos26.0 \
+    "$SRC_DIR"/mcp/*.swift "$SRC_DIR/SystemMetrics.swift" 2>"$BIN_DIR/.mcp-build.log"; then
     rm -f "$BIN_DIR/.mcp-build.log"
     echo "  ✓ MCP server: $BIN_DIR/lm-switcher-mcp"
 else
