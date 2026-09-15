@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4b] - 2026-09-15
+
+**Beta release.**
+
+### Fixed
+- **A second instance crashed with SIGTRAP instead of exiting** — `ServerManager`'s
+  single-instance guard called `NSApp.terminate(nil)` at the top of `init()`, but `NSApp`
+  is still nil that early in the SwiftUI lifecycle (`App.main()` instantiates the `App`
+  struct before `NSApplication` exists). Any second launch — double-click while the
+  LaunchAgent instance is running, `open -a` twice, launching `~/bin/lm-switcher` from a
+  terminal, or a duplicated bundle — trapped at `ServerManager.swift:188` with
+  `Unexpectedly found nil while implicitly unwrapping an Optional value` and left a crash
+  report in `~/Library/Logs/DiagnosticReports/lm-switcher-*.ips` (four reports existed,
+  2026-09-10 → 09-12). The guard now optional-chains: `NSApp?.terminate(nil)` before
+  `exit(0)`. Verified: exit code -5 (SIGTRAP) → 0, no crash report.
+
+### Changed
+- **macOS 27 (Golden Gate) readiness** — audited the app against the macOS 27 release
+  notes. No functional blockers: the binary is arm64-only (no Rosetta/Intel dependency),
+  the LaunchAgent path is unchanged (macOS 27 only stops loading plists carrying a
+  quarantine xattr), and the new "menu items hide SF Symbol images by default" behaviour
+  does not apply — the panel is `MenuBarExtra` + `.menuBarExtraStyle(.window)` (a window,
+  not an NSMenu) and every `.contextMenu` / `.pickerStyle(.menu)` here holds text-only
+  items. `.textFieldStyle(.roundedBorder)` is soft-deprecated in the 27 SDK
+  (compiler warning only; migrate to `.bordered` when the 27 SDK is adopted). Building
+  against the macOS 27 SDK requires Xcode 27 — the
+  27 SDK's SwiftUI turns `@State` into an external macro whose `SwiftUIMacros` plugin
+  ships only inside Xcode 27 (Command Line Tools alone cannot build SwiftUI against
+  `MacOSX27.0.sdk`).
+
 ## [0.9.3b] - 2026-09-11
 
 **Beta release.**

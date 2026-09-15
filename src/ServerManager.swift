@@ -185,7 +185,13 @@ class ServerManager {
         // leaked for the process lifetime so the lock is held until exit
         // (the kernel releases it automatically on process death).
         if !Self.acquireSingleInstanceLock() {
-            NSApp.terminate(nil)
+            // NSApp is still nil this early in the SwiftUI lifecycle (App.main()
+            // instantiates the App struct before NSApplication exists), so a
+            // force-unwrapped `NSApp.terminate(nil)` traps with SIGTRAP instead
+            // of exiting — every second instance (double launch, second
+            // `open -a`, raw-binary launch while the app runs) died with a
+            // crash report. Optional-chain it: nothing to terminate yet anyway.
+            NSApp?.terminate(nil)
             // terminate() is async; hard-exit so we don't continue init.
             exit(0)
         }
