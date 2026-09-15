@@ -1,6 +1,6 @@
 # LM Switcher (MacOS Apple Silicon Only)
 
-A macOS menu bar app + CLI + MCP for managing local LLM models (GGUF and Apple MLX/oMLX/MTPLX).
+A macOS menu bar app + CLI + MCP for managing local LLM models (GGUF and Apple MLX/oMLX/MTPLX/DS4).
 
 Made this initially for my wife, so that it would be easy for her to switch models instead of typing on the CLI, 
 then I expanded it with more features for my lazy self. I use Deepseek-v4-flash and GLM 5.2 to assist me to code this
@@ -16,7 +16,7 @@ app. Added the MCP so that my Hermes Agent could load and unload models as and w
 
 LM Switcher is a native macOS app that lives in your menu bar (next to the clock). It lets you:
 
-- 🔍 **Discover** GGUF and MLX/oMLX models in a directory of your choice (recursive scan)
+- 🔍 **Discover** GGUF and MLX/oMLX/MTPLX/DS4 models in a directory of your choice (recursive scan)
 - ▶️ **Load** any model with one click (spawns the right backend: `llama-server` or `mlx_lm.server`)
 - ⏹ **Unload** any model independently — no more "kill the wrong process" surprises
 - 🔄 **Run multiple models simultaneously**, each on its own port (e.g. one chat model on :8080, an embedder on :8081)
