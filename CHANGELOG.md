@@ -5,6 +5,19 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.8b] - 2026-09-17
+
+**Backend resolution fixes found while engine-testing MLX models, a size-aware load grace, and honest vision reporting.**
+
+### Fixed
+- **oMLX model root** defaulted to `~/models/omlx` in the app, the CLI and the MCP while the Help text (and the real layout) said `~/AI/models/omlx` — the oMLX scan found nothing and oMLX-tree models listed as plain `[mlx]`. All three now default to `~/AI/models/omlx`.
+- **oMLX binary resolution** only probed Homebrew paths, so the documented venv install (`~/AI/envs/omlx-env/bin/omlx`) was missed and loads died with `nohup: omlx: No such file or directory`. The venv path is now first in the CLI, the app and the MCP (which also gained oMLX/MTPLX preflight branches — both previously checked the wrong binary).
+- **mlx_lm.server selection** used a string-sorted `Library/Python/*/bin` glob, picking Python/3.9 — whose stale mlx_lm 0.29.1 has no `qwen3_5` model, failing every qwen3_5 load with `Model type qwen3_5 not supported`. Now: the saved `mlxServerPath` setting first, then a version-sorted (`sort -V` / numeric) pick. Same string-sort bug fixed in the app's and MCP's fallback branches.
+- **Cold loads of large GGUFs were killed mid-startup.** `llama load` polls with a flat 15 s grace (only ds4 had 90 s); a cold 9.5 GB Q8_0 needs ~18 s before llama-server binds its port, so the CLI SIGTERMed its own child and printed "Failed to start". The grace is now size-aware (≥20 GB → 300 s, ≥8 GB → 180 s, else 90 s; ds4 180 s) and still fails the instant the child dies.
+
+### Added
+- **MCP `list_models` reports `vision` for MLX and mlx-serve models** (shard-index `vision_tower.*` weights + `config.json` `vision_config` fallback). Previously GGUF-only, so a tower-carrying mlx-vlm conversion and a text-only mlx-lm conversion listed identically and agents could not tell which accepts images.
+
 ## [0.9.7b] - 2026-09-16
 
 **mlx-serve state tells the truth, `load` actually loads, and an MCP crasher is gone.**
