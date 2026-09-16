@@ -733,10 +733,17 @@ load_model() {
             fi
         fi
     elif [[ "$type" == "mlx" ]]; then
-        # MLX: invoke mlx_lm.server. No mmproj, no explicit ctx (mlx
-        # uses the model's own config).
+        # MLX: invoke mlx_lm.server. No mmproj, no explicit ctx (mlx uses
+        # the model's own config). The MCP swap-guard estimate assumes
+        # min(ctx, mlxMaxKvSize), so pass the same cap here — 2026-09-15
+        # audit: the CLI passed no cap while the estimator (and the app)
+        # assumed one, so the estimate and the launch could disagree.
         executable="$MLX_SERVER"
         args=("--model" "$path" "--host" "127.0.0.1" "--port" "$port")
+        local _mlx_cap; _mlx_cap=$(defaults read local.llama-menubar mlxMaxKvSize 2>/dev/null || echo 0)
+        if [[ "$_mlx_cap" =~ ^[0-9]+$ ]] && (( _mlx_cap > 0 )); then
+            args+=("--max-kv-size" "$_mlx_cap")
+        fi
     elif [[ "$type" == "omlx" ]]; then
         # oMLX: ONE shared server for every model under OMLX_MODEL_DIR on
         # the fixed OMLX_PORT. No sampling/ctx args — oMLX handles MTP/VLM
@@ -850,6 +857,16 @@ load_model() {
     fi
 }
 
+# Is this command line one of the model engines this tool launches? Used
+# before signalling a recorded PID and before the oMLX port sweep, so a
+# stale pidfile (or a PID the OS recycled onto an unrelated process) can
+# never redirect a kill. 2026-09-15 audit.
+_is_engine_cmd() {
+    local cmd="$1"
+    [[ "$cmd" == *llama-server* || "$cmd" == *mlx_lm.server* || "$cmd" == *omlx* \
+       || "$cmd" == *mtplx* || "$cmd" == *ds4-server* ]]
+}
+
 # Stop a single model. Takes the PID file path and a display name (the
 # name is only used for user-facing messages). Passing the pidfile path
 # directly avoids re-deriving it and works uniformly for named and "all"
@@ -861,8 +878,29 @@ unload_model() {
         echo "○ $name not loaded"
         return 0
     fi
-    local pid; pid=$(head -1 "$pidfile" 2>/dev/null | tr -d '[:space:]')
-    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    # Read BOTH pid-file fields before anything is removed — the port lives
+    # on line 2 and the file is deleted below. (2026-09-15 audit: the old
+    # code read the port AFTER `rm -f`, so the oMLX worker sweep was dead
+    # code on every path.)
+    local pid port
+    pid=$(head -1 "$pidfile" 2>/dev/null | tr -d '[:space:]')
+    port=$(sed -n '2s/.*--port \([0-9]*\).*/\1/p' "$pidfile" 2>/dev/null)
+
+    if [[ "$pid" =~ ^[0-9]{1,9}$ ]] && (( pid > 1 )) && kill -0 "$pid" 2>/dev/null; then
+        # Identity check: never signal a process that does not look like one
+        # of our engines, or that does not carry this model's port/name. A
+        # recycled PID must not receive someone else's kill (2026-09-15 audit).
+        local cmd
+        cmd=$(ps -o command= -p "$pid" 2>/dev/null || true)
+        if ! _is_engine_cmd "$cmd" \
+           && { [[ -z "$port" ]] || [[ "$cmd" != *"--port $port"* ]]; } \
+           && [[ "$cmd" != *"$name"* ]]; then
+            echo "✗ Refusing to signal PID $pid for '$name' — the process does not look like a model server:" >&2
+            echo "    ${cmd:-<no command line available>}" >&2
+            echo "    PID file parked as ${pidfile}.rejected for inspection." >&2
+            mv -f "$pidfile" "${pidfile}.rejected" 2>/dev/null || true
+            return 1
+        fi
         echo "Stopping $name (PID $pid) ..."
         # SIGTERM (default for `kill`) gives the process a chance to
         # shut down gracefully. We escalate to SIGKILL if it's still
@@ -879,16 +917,20 @@ unload_model() {
     # oMLX: one server, one pidfile per model entry. Sweep sibling
     # pidfiles pointing at the same (now dead) pid so `status`/`unload`
     # don't report the other oMLX models as still loaded.
-    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+    if [[ "$pid" =~ ^[0-9]{1,9}$ ]]; then
         grep -l "^$pid\$" "$PIDS_DIR"/*.pid 2>/dev/null | while IFS= read -r f; do
             rm -f "$f"
         done
         # The `omlx serve` parent spawns an `omlx-server` worker that
-        # outlives it — kill anything still listening on that port.
-        local port; port=$(sed -n '2s/.*--port \([0-9]*\).*/\1/p' "$pidfile" 2>/dev/null)
+        # outlives it — kill what is still listening on the recorded port,
+        # but only listeners that themselves look like one of our engines.
         if [[ -n "$port" ]]; then
             lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | while IFS= read -r p; do
-                kill -9 "$p" 2>/dev/null
+                local pcmd
+                pcmd=$(ps -o command= -p "$p" 2>/dev/null || true)
+                if _is_engine_cmd "$pcmd"; then
+                    kill -9 "$p" 2>/dev/null
+                fi
             done
         fi
     fi

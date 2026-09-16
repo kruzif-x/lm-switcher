@@ -166,21 +166,36 @@ enum McpTools {
 
     /// Append one JSONL event for the app to turn into a macOS
     /// notification (consumed + truncated by its sync tick).
+    ///
+    /// 2026-09-15 audit: open with O_APPEND and hold the SAME exclusive
+    /// flock the app's drain takes (ServerManager.consumeAgentEvents), and
+    /// create the file owner-only. The app reads to EOF and truncates under
+    /// LOCK_EX; with no lock on this side an appended line could land inside
+    /// that window and be truncated away — silently dropping the record of
+    /// an agent action. flock is advisory: both sides must participate.
     private static func logAgentEvent(_ action: String, model: String, port: Int? = nil) {
         var obj: [String: Any] = ["ts": Date().timeIntervalSince1970,
                                   "action": action, "model": model]
         if let port { obj["port"] = port }
-        guard let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        guard var data = try? JSONSerialization.data(withJSONObject: obj) else { return }
+        data.append(0x0A)   // newline
+
         let path = llamaDir + "/events.jsonl"
-        if !FileManager.default.fileExists(atPath: path) {
-            FileManager.default.createFile(atPath: path, contents: nil)
+        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0o600)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        // Blocking lock: the app holds it only for a short read+truncate.
+        _ = flock(fd, LOCK_EX)
+        data.withUnsafeBytes { buf in
+            guard let base = buf.baseAddress else { return }
+            var off = 0
+            while off < buf.count {
+                let n = write(fd, base + off, buf.count - off)
+                if n <= 0 { break }
+                off += n
+            }
         }
-        if let fh = FileHandle(forWritingAtPath: path) {
-            fh.seekToEndOfFile()
-            fh.write(data)
-            fh.write(Data([0x0A]))
-            try? fh.close()
-        }
+        _ = flock(fd, LOCK_UN)
     }
 
     /// Stop one running model and VERIFY it stopped. CLI-launched models go
@@ -248,6 +263,15 @@ enum McpTools {
         if metrics.memoryPressure == "critical", !allowSwap {
             return (failure("insufficient_memory",
                 "Memory pressure is critical; refusing to load. Free memory or enable 'Allow swap for agent loads'."), nil)
+        }
+        // 2026-09-15 audit: a file_size_only estimate carries NO KV term —
+        // the guard cannot bound what the engine will allocate, and the
+        // launcher resolves ctx independently of this estimate. Fail closed
+        // unless the operator opted into swap loads.
+        if est.quality == "file_size_only", !allowSwap {
+            return (failure("insufficient_memory",
+                "\(model.name): KV cache could not be estimated — no readable GGUF/MLX geometry (or implausible values). Refusing the load; enable 'Allow swap for agent loads' to override.",
+                extra: ["estimate_quality": est.quality]), nil)
         }
         if fits { return (nil, nil) }
 

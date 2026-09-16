@@ -1743,7 +1743,7 @@ struct SettingsView: View {
 
                 // Description
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages llama-server (GGUF) and mlx_lm.server (Apple MLX) processes on your behalf — each model gets its own port, starts on demand, and stops cleanly when you unload it.")
+                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages five engines on your behalf — llama-server (GGUF), mlx_lm.server (Apple MLX), oMLX, MTPLX and ds4-server (DwarfStar). Models start on demand, serve on a local port, and stop cleanly when you unload them.")
                         .font(.body).foregroundStyle(.secondary)
                     Text("Discovered models appear in the menu bar dropdown. Click one to load it, right-click for single-model actions, or use the bulk controls to load and unload multiple models at once. All settings — context size, KV cache, sampling, per-model overrides — are persisted and shared with the companion llama CLI, so the terminal and the app always stay in sync.")
                         .font(.body).foregroundStyle(.secondary)
@@ -1787,6 +1787,15 @@ struct SettingsView: View {
                     }
                     if let url = URL(string: "https://github.com/ml-explore/mlx-examples") {
                         Link("MLX Examples", destination: url).font(.caption)
+                    }
+                    if let url = URL(string: "https://github.com/jundot/omlx") {
+                        Link("oMLX", destination: url).font(.caption)
+                    }
+                    if let url = URL(string: "https://pypi.org/project/mtplx/") {
+                        Link("MTPLX", destination: url).font(.caption)
+                    }
+                    if let url = URL(string: "https://github.com/ivanfioravanti/ds4-metal") {
+                        Link("DS4 (DwarfStar)", destination: url).font(.caption)
                     }
                     // MTP issue link removed — fixed in llama.cpp b9859+
                 }
