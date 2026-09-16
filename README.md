@@ -12,6 +12,16 @@ app. Added the MCP so that my Hermes Agent could load and unload models as and w
 > paths (discover / load / unload — GGUF, MLX, oMLX, MTPLX, DS4 and mlx-serve backends)
 > are stable, but expect rough edges; see the changelog for what landed so far.
 
+## Which engine runs your model?
+
+![LM Switcher engine-selection map — GGUF goes to llama-server (or ds4-server inside the DS4 folder); MLX folders go to MTPLX, mlx-serve, oMLX or mlx_lm.server depending on the marker file and the tree that owns them](docs/engine-map.svg)
+
+The engine is chosen when a model is **discovered** — file format *plus the folder it lives in*. There is no
+engine picker: move a model into another engine's root (or hot-load it) to change engines, and one tree has one
+owner, so nothing lists twice. The interactive version ships inside the app (**Help → Which engine runs your
+model?**); source: [`docs/engine-map.html`](docs/engine-map.html) — the SVG above is generated from it by
+[`scripts/export-engine-map-svg.py`](scripts/export-engine-map-svg.py).
+
 ## What is this?
 
 LM Switcher is a native macOS app that lives in your menu bar (next to the clock). It lets you:
