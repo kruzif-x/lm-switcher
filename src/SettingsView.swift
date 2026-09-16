@@ -174,6 +174,9 @@ struct SettingsView: View {
     @State private var ds4ServerPath: String
     @State private var ds4ModelDir: String
     @State private var ds4PortStr: String
+    @State private var mlxServeServerPath: String
+    @State private var mlxServeModelDir: String
+    @State private var mlxServePortStr: String
     @State private var globalExtraArgs: String
     @State private var chatTemplatePath: String
     @State private var enableMtp: Bool
@@ -216,6 +219,9 @@ struct SettingsView: View {
         _ds4ServerPath    = State(initialValue: manager.settings.ds4ServerPath)
         _ds4ModelDir      = State(initialValue: manager.settings.ds4ModelDir)
         _ds4PortStr       = State(initialValue: "\(manager.settings.ds4Port)")
+        _mlxServeServerPath = State(initialValue: manager.settings.mlxServeServerPath)
+        _mlxServeModelDir   = State(initialValue: manager.settings.mlxServeModelDir)
+        _mlxServePortStr    = State(initialValue: "\(manager.settings.mlxServePort)")
         _globalExtraArgs  = State(initialValue: manager.settings.globalExtraArgs)
         _chatTemplatePath = State(initialValue: manager.settings.chatTemplatePath)
         _enableMtp        = State(initialValue: manager.settings.enableMtp)
@@ -298,6 +304,9 @@ struct SettingsView: View {
         .onChange(of: ds4ServerPath)   { _, v in manager.settings.ds4ServerPath = v }
         .onChange(of: ds4ModelDir)     { _, v in manager.settings.ds4ModelDir = v; manager.refreshModels() }
         .onChange(of: ds4PortStr)      { _, v in manager.settings.ds4Port = Int(v) ?? 8090 }
+        .onChange(of: mlxServeServerPath) { _, v in manager.settings.mlxServeServerPath = v }
+        .onChange(of: mlxServeModelDir)   { _, v in manager.settings.mlxServeModelDir = v; manager.refreshModels() }
+        .onChange(of: mlxServePortStr)    { _, v in manager.settings.mlxServePort = Int(v) ?? 11234 }
     }
 
     // MARK: - Save / Restore
@@ -327,6 +336,9 @@ struct SettingsView: View {
         ds4ServerPath   = d.ds4ServerPath
         ds4ModelDir     = d.ds4ModelDir
         ds4PortStr      = "\(d.ds4Port)"
+        mlxServeServerPath = d.mlxServeServerPath
+        mlxServeModelDir   = d.mlxServeModelDir
+        mlxServePortStr    = "\(d.mlxServePort)"
         globalExtraArgs = d.globalExtraArgs
         chatTemplatePath = d.chatTemplatePath
         enableMtp       = d.enableMtp
@@ -379,6 +391,9 @@ struct SettingsView: View {
         ds4ServerPath   = s.ds4ServerPath
         ds4ModelDir     = s.ds4ModelDir
         ds4PortStr      = "\(s.ds4Port)"
+        mlxServeServerPath = s.mlxServeServerPath
+        mlxServeModelDir   = s.mlxServeModelDir
+        mlxServePortStr    = "\(s.mlxServePort)"
         globalExtraArgs = s.globalExtraArgs
         chatTemplatePath = s.chatTemplatePath
         enableMtp       = s.enableMtp
@@ -560,6 +575,36 @@ struct SettingsView: View {
                 text: $ds4PortStr
             )
             .help("TCP port for DS4 server instances (default 8090).")
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "mlx-serve",
+                hint: "mlx-serve binary (ddalcu) — one server serves the whole ~/.mlx-serve/models store; models load on demand",
+                text: $mlxServeServerPath,
+                isDir: false,
+                checkExecutable: true
+            ) { url in
+                mlxServeServerPath = url.path
+                manager.settings.mlxServeServerPath = url.path
+            }
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "mlx-serve model dir",
+                hint: "Root scanned for mlx-serve models (default: ~/.mlx-serve/models — the store shared with the MLX Core app)",
+                text: $mlxServeModelDir,
+                isDir: true,
+                checkExecutable: false
+            ) { url in
+                mlxServeModelDir = url.path
+                manager.settings.mlxServeModelDir = url.path
+                manager.refreshModels()
+            }
+            Divider().padding(.leading, 14)
+            inlineFieldRow(
+                label: "mlx-serve port",
+                placeholder: "11234",
+                text: $mlxServePortStr
+            )
+            .help("Shared TCP port for the mlx-serve server (default 11234).")
             Divider().padding(.leading, 14)
             pathRow(
                 label: "Chat template",
@@ -1328,6 +1373,8 @@ struct SettingsView: View {
                                       detail: "Models live in their own directory (default ~/Projects/ds4-metal/gguf) and are recognized automatically; one server per model. Qwen3.8-Flash-Next models additionally need their PLE sidecar next to the model file — LM Switcher attaches it automatically.")
                             helpEntry("DS4 model dir · DS4 port", "Directory with ds4-served GGUFs (default: the ds4-metal checkout's gguf/ folder). Port for DS4 servers, default 8090 — clear of llama.cpp 8080, MTPLX 8085, and oMLX 8000.",
                                       detail: "DS4 models launch at the daily settings measured for 64 GB Macs: 1024-token prefill chunks, MTP speculation with exact sampling, context from Context size above. Memory: ~44.8 GiB planned at 64K context, plus demand-paged PLE pages.")
+                            helpEntry("mlx-serve", "mlx-serve (ddalcu) — ONE native server serves every model in its store (~/.mlx-serve/models) on a single port (default 11234). Models load on demand when a request names them; Unload frees ONE model's RAM and the server stays up, ready for agents. Leave the binary empty to auto-detect ~/AI/tools/mlx-serve/current/mlx-serve, then /opt/homebrew/bin/mlx-serve, then PATH.",
+                                      detail: "Install: brew install mlx-serve (tap ddalcu/mlx-serve) or stage a release tarball from github.com/ddalcu/mlx-serve/releases. Serves OpenAI, Anthropic AND Ollama wires at http://127.0.0.1:11234 — Claude Code, pi, opencode can point straight at it. A LaunchAgent (com.rolandchia.mlx-serve) keeps it always available. Its store is excluded from the plain MLX scan, so models never double-list.")
                             helpEntry("Chat template", "Leave empty — the model's built-in template is right for normal chat. Set a custom .jinja file only if a coding agent misbehaves with tool calls. MTPLX models always use their own tokenizer template — the chat template field does not apply to them.",
                                       detail: "Passed as --chat-template-file. Needed mainly for Gemma 4 agentic use — see section 6.")
                         }

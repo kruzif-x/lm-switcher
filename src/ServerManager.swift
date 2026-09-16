@@ -589,6 +589,13 @@ class ServerManager {
         if FileManager.default.fileExists(atPath: ds4Dir.path) {
             ds4Entries(at: ds4Dir, into: &entries)
         }
+        // mlx-serve (ddalcu) models live under their own store root; ONE
+        // shared server serves them all (loading on demand by name).
+        let mlxServeDir = URL(fileURLWithPath: resolvedMlxServeModelDir())
+        if mlxServeDir.path != dir.path,
+           FileManager.default.fileExists(atPath: mlxServeDir.path) {
+            mlxServeEntries(at: mlxServeDir, depth: 0, into: &entries)
+        }
         // MTPLX models are now discovered inline in scanDirectory()
         // Dedupe by id and sort alphabetically by name.
         var seen = Set<String>()
@@ -725,6 +732,9 @@ class ServerManager {
         // The oMLX tree is owned by the omlx scan — skip it here so models
         // don't double-list (one server, backend .omlx, not .mlx).
         if dir.path.hasPrefix(resolvedOmlxModelDir() + "/") { return nil }
+        // The mlx-serve store is owned by the mlxserve scan — skip it here
+        // so its models don't double-list as plain MLX.
+        if dir.path.hasPrefix(resolvedMlxServeModelDir() + "/") { return nil }
         let fm = FileManager.default
         guard let contents = try? fm.contentsOfDirectory(
             at: dir,
@@ -935,6 +945,97 @@ class ServerManager {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/sh")
         task.arguments = ["-c", "pgrep -f 'omlx[- ]serve' | head -1"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return Int32(s)
+        } catch { return nil }
+    }
+
+    // MARK: - mlx-serve backend (ddalcu)
+
+    /// Resolved mlx-serve model root (settings override, else the shared
+    /// `~/.mlx-serve/models` store).
+    func resolvedMlxServeModelDir() -> String {
+        if !settings.mlxServeModelDir.isEmpty { return settings.mlxServeModelDir }
+        return NSHomeDirectory() + "/.mlx-serve/models"
+    }
+
+    /// Resolved mlx-serve binary (settings override, else staged install,
+    /// else Homebrew, else PATH).
+    func resolvedMlxServeServerPath() -> String {
+        if !settings.mlxServeServerPath.isEmpty { return settings.mlxServeServerPath }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let candidates = [
+            home.appendingPathComponent("AI/tools/mlx-serve/current/mlx-serve").path,
+            "/opt/homebrew/bin/mlx-serve",
+            "/usr/local/bin/mlx-serve",
+        ]
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
+            return c
+        }
+        return "mlx-serve"   // last resort: PATH lookup
+    }
+
+    /// Walk the mlx-serve store (org/model nesting, max depth 2) and collect
+    /// directories that look like models (config.json + *.safetensors).
+    /// Unlike MLX entries these all share ONE server process on
+    /// mlxServePort; models load on demand by name and unload one at a
+    /// time via POST /v1/unload-model.
+    private func mlxServeEntries(at dir: URL, depth: Int, into entries: inout [ModelEntry]) {
+        guard depth < 2 else { return }
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for url in contents {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true { continue }
+            if let files = try? fm.contentsOfDirectory(atPath: url.path),
+               files.contains(where: { $0.lowercased() == "config.json" }),
+               files.contains(where: { $0.lowercased().hasSuffix(".safetensors") }) {
+                entries.append(ModelEntry(
+                    id: url.path,
+                    name: url.lastPathComponent,
+                    path: url,
+                    backend: .mlxserve
+                ))
+            } else {
+                mlxServeEntries(at: url, depth: depth + 1, into: &entries)
+            }
+        }
+    }
+
+    /// Is a mlx-serve server currently healthy on the configured port?
+    private func mlxServeServerHealthy() -> Bool {
+        let port = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
+        guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return false }
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) { ok = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.0)
+        return ok
+    }
+
+    /// PID of a running mlx-serve server process, if any. The argv carries
+    /// the binary path plus `serve` (e.g. `.../mlx-serve serve --host ...`).
+    private func mlxServeServerPid() -> Int32? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "pgrep -f 'mlx-serve serve' | head -1"]
         let pipe = Pipe()
         task.standardOutput = pipe
         task.standardError = FileHandle.nullDevice
@@ -1216,12 +1317,35 @@ class ServerManager {
                 args += ["--mtp", "--mtp-exact-sampling"]
             }
             // NOTE: ds4-server binds 127.0.0.1 by default.
+        case .mlxserve:
+            // mlx-serve (ddalcu): ONE shared server serves every model in
+            // its store on settings.mlxServePort. Loading any entry =
+            // ensure the server is up (adopt a running one — e.g. the
+            // LaunchAgent's — or spawn it); models themselves load on
+            // demand when a request names them.
+            executable = resolvedMlxServeServerPath()
+            if mlxServeServerHealthy() {
+                if var s = modelStates[model.id] {
+                    s.isRunning = true
+                    s.pid = mlxServeServerPid()
+                    s.port = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
+                    s.ctxSize = 0
+                    s.lastError = nil
+                    modelStates[model.id] = s
+                }
+                return
+            }
+            let msRoot = resolvedMlxServeModelDir()
+            args += ["serve", "--host", "127.0.0.1", "--model-dir", msRoot]
+            statePort = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
+            args += ["--port", "\(statePort)"]
         }
 
         // Bind to localhost (security + convenience) and the chosen port.
         // oMLX, MTPLX and DS4 build their own bind flags (fixed port,
         // localhost default).
-        if model.backend != .omlx && model.backend != .mtplx && model.backend != .ds4 {
+        if model.backend != .omlx && model.backend != .mtplx && model.backend != .ds4
+            && model.backend != .mlxserve {
             args += ["--host", "127.0.0.1", "--port", "\(port)"]
         }
 
@@ -1267,6 +1391,7 @@ class ServerManager {
             case .omlx: installHint = "brew install jundot/omlx/omlx — or install the oMLX wheel (see the oMLX docs)"
             case .mtplx: installHint = "pip install mtplx — install in ~/AI/envs/omlx-env with: source ~/AI/envs/omlx-env/bin/activate && pip install mtplx"
             case .ds4: installHint = "build the DwarfStar engine: git clone -b qwen3.8-flash-next https://github.com/ivanfioravanti/ds4-metal && make -j8 (ds4-server lands at the repo root)"
+            case .mlxserve: installHint = "brew install mlx-serve (tap: ddalcu/mlx-serve) — or stage a release tarball from github.com/ddalcu/mlx-serve/releases"
             }
             var s = modelStates[model.id] ?? ModelState()
             s.isRunning = false
@@ -1374,6 +1499,42 @@ class ServerManager {
                 guard let st = modelStates[id], st.isRunning,
                       models.contains(where: { $0.id == id && $0.backend == .omlx }) else { continue }
                 modelStates[id] = ModelState(isRunning: false, pid: nil, port: 0, ctxSize: 0, lastError: nil)
+            }
+            selected.remove(model.id)
+            return
+        }
+        // mlx-serve: ONE shared server. Unload frees JUST this model's
+        // memory (POST /v1/unload-model) and deliberately leaves the server
+        // running — it is the always-on agent endpoint (a LaunchAgent keeps
+        // it up) and reloads models on demand. Server-side model ids are
+        // the path relative to the store root; fall back to the folder name.
+        if model.backend == .mlxserve {
+            let root = resolvedMlxServeModelDir()
+            var rel = model.path.path
+            if rel.hasPrefix(root + "/") { rel = String(rel.dropFirst(root.count + 1)) }
+            let port = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
+            func postUnload(_ id: String) -> Bool {
+                guard let url = URL(string: "http://127.0.0.1:\(port)/v1/unload-model") else { return false }
+                var req = URLRequest(url: url)
+                req.httpMethod = "POST"
+                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": id])
+                req.timeoutInterval = 5.0
+                let sem = DispatchSemaphore(value: 0)
+                var ok = false
+                URLSession.shared.dataTask(with: req) { _, resp, _ in
+                    if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) { ok = true }
+                    sem.signal()
+                }.resume()
+                _ = sem.wait(timeout: .now() + 6.0)
+                return ok
+            }
+            // Best effort: try the store-relative id, then the folder name.
+            if !postUnload(rel) { _ = postUnload(model.path.lastPathComponent) }
+            if var s = modelStates[model.id] {
+                s.isRunning = false
+                s.pid = nil
+                modelStates[model.id] = s
             }
             selected.remove(model.id)
             return
@@ -2216,7 +2377,8 @@ class ServerManager {
             guard s.contains("llama-server") || s.contains("mlx_lm.server")
                 || s.contains("omlx serve") || s.contains("omlx-server")
                 || s.contains("mtplx.server") || s.contains("mtplx serve")
-                || s.contains("ds4-server") else { continue }
+                || s.contains("ds4-server")
+                || s.range(of: #"^\s*\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
 
             // oMLX: one server serves every model under the oMLX root.
             // Map it onto every discovered oMLX entry (shared pid/port).
@@ -2228,6 +2390,28 @@ class ServerManager {
                 guard let pid = Int32(pidStr), pid > 0 else { continue }
                 let port = settings.omlxPort > 0 ? settings.omlxPort : 8000
                 for m in models where m.backend == .omlx {
+                    externalStates[m.id] = (pid: pid, port: port, ctx: 0)
+                }
+                continue
+            }
+
+            // mlx-serve: ONE server serves every model in its store (the
+            // LaunchAgent's or a manually spawned one). Map it onto every
+            // discovered .mlxserve entry with the observed pid/port.
+            // Match the REAL argv (command token = `.../mlx-serve serve`),
+            // not mere text mentioning it — a `grep mlx-serve serve` or a
+            // shell wrapper quoting the string must never be adopted as a
+            // server (it would attach a bogus pid and duplicate the port).
+            if s.range(of: #"^\s*\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil {
+                let trimmed = s.drop(while: { $0 == " " })
+                let pidStr = trimmed.prefix(while: { $0.isNumber })
+                guard let pid = Int32(pidStr), pid > 0 else { continue }
+                var port = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
+                if let pm = s.range(of: #"--port (\d+)"#, options: .regularExpression),
+                   let p = Int(String(s[pm].split(separator: " ").last ?? "")) {
+                    port = p
+                }
+                for m in models where m.backend == .mlxserve {
                     externalStates[m.id] = (pid: pid, port: port, ctx: 0)
                 }
                 continue
@@ -2342,6 +2526,12 @@ class ServerManager {
         settings.ds4ModelDir = d.string(forKey: "ds4ModelDir") ?? ""
         let dsp = d.integer(forKey: "ds4Port")
         settings.ds4Port = dsp == 0 ? 8090 : dsp
+
+        // mlx-serve (ddalcu) settings.
+        settings.mlxServeServerPath = d.string(forKey: "mlxServeServerPath") ?? ""
+        settings.mlxServeModelDir = d.string(forKey: "mlxServeModelDir") ?? ""
+        let msp = d.integer(forKey: "mlxServePort")
+        settings.mlxServePort = msp == 0 ? 11234 : msp
         // Global extra args default to empty.
         settings.globalExtraArgs = d.string(forKey: "globalExtraArgs") ?? ""
         // Chat template override: empty = use built-in template.
@@ -2413,6 +2603,9 @@ class ServerManager {
         d.set(settings.ds4ServerPath, forKey: "ds4ServerPath")
         d.set(settings.ds4ModelDir, forKey: "ds4ModelDir")
         d.set(settings.ds4Port, forKey: "ds4Port")
+        d.set(settings.mlxServeServerPath, forKey: "mlxServeServerPath")
+        d.set(settings.mlxServeModelDir, forKey: "mlxServeModelDir")
+        d.set(settings.mlxServePort, forKey: "mlxServePort")
         d.set(settings.globalExtraArgs, forKey: "globalExtraArgs")
         d.set(settings.chatTemplatePath, forKey: "chatTemplatePath")
         d.set(settings.enableMtp, forKey: "enableMtp")

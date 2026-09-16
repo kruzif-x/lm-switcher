@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**mlx-serve backend (6th engine)** — `ddalcu/mlx-serve`, a native Zig server that shares ONE process across every model in its store (`~/.mlx-serve/models`) on a single port (default 11234), OpenAI + Anthropic + Ollama compatible.
+
+### Added
+- **mlx-serve backend** (`ModelBackend.mlxserve`). Discovery scans the store (`mlxServeModelDir`, org/model nesting depth ≤ 2) and the tree is excluded from the plain MLX scan in all three surfaces (app `mlxEntry`, CLI `list_all_models`, MCP `discoverModels`). The shared server is adopted when healthy (e.g. the LaunchAgent `com.rolandchia.mlx-serve`) or spawned on load; **unload frees ONE model via `POST /v1/unload-model` and leaves the server running** for other models/agents.
+- Settings rows (binary / model dir / port, default 11234) in Global → Backends, plus a Help entry and a `mlxserve` install hint.
+- CLI: `list` shows `[mlxserve]` entries; `load` adopts-or-spawns the shared server; `unload` posts a model-level unload and says the server stays up.
+
+### Fixed
+- **ps-scan false positives on shared-server text** — the mlx-serve matcher in the app and the MCP is anchored on the real argv (command token `.../mlx-serve serve`), so a `grep mlx-serve serve` or a shell wrapper merely quoting the string can no longer be adopted as a server. That case used to trap the MCP with `Fatal error: Duplicate values for key`.
+- **Port map tolerates shared ports** — `status` no longer traps when several running entries share one port (shared-server models map onto the same port).
+
 ## [0.9.5b] - 2026-09-15
 
 **Security & robustness hardening** — fixes from a coverage-led audit of the CLI, MCP server and app.

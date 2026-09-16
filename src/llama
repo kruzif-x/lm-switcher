@@ -119,6 +119,23 @@ DS4_PORT="${DS4_PORT:-8090}"
 DS4_MODEL_DIR="${DS4_MODEL_DIR:-$(defaults read local.llama-menubar ds4ModelDir 2>/dev/null)}"
 DS4_MODEL_DIR="${DS4_MODEL_DIR:-$HOME/Projects/ds4-metal/gguf}"
 
+# mlx-serve (ddalcu) — ONE native server serves every model in its store
+# on a single MLX_SERVE_PORT (default 11234). Models load on demand by
+# name; `unload` frees a single model via POST /v1/unload-model and the
+# server stays up (a LaunchAgent usually keeps it running). Binary
+# precedence: env var, saved setting, staged install, Homebrew, PATH.
+MLX_SERVE_SERVER="${MLX_SERVE_SERVER:-$(defaults read local.llama-menubar mlxServeServerPath 2>/dev/null)}"
+if [[ -z "$MLX_SERVE_SERVER" ]]; then
+    for _c in "$HOME/AI/tools/mlx-serve/current/mlx-serve" /opt/homebrew/bin/mlx-serve /usr/local/bin/mlx-serve; do
+        [[ -x "$_c" ]] && MLX_SERVE_SERVER="$_c" && break
+    done
+fi
+MLX_SERVE_SERVER="${MLX_SERVE_SERVER:-mlx-serve}"
+MLX_SERVE_PORT="${MLX_SERVE_PORT:-$(defaults read local.llama-menubar mlxServePort 2>/dev/null)}"
+MLX_SERVE_PORT="${MLX_SERVE_PORT:-11234}"
+MLX_SERVE_MODEL_DIR="${MLX_SERVE_MODEL_DIR:-$(defaults read local.llama-menubar mlxServeModelDir 2>/dev/null)}"
+MLX_SERVE_MODEL_DIR="${MLX_SERVE_MODEL_DIR:-$HOME/.mlx-serve/models}"
+
 # B1 fix: restrictive umask. PID files and server logs (which capture
 # stdout/stderr — model paths, sometimes verbose content) must be
 # owner-only. The default umask (022) leaves them world-readable (644),
@@ -256,7 +273,7 @@ list_all_models() {
     # tree is owned by the omlx scan below — skip it here so models don't
     # double-list.
     while IFS= read -r d; do
-        case "$d" in "$OMLX_MODEL_DIR"/*) continue ;; esac
+        case "$d" in "$OMLX_MODEL_DIR"/*|"$MLX_SERVE_MODEL_DIR"/*) continue ;; esac
         if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
             # Skip MTPLX models (have mtplx_runtime.json)
             [[ -f "$d/mtplx_runtime.json" ]] && continue
@@ -296,6 +313,17 @@ list_all_models() {
             case "$_ds4_bl" in mmproj-*|*-ple-*) continue ;; esac
             echo "ds4|$f|$_ds4_bn"
         done < <(find "$DS4_MODEL_DIR" -maxdepth 1 -type f -name '*.gguf' 2>/dev/null)
+    fi
+
+    # mlx-serve (ddalcu): one shared server serves every model under the
+    # store root (org/model nesting, depth <= 2). Same exclusion note as
+    # oMLX: the MLX scan above skips this tree.
+    if [[ -d "$MLX_SERVE_MODEL_DIR" ]]; then
+        while IFS= read -r d; do
+            if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
+                echo "mlxserve|$d|$(basename "$d")"
+            fi
+        done < <(find "$MLX_SERVE_MODEL_DIR" -maxdepth 2 -type d 2>/dev/null)
     fi
 }
 
@@ -527,6 +555,13 @@ load_model() {
         return 0
     fi
 
+    # mlx-serve: same shared-server logic — a healthy server means the
+    # model is available (it loads on demand when a request names it).
+    if [[ "$type" == "mlxserve" ]] && nc -z 127.0.0.1 "$MLX_SERVE_PORT" 2>/dev/null; then
+        echo "● [$type] $name already loaded on port $MLX_SERVE_PORT (shared mlx-serve server)"
+        return 0
+    fi
+
     # If the same model is already running on some port, no-op.
     if is_loaded "$id_hash" "$path"; then
         echo "● [$type] $name already loaded on port $(get_port_for "$id_hash" "$path")"
@@ -541,6 +576,8 @@ load_model() {
     local port
     if [[ "$type" == "omlx" ]]; then
         port=$OMLX_PORT
+    elif [[ "$type" == "mlxserve" ]]; then
+        port=$MLX_SERVE_PORT
     elif [[ "$type" == "mtplx" ]]; then
         port=$(per_model_port "$id_hash")
         [[ "$port" -le 0 ]] && port=$MTPLX_PORT
@@ -750,6 +787,11 @@ load_model() {
         # via ~/.omlx/model_settings.json. Binds 127.0.0.1 by default.
         executable="$OMLX_SERVER"
         args=("serve" "--model-dir" "$OMLX_MODEL_DIR" "--port" "$port")
+    elif [[ "$type" == "mlxserve" ]]; then
+        # mlx-serve: ONE shared server for every model in the store on the
+        # fixed MLX_SERVE_PORT. No sampling args — models load on demand.
+        executable="$MLX_SERVE_SERVER"
+        args=("serve" "--host" "127.0.0.1" "--port" "$port" "--model-dir" "$MLX_SERVE_MODEL_DIR")
     elif [[ "$type" == "mtplx" ]]; then
         # MTPLX: one server per model with native MTP spec-decode.
         # Binds 127.0.0.1 by default (no --host needed).
@@ -864,7 +906,7 @@ load_model() {
 _is_engine_cmd() {
     local cmd="$1"
     [[ "$cmd" == *llama-server* || "$cmd" == *mlx_lm.server* || "$cmd" == *omlx* \
-       || "$cmd" == *mtplx* || "$cmd" == *ds4-server* ]]
+       || "$cmd" == *mtplx* || "$cmd" == *ds4-server* || "$cmd" == *mlx-serve* ]]
 }
 
 # Stop a single model. Takes the PID file path and a display name (the
@@ -1073,7 +1115,28 @@ cmd_unload() {
             local name; name=$(echo "$line" | cut -d'|' -f3)
             local id_hash; id_hash=$(id_hash "$path")
             local pf; pf=$(pidfile_for "$id_hash" "$path")
-            if [[ "$type" == "omlx" && ! -f "$pf" ]] && nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
+            if [[ "$type" == "mlxserve" ]] && nc -z 127.0.0.1 "$MLX_SERVE_PORT" 2>/dev/null; then
+                # Shared mlx-serve server (LaunchAgent- or CLI-launched):
+                # free THIS model via POST /v1/unload-model. The server
+                # itself stays up for other models and agents — stop it
+                # with: launchctl bootout gui/$(id -u)/com.rolandchia.mlx-serve
+                local rel="${path#$MLX_SERVE_MODEL_DIR/}"
+                local ok=0
+                if curl -sf -m 5 -X POST "http://127.0.0.1:$MLX_SERVE_PORT/v1/unload-model" \
+                     -H 'Content-Type: application/json' \
+                     -d "{\"model\":\"$rel\"}" >/dev/null 2>&1; then
+                    ok=1
+                elif curl -sf -m 5 -X POST "http://127.0.0.1:$MLX_SERVE_PORT/v1/unload-model" \
+                     -H 'Content-Type: application/json' \
+                     -d "{\"model\":\"$(basename "$path")\"}" >/dev/null 2>&1; then
+                    ok=1
+                fi
+                if (( ok )); then
+                    echo "✓ $name unloaded (shared mlx-serve server on :$MLX_SERVE_PORT stays up)"
+                else
+                    echo "○ $name is not currently resident on the mlx-serve server (nothing to free)"
+                fi
+            elif [[ "$type" == "omlx" && ! -f "$pf" ]] && nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
                 # Externally-launched oMLX server (no pidfile): stop the
                 # shared server — the `omlx serve` parent AND its
                 # `omlx-server` worker child, by port listener.

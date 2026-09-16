@@ -202,6 +202,14 @@ enum McpTools {
     /// through `llama unload`; app-launched ones (no PID file — invisible to
     /// the CLI) are TERMed directly, exactly what the app's own Unload does.
     private static func unloadRunning(_ r: RunningModel) -> Bool {
+        if r.backend == "mlx-serve" {
+            // Shared always-on server: unload frees THIS model's memory
+            // (server-level, not process-level — the pid legitimately stays
+            // alive), so don't wait for pid death.
+            let rc = Launcher.runCli(["unload", r.displayName]).status
+            if rc == 0 { logAgentEvent("unloaded", model: r.displayName) }
+            return rc == 0
+        }
         if r.fromPidFile {
             guard Launcher.runCli(["unload", r.displayName]).status == 0 else { return false }
         } else {
@@ -229,6 +237,14 @@ enum McpTools {
         } else if m.backend == "DS4" {
             let p = Prefs.string("ds4ServerPath")
             path = p.isEmpty ? NSHomeDirectory() + "/Projects/ds4-metal/ds4-server" : p
+        } else if m.backend == "mlx-serve" {
+            let p = Prefs.string("mlxServeServerPath")
+            if !p.isEmpty {
+                path = p
+            } else {
+                let staged = NSHomeDirectory() + "/AI/tools/mlx-serve/current/mlx-serve"
+                path = FileManager.default.isExecutableFile(atPath: staged) ? staged : "/opt/homebrew/bin/mlx-serve"
+            }
         } else {
             let p = Prefs.string("mlxServerPath")
             if p.isEmpty {

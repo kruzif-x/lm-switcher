@@ -55,7 +55,7 @@ func perModelValue(_ suffix: String, hash: String) -> Any? {
 // MARK: - Discovery (mirrors the CLI's list_all_models)
 
 struct DiscoveredModel {
-    let backend: String   // "GGUF" | "MLX" | "oMLX"
+    let backend: String   // "GGUF" | "MLX" | "oMLX" | "MTPLX" | "DS4" | "mlx-serve"
     let path: String
     let name: String
     var hash: String { idHash12(path) }
@@ -67,6 +67,7 @@ func discoverModels() -> [DiscoveredModel] {
     // oMLX root known up front so the generic MLX scan below can skip it.
     let omlxDir = Prefs.string("omlxModelDir", default: NSHomeDirectory() + "/models/omlx")
     let ds4Dir = Prefs.string("ds4ModelDir", default: NSHomeDirectory() + "/Projects/ds4-metal/gguf")
+    let mlxServeDir = Prefs.string("mlxServeModelDir", default: NSHomeDirectory() + "/.mlx-serve/models")
     let modelsDir = Prefs.string("modelsDir")
     if !modelsDir.isEmpty {
         guard let en = fm.enumerator(atPath: modelsDir) else { return [] }
@@ -88,6 +89,7 @@ func discoverModels() -> [DiscoveredModel] {
                 let dir = (full as NSString).deletingLastPathComponent
                 if !mlxDirs.contains(dir),
                    !dir.hasPrefix(omlxDir + "/"),
+                   !dir.hasPrefix(mlxServeDir + "/"),
                    let files = try? fm.contentsOfDirectory(atPath: dir),
                    files.contains(where: { $0.hasSuffix(".safetensors") }) {
                     // Skip MTPLX models (have mtplx_runtime.json) — they get .mtplx backend below.
@@ -146,6 +148,30 @@ func discoverModels() -> [DiscoveredModel] {
             }
         }
     }
+    // mlx-serve (ddalcu): one shared server serves every model under the
+    // store root (org/model nesting, depth <= 2).
+    if !mlxServeDir.isEmpty, fm.fileExists(atPath: mlxServeDir) {
+        var visited = Set<String>()
+        if let en = fm.enumerator(atPath: mlxServeDir) {
+            for case let rel as String in en {
+                let depth = rel.split(separator: "/").count
+                guard depth <= 2 else { en.skipDescendants(); continue }
+                if (rel as NSString).lastPathComponent.hasPrefix(".") { continue }
+                let dir = mlxServeDir + "/" + rel
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue,
+                      !visited.contains(dir) else { continue }
+                if let files = try? fm.contentsOfDirectory(atPath: dir),
+                   files.contains(where: { $0.lowercased() == "config.json" }),
+                   files.contains(where: { $0.lowercased().hasSuffix(".safetensors") }) {
+                    visited.insert(dir)
+                    out.append(DiscoveredModel(backend: "mlx-serve", path: dir,
+                                               name: (dir as NSString).lastPathComponent))
+                }
+            }
+        }
+    }
+
     // DS4 (DwarfStar): curated GGUF dir, one server per model.
     if !ds4Dir.isEmpty, fm.fileExists(atPath: ds4Dir) {
         if let files = try? fm.contentsOfDirectory(atPath: ds4Dir) {
@@ -247,7 +273,8 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
             guard text.contains("llama-server") || text.contains("mlx_lm")
                 || text.contains("omlx serve") || text.contains("omlx-server")
                 || text.contains("mtplx.server") || text.contains("mtplx serve")
-                || text.contains("ds4-server") else { continue }
+                || text.contains("ds4-server")
+                || text.range(of: #"^\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
             guard let sp = text.firstIndex(of: " "), let pid = Int32(text[..<sp]),
                   !seenPids.contains(pid) else { continue }
             let args = String(text[sp...])
@@ -262,6 +289,24 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
                 for m in omlxModels {
                     out.append(RunningModel(hash: m.hash, pid: pid, port: port, model: m,
                                             displayName: m.name, backend: "oMLX", ctxSize: nil,
+                                            fromPidFile: false))
+                }
+                continue
+            }
+
+            // mlx-serve: ONE server serves every model in its store.
+            // Anchored on the REAL argv (`.../mlx-serve serve` as the
+            // command token) — text merely mentioning the string (grep,
+            // shell wrappers) must not be adopted as a server.
+            if text.range(of: #"^\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil {
+                let msModels = models.filter { $0.backend == "mlx-serve" }
+                guard !msModels.isEmpty else { continue }
+                seenPids.insert(pid)
+                var msPort = Prefs.int("mlxServePort", default: 11234)
+                if let p = firstMatch(#"--port (\d+)"#, in: args).flatMap(Int.init) { msPort = p }
+                for m in msModels {
+                    out.append(RunningModel(hash: m.hash, pid: pid, port: msPort, model: m,
+                                            displayName: m.name, backend: "mlx-serve", ctxSize: nil,
                                             fromPidFile: false))
                 }
                 continue
@@ -300,7 +345,7 @@ func firstMatch(_ pattern: String, in text: String) -> String? {
 /// llama-server serves /health; mlx_lm.server, oMLX and DS4 serve
 /// /v1/models (§3.3).
 func probeHealthy(port: Int, backend: String) -> Bool {
-    let path = (backend == "MLX" || backend == "oMLX" || backend == "DS4") ? "/v1/models" : "/health"
+    let path = (backend == "MLX" || backend == "oMLX" || backend == "DS4" || backend == "mlx-serve") ? "/v1/models" : "/health"
     guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return false }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2.0
@@ -374,13 +419,20 @@ func stateSnapshot() -> [String: Any] {
     // outside the llama.cpp scan range).
     let omlxPort = Prefs.int("omlxPort", default: 8000)
     let ds4Port = Prefs.int("ds4Port", default: 8090)
+    let mlxServePort = Prefs.int("mlxServePort", default: 11234)
     var portLo = defaultPort
     var portHi = defaultPort + 200
     if omlxPort < portLo { portLo = omlxPort }
     if omlxPort > portHi { portHi = omlxPort }
     if ds4Port < portLo { portLo = ds4Port }
     if ds4Port > portHi { portHi = ds4Port }
-    let ourPorts = Dictionary(uniqueKeysWithValues: running.map { ($0.port, $0.displayName) })
+    if mlxServePort < portLo { portLo = mlxServePort }
+    if mlxServePort > portHi { portHi = mlxServePort }
+    // A shared server (mlx-serve, oMLX) maps onto EVERY model it serves,
+    // so several Running entries can share one port — build the map
+    // tolerantly (first wins) instead of trapping on a duplicate key.
+    var ourPorts: [Int: String] = [:]
+    for r in running where ourPorts[r.port] == nil { ourPorts[r.port] = r.displayName }
     var portsJson: [String: Any] = [:]
     var nextFree = defaultPort
     let external = listeningPorts()

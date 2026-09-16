@@ -97,6 +97,12 @@ enum ModelBackend: String, CaseIterable, Identifiable {
     /// Qwen3.8-Flash-Next). One server per model; Qwen3.8 models also
     /// require their external PLE n-gram sidecar (passed as --ple).
     case ds4 = "DS4"
+    /// mlx-serve (ddalcu) — native Zig server sharing ONE process across
+    /// every model in its store (`~/.mlx-serve/models`), served on
+    /// `mlxServePort` (11234 by convention). OpenAI/Anthropic/Ollama
+    /// compatible; models load on demand, unload model-by-model via
+    /// POST /v1/unload-model. A LaunchAgent usually keeps it running.
+    case mlxserve = "mlx-serve"
 
     /// `Identifiable` conformance uses the raw value (e.g. "GGUF").
     var id: String { rawValue }
@@ -113,6 +119,7 @@ enum ModelBackend: String, CaseIterable, Identifiable {
         case .omlx: return "server.rack"
         case .mtplx: return "forward"
         case .ds4: return "star"
+        case .mlxserve: return "bolt.horizontal"
         }
     }
 }
@@ -252,6 +259,20 @@ struct AppSettings {
     /// TCP port for DS4 server instances. Default 8090 — clear of
     /// llama.cpp (defaultPort, 8080), MTPLX (8085) and oMLX (8000).
     var ds4Port: Int = 8090
+
+    /// Absolute path to the `mlx-serve` binary (ddalcu/mlx-serve). Empty =
+    /// auto-resolve (`~/AI/tools/mlx-serve/current/mlx-serve`, then
+    /// `/opt/homebrew/bin/mlx-serve`, then PATH).
+    var mlxServeServerPath: String = ""
+
+    /// Root directory scanned for mlx-serve models (default
+    /// `~/.mlx-serve/models` — the store shared with the MLX Core app).
+    var mlxServeModelDir: String = ""
+
+    /// TCP port for the shared mlx-serve server. Default 11234 (mlx-serve's
+    /// own convention — clear of llama.cpp 8080, oMLX 8000, MTPLX 8085,
+    /// DS4 8090).
+    var mlxServePort: Int = 11234
 
     /// Free-form string of extra args passed to every server process.
     /// Parsed with `parseArgs` in `ServerManager` to handle quoting.
