@@ -221,6 +221,7 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
               let content = try? String(contentsOfFile: pidsDir + "/" + f, encoding: .utf8),
               let first = content.split(separator: "\n").first,
               let pid = Int32(first.trimmingCharacters(in: .whitespaces)),
+              pid > 1,                              // 0 = caller's process group, 1 = launchd
               kill(pid, 0) == 0 else { continue }   // stale PID file — skip
 
         let args = runCapture("/bin/ps", ["-o", "args=", "-p", "\(pid)"]) ?? ""

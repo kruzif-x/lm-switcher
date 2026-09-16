@@ -1788,6 +1788,15 @@ struct SettingsView: View {
                     if let url = URL(string: "https://github.com/ml-explore/mlx-examples") {
                         Link("MLX Examples", destination: url).font(.caption)
                     }
+                    if let url = URL(string: "https://github.com/jundot/omlx") {
+                        Link("oMLX", destination: url).font(.caption)
+                    }
+                    if let url = URL(string: "https://pypi.org/project/mtplx/") {
+                        Link("MTPLX", destination: url).font(.caption)
+                    }
+                    if let url = URL(string: "https://github.com/ivanfioravanti/ds4-metal") {
+                        Link("DS4 (DwarfStar)", destination: url).font(.caption)
+                    }
                     // MTP issue link removed — fixed in llama.cpp b9859+
                 }
                 .padding(.bottom, 14)

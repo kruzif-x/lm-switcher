@@ -6,6 +6,16 @@
 //    kv_cache  = layers × kv_heads × head_dim × ctx × (bytes_K + bytes_V)
 //    overhead  = 10% of weights + 512 MB compute buffer
 //    headroom  = max(2 GB, 10% of total RAM)   // reserved for the OS
+//
+//  2026-09-15 audit hardening: every number below comes from a model
+//  directory the operator downloaded — i.e. from outside this program.
+//  They are validated and the arithmetic is made non-trapping before use:
+//  a malformed or hostile config.json / GGUF header must degrade to the
+//  `file_size_only` estimate (or to "no geometry"), never abort the MCP
+//  process. Both binaries are built with `swiftc -O`, which keeps overflow
+//  and conversion preconditions compiled in as aborting traps, so the only
+//  safe place to stop a hostile number is before it reaches `*`, `Int(...)`
+//  or `UInt64(...)`.
 // =============================================================================
 
 import Foundation
@@ -24,6 +34,17 @@ enum FootprintEstimator {
     static let headroom: UInt64 = max(2 << 30, ProcessInfo.processInfo.physicalMemory / 10)
     static let computeBuffer: UInt64 = 512 << 20
 
+    // Sanity bounds for model-supplied geometry. Real models sit far below
+    // these; anything outside is treated as "no geometry" — which routes the
+    // estimate to the file_size_only path instead of trapping (2026-09-15
+    // audit: a config.json with num_hidden_layers = -1 used to abort the
+    // whole MCP process through UInt64(perToken * ctx)).
+    private static let maxLayers = 8192
+    private static let maxHeadsPerLayer = 65536
+    private static let maxHeadDim = 65536
+    private static let maxKvHeadTotal = 1 << 22          // 4M KV heads
+    private static let maxContext = 1 << 24              // 16M tokens
+
     static func kvBytesPerElement(_ cacheType: String) -> Double {
         switch cacheType {
         case "q8_0": return 1.0625
@@ -37,10 +58,9 @@ enum FootprintEstimator {
         var perToken = 0.0
         var maxCtx: Int? = nil
         var quality = "file_size_only"
-        var effectiveCtx = ctxSize
+        var effectiveCtx = max(0, ctxSize)
 
         if let geom = geometry(model) {
-            quality = "header"
             maxCtx = geom.maxContext
             let bytesK: Double, bytesV: Double
             if model.backend == "GGUF" {
@@ -62,10 +82,32 @@ enum FootprintEstimator {
                 let cap = Prefs.int("mlxMaxKvSize")
                 if cap > 0 { effectiveCtx = min(effectiveCtx, cap) }
             }
-            perToken = Double(geom.kvHeadTotal * geom.headDim) * (bytesK + bytesV)
+            // Geometry is bounded (see the guards in mlxGeometry /
+            // ggufGeometry), so this product is small — but compute it in
+            // Double anyway: no Int multiply here can trap.
+            let raw = Double(geom.kvHeadTotal) * Double(geom.headDim) * (bytesK + bytesV)
+            if raw.isFinite, raw > 0 {
+                perToken = raw
+                quality = "header"
+            }
         }
 
-        let kv = UInt64(perToken * Double(effectiveCtx))
+        // Only a finite, in-range KV estimate is used. Anything else
+        // (implausible geometry, absurd ctx) degrades to the KV-free
+        // footprint with an explicit `file_size_only` quality, which the
+        // swap guard treats as "cannot bound this load" (fail-closed).
+        var kv: UInt64 = 0
+        if perToken > 0 {
+            let raw = perToken * Double(effectiveCtx)
+            if raw.isFinite, raw >= 0, raw < Double(UInt64.max) {
+                kv = UInt64(raw)
+            } else {
+                perToken = 0
+                maxCtx = nil
+                quality = "file_size_only"
+            }
+        }
+
         let overhead = weights / 10 + computeBuffer
         return FootprintEstimate(footprint: weights + kv + overhead, weights: weights,
                                  kvBytesPerToken: perToken, maxContextWindow: maxCtx,
@@ -79,7 +121,9 @@ enum FootprintEstimator {
         guard est.kvBytesPerToken > 0 else { return nil }
         let fixed = est.weights + est.weights / 10 + computeBuffer + headroom
         guard available > fixed else { return nil }
-        return Int(Double(available - fixed) / est.kvBytesPerToken)
+        let maxCtx = Double(available - fixed) / est.kvBytesPerToken
+        guard maxCtx.isFinite, maxCtx > 0, maxCtx < Double(Int.max) else { return nil }
+        return Int(maxCtx)
     }
 
     private static func weightsBytes(_ model: DiscoveredModel) -> UInt64 {
@@ -101,6 +145,14 @@ enum FootprintEstimator {
     /// per-layer ARRAY instead, which we sum directly.
     struct Geometry { let kvHeadTotal: Int; let headDim: Int; let maxContext: Int? }
 
+    /// UInt64 → Int with an upper bound. Returns nil for zero, above-limit,
+    /// or non-representable values — i.e. for anything a real model cannot
+    /// have. Never traps.
+    private static func boundedInt(_ v: UInt64, max limit: UInt64) -> Int? {
+        guard v > 0, v <= limit, let i = Int(exactly: v) else { return nil }
+        return i
+    }
+
     private static func geometry(_ model: DiscoveredModel) -> Geometry? {
         if model.backend == "GGUF" || model.backend == "DS4" {
             return ggufGeometry(model.path)
@@ -108,23 +160,36 @@ enum FootprintEstimator {
         return mlxGeometry(model.path)
     }
 
-    /// MLX config.json (§3.7).
+    /// MLX config.json (§3.7). Every field is validated before use; a
+    /// value outside model-realism bounds makes the whole geometry nil.
     private static func mlxGeometry(_ dir: String) -> Geometry? {
         guard let data = FileManager.default.contents(atPath: dir + "/config.json"),
               let cfg = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let layers = cfg["num_hidden_layers"] as? Int else { return nil }
+              let layers = cfg["num_hidden_layers"] as? Int,
+              layers >= 1, layers <= maxLayers else { return nil }
         let heads = cfg["num_attention_heads"] as? Int ?? 0
+        guard heads >= 0, heads <= maxHeadsPerLayer else { return nil }
         let kvHeads = cfg["num_key_value_heads"] as? Int ?? heads
+        guard kvHeads >= 1, kvHeads <= maxHeadsPerLayer else { return nil }
         var headDim = cfg["head_dim"] as? Int ?? 0
-        if headDim == 0, let hidden = cfg["hidden_size"] as? Int, heads > 0 { headDim = hidden / heads }
-        guard kvHeads > 0, headDim > 0 else { return nil }
-        return Geometry(kvHeadTotal: layers * kvHeads, headDim: headDim,
-                        maxContext: cfg["max_position_embeddings"] as? Int)
+        if headDim == 0, let hidden = cfg["hidden_size"] as? Int, heads > 0,
+           hidden > 0, hidden <= maxHeadDim * maxHeadsPerLayer {
+            headDim = hidden / heads
+        }
+        guard headDim >= 1, headDim <= maxHeadDim else { return nil }
+        let (kvTotal, overflow) = layers.multipliedReportingOverflow(by: kvHeads)
+        guard !overflow, kvTotal >= 1, kvTotal <= maxKvHeadTotal else { return nil }
+        let maxCtx = (cfg["max_position_embeddings"] as? Int).flatMap {
+            $0 >= 1 && $0 <= maxContext ? $0 : nil
+        }
+        return Geometry(kvHeadTotal: kvTotal, headDim: headDim, maxContext: maxCtx)
     }
 
     /// GGUF v2/v3 header-only parse (§3.7): magic, versions, then walk the
     /// metadata KVs for architecture geometry. Never reads tensor data.
     /// Any structural surprise throws → caller falls back to file size only.
+    /// Values are bounds-checked before narrowing so a hostile header cannot
+    /// trap `Int(...)` or an integer multiply (2026-09-15 audit).
     private static func ggufGeometry(_ path: String) -> Geometry? {
         guard let r = try? GgufReader(path: path) else { return nil }
         do {
@@ -158,24 +223,35 @@ enum FootprintEstimator {
                    meta["\(arch).attention.key_length"] != nil
                     || meta["\(arch).embedding_length"] != nil { break }
             }
-            guard !arch.isEmpty, let layers = meta["\(arch).block_count"] else { return nil }
-            let kvHeadTotal: UInt64
+            guard !arch.isEmpty,
+                  let layers = boundedInt(meta["\(arch).block_count"] ?? 0, max: UInt64(maxLayers))
+            else { return nil }
+            let kvHeadTotal: Int
             if let sum = kvHeadArraySum, sum > 0 {
-                kvHeadTotal = sum
-            } else if let kvHeads = meta["\(arch).attention.head_count_kv"], kvHeads > 0 {
-                kvHeadTotal = layers * kvHeads
+                guard let total = boundedInt(sum, max: UInt64(maxKvHeadTotal)) else { return nil }
+                kvHeadTotal = total
+            } else if let kvHeads = boundedInt(meta["\(arch).attention.head_count_kv"] ?? 0,
+                                               max: UInt64(maxHeadsPerLayer)) {
+                let (total, overflow) = layers.multipliedReportingOverflow(by: kvHeads)
+                guard !overflow, total <= maxKvHeadTotal else { return nil }
+                kvHeadTotal = total
             } else {
                 return nil
             }
-            var headDim = Int(meta["\(arch).attention.key_length"] ?? 0)
+            var headDim = boundedInt(meta["\(arch).attention.key_length"] ?? 0,
+                                     max: UInt64(maxHeadDim)) ?? 0
             if headDim == 0,
-               let emb = meta["\(arch).embedding_length"],
-               let heads = meta["\(arch).attention.head_count"], heads > 0 {
-                headDim = Int(emb / heads)
+               let emb = meta["\(arch).embedding_length"], emb > 0,
+               let heads = boundedInt(meta["\(arch).attention.head_count"] ?? 0,
+                                      max: UInt64(maxHeadsPerLayer)),
+               heads > 0 {
+                headDim = boundedInt(emb / UInt64(heads), max: UInt64(maxHeadDim)) ?? 0
             }
             guard headDim > 0 else { return nil }
-            return Geometry(kvHeadTotal: Int(kvHeadTotal), headDim: headDim,
-                            maxContext: meta["\(arch).context_length"].map(Int.init))
+            return Geometry(kvHeadTotal: kvHeadTotal, headDim: headDim,
+                            maxContext: meta["\(arch).context_length"].flatMap {
+                                boundedInt($0, max: UInt64(maxContext))
+                            })
         } catch {
             return nil
         }
@@ -220,13 +296,20 @@ final class GgufReader {
         }
     }
 
-    /// Sum a numeric array value (per-layer head counts, etc.).
+    /// Sum a numeric array value (per-layer head counts, etc.). The element
+    /// COUNT is capped above; the element VALUES are model-supplied, so the
+    /// accumulation is overflow-checked — an overflowing sum is a corrupt
+    /// header (throw), not a process abort (2026-09-15 audit).
     func intArraySum() throws -> UInt64 {
         let elemType = try u32()
         let count = try u64()
         guard count < 1 << 16 else { throw Err.corrupt }
         var sum: UInt64 = 0
-        for _ in 0..<count { sum += try intValue(type: elemType) }
+        for _ in 0..<count {
+            let (next, overflow) = sum.addingReportingOverflow(try intValue(type: elemType))
+            guard !overflow else { throw Err.corrupt }
+            sum = next
+        }
         return sum
     }
 

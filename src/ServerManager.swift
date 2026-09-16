@@ -1237,13 +1237,16 @@ class ServerManager {
         // extras so the loopback binding always wins. Users who genuinely
         // want LAN exposure can run the CLI directly with explicit flags.
         // Also strip `--no-mmap` when the toggle already handles it.
-        var cleanExtra = stripHostFlag(from: effExtraArgs)
-        if settings.noMmap && cleanExtra.contains("--no-mmap") {
-            cleanExtra = cleanExtra.replacingOccurrences(of: "--no-mmap", with: "")
-                .trimmingCharacters(in: .whitespaces)
+        // 2026-09-15 audit: strip on the TOKEN array and append it directly —
+        // never re-join a token list and re-parse it. That round-trip turned
+        // quoted/escaped whitespace back into argv boundaries and defeated
+        // the `--host` strip (and corrupted legitimate quoted values).
+        var cleanExtraTokens = stripHostFlagTokens(parseArgs(effExtraArgs))
+        if settings.noMmap {
+            cleanExtraTokens.removeAll { $0 == "--no-mmap" }
         }
-        if !cleanExtra.isEmpty {
-            args += parseArgs(cleanExtra)
+        if !cleanExtraTokens.isEmpty {
+            args += cleanExtraTokens
         }
 
         task.executableURL = URL(fileURLWithPath: executable)
@@ -1871,16 +1874,23 @@ class ServerManager {
         return args
     }
 
-    /// A4 fix: remove a `--host <value>` (or `--host=<value>`) pair from a
-    /// free-form extra-args string. The app forces `--host 127.0.0.1` for
+    /// A4 fix: remove a `--host <value>` (or `--host=<value>`) pair from
+    /// free-form extra-args tokens. The app forces `--host 127.0.0.1` for
     /// loopback security; a user-supplied `--host` in extra args must not
-    /// override that (llama-server/mlx honor the LAST occurrence). Tokenizes
-    /// with `parseArgs` so the strip respects quoting, then drops `--host`
-    /// and its following token (or the `=` form). `--port` is left alone —
-    /// port selection is handled by the app's allocator and a user override
-    /// there is not a security boundary.
-    private func stripHostFlag(from s: String) -> String {
-        let tokens = parseArgs(s)
+    /// override that (llama-server/mlx honor the LAST occurrence).
+    /// `--port` is left alone — port selection is handled by the app's
+    /// allocator and a user override there is not a security boundary.
+    ///
+    /// 2026-09-15 audit fix: operate on the token ARRAY end-to-end. The
+    /// previous version filtered tokens and re-joined them with single
+    /// spaces, and the caller re-parsed that string — so a token whose
+    /// whitespace came from quoting or escaping (`--alias "local --host
+    /// 0.0.0.0"`) was re-split on the second parse and became a real
+    /// `--host 0.0.0.0` AFTER the loopback binding, silently rebinding the
+    /// engine to all interfaces. Same class of bug also corrupted
+    /// legitimate quoted values (e.g. `--chat-template "/p a/t.jinja"`).
+    /// Never re-join a token list just to re-parse it.
+    private func stripHostFlagTokens(_ tokens: [String]) -> [String] {
         var filtered: [String] = []
         var skipNext = false
         for tok in tokens {
@@ -1892,7 +1902,7 @@ class ServerManager {
             if tok.hasPrefix("--host=") { continue }
             filtered.append(tok)
         }
-        return filtered.joined(separator: " ")
+        return filtered
     }
 
     // MARK: - Sync with external processes

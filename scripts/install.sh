@@ -47,12 +47,38 @@ set -e
 umask 022
 
 # -----------------------------------------------------------------------------
+# Helpers (2026-09-15 audit)
+# -----------------------------------------------------------------------------
+
+# Refuse to write through a symlink at $1 — a pre-placed symlink would let a
+# truncating redirect land on an arbitrary file.
+_guard_not_symlink() {
+    if [[ -L "$1" ]]; then
+        echo "✗ Refusing to write through a symlink: $1" >&2
+        exit 1
+    fi
+}
+
+# Escape XML metacharacters so a path containing &, < or > cannot reshape a plist.
+_xml_escape() {
+    printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+}
+
+# -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
 
 # Where the source, CLI, and (after build) compiled binary live.
 # Default: ~/bin
 BIN_DIR="${1:-$HOME/bin}"
+
+# 2026-09-15 audit: this directory is argv-controlled, and the installer writes
+# binaries into it and compiles every Swift source it stages there. Refuse a
+# symlink target; ownership and permission checks follow the mkdir below.
+if [[ -L "$BIN_DIR" ]]; then
+    echo "✗ Install directory is a symlink: $BIN_DIR" >&2
+    exit 1
+fi
 
 # Directory holding the Swift sources. install.sh copies all of src/*.swift
 # into $BIN_DIR before compiling (the app is split across several files since
@@ -92,6 +118,19 @@ mkdir -p "$BIN_DIR"
 mkdir -p "$PLIST_DIR"
 mkdir -p "$APP_DIR"
 
+# 2026-09-15 audit: the install directory must be yours alone — a shared or
+# group/world-writable destination would let another account replace what is
+# compiled and installed from here. (BSD find: -perm +022 matches if ANY of
+# the group/world-write bits are set.)
+if [[ "$(stat -f '%u' "$BIN_DIR")" != "$(id -u)" ]]; then
+    echo "✗ Install directory is not owned by you: $BIN_DIR" >&2
+    exit 1
+fi
+if [[ -n "$(find "$BIN_DIR" -maxdepth 0 -perm +022 2>/dev/null)" ]]; then
+    echo "✗ Install directory is group/world-writable ($(stat -f '%Sp' "$BIN_DIR")): $BIN_DIR" >&2
+    exit 1
+fi
+
 # Remove any stale binaries from previous installs so the rebuild starts
 # clean (otherwise a failed compile could leave an outdated binary in place
 # and the install would still report success).
@@ -112,7 +151,14 @@ rm -f "$BIN_DIR/lm-switcher" "$BIN_DIR/lm-switcher-mcp"
 echo "==> Compiling lm-switcher (multi-file module)..."
 # Copy all Swift sources from the repo into $BIN_DIR so the build is
 # self-contained and reproducible from a fresh clone (audit L-8 + A-1).
+# 2026-09-15 audit: compile exactly the files just staged — never a glob over
+# the destination directory, which would compile any unrelated or stale
+# .swift sitting in BIN_DIR into the app that launchd starts at login.
 cp "$SRC_DIR"/*.swift "$BIN_DIR"/
+SWIFT_SOURCES=()
+for _f in "$SRC_DIR"/*.swift; do
+    SWIFT_SOURCES+=("$BIN_DIR/$(basename "$_f")")
+done
 # Compile every .swift file together as one module. Swift's
 # whole-module optimization requires all sources in one invocation.
 #
@@ -124,7 +170,7 @@ cp "$SRC_DIR"/*.swift "$BIN_DIR"/
 swiftc -parse-as-library -o "$COMPILED_BIN" -O \
     -target arm64-apple-macos26.0 \
     -framework SwiftUI -framework AppKit \
-    "$BIN_DIR"/*.swift
+    "${SWIFT_SOURCES[@]}"
 
 # MCP agent-access server (MCP_SPEC.md Phase 1). A separate binary that
 # shares no source files with the app. Built SECOND so a broken MCP build
@@ -310,6 +356,9 @@ unset _UNINSTALL_SRC
 # This gives crash recovery without overriding the user's explicit quit.
 
 echo "==> Installing LaunchAgent..."
+# 2026-09-15 audit: never write the plist through a symlink, and XML-escape the
+# interpolated path so a path containing &, < or > cannot reshape the XML.
+_guard_not_symlink "$PLIST_FILE"
 cat > "$PLIST_FILE" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -320,7 +369,7 @@ cat > "$PLIST_FILE" <<EOF
     <string>local.llama-menubar</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$APP_BUNDLE/Contents/MacOS/lm-switcher</string>
+        <string>$(_xml_escape "$APP_BUNDLE")/Contents/MacOS/lm-switcher</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
