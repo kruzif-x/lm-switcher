@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5b] - 2026-09-15
+
+**Security & robustness hardening** — fixes from a coverage-led audit of the CLI, MCP server and app.
+
+### Security
+- **MCP model-metadata hardening:** GGUF/MLX geometry is bounds-checked and the KV arithmetic can no longer trap, so a malformed or crafted model directory degrades to a file-size estimate instead of aborting the MCP server (the agent's tool channel).
+- **Swap guard fails closed:** an agent load whose KV cache cannot be estimated (`file_size_only`) is refused unless *Allow swap for agent loads* is enabled.
+- **Identity-checked unloads:** `llama unload` refuses to signal a PID whose command line is not one of our engines (the pidfile is parked as `<name>.pid.rejected`); the oMLX worker port sweep only kills engine-looking listeners — and now actually runs (the port was previously read after the pidfile had been removed, so it was dead code).
+- **Agent action log** (`events.jsonl`) is written under the app's flock with `O_APPEND`, mode 0600, so the app's read-then-truncate can no longer discard an entry.
+- **Loopback binding:** the extra-args `--host` strip now works on the argument array, so a quoted or escaped `--host 0.0.0.0` can no longer be reinstated after the loopback binding; quoted values such as `--chat-template "/p a/t.jinja"` are no longer split.
+- **MLX loads** pass `--max-kv-size` when configured, matching the swap-guard estimate and the app's own launch.
+- **install.sh** validates its target directory (symlink / owner / group-world-writable), compiles only the sources it staged, and guards + XML-escapes the LaunchAgent plist write.
+
+### Changed
+- About tab: the description and References now cover all five engines (oMLX, MTPLX and DS4 (DwarfStar) added).
+
 ## [0.9.4b] - 2026-09-15
 
 **Beta release.**
