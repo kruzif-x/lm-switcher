@@ -1283,7 +1283,7 @@ struct SettingsView: View {
                                   mono: false)
                         helpEntry("Step 0 — Install an engine (one-time)",
                                   "In Terminal: brew install llama.cpp — that covers GGUF models, which is all most people need. For Apple MLX models, also: pip install mlx-lm. For MTPLX models (native MTP spec-decode — fastest Mac speedups), install: pip install mtplx.",
-                                  detail: "Paths are auto-detected; override in Global → Backends. Defaults: /opt/homebrew/bin/llama-server, the newest Python user-install of mlx_lm.server, and your active venv's mtplx (LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first).",
+                                  detail: "Paths are auto-detected; override in Global → Backends. Defaults: /opt/homebrew/bin/llama-server, the newest Python user-install of mlx_lm.server, your active venv's mtplx (LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first), and mlx-serve (~/AI/tools/mlx-serve/current/mlx-serve, then /opt/homebrew/bin/mlx-serve).",
                                   mono: false)
                         helpEntry("Step 1 — Download a model",
                                   "Models are free files from Hugging Face (links below). Not sure what fits your Mac? Use the table in section 5 — e.g. with 16 GB of RAM, search \"Qwen3.5 9B GGUF\" and download the file ending in Q4_K_M.gguf.",
@@ -1299,7 +1299,7 @@ struct SettingsView: View {
                                   "Click the model in the menu bar dropdown. A green dot and a port number (like :8080) mean it's running.",
                                   mono: false)
                         helpEntry("Step 4 — Talk to it",
-                                  "Simplest: open http://127.0.0.1:8080 in your browser — GGUF and MTPLX models include a built-in chat page (MTPLX also serves /dashboard/ and /docs). Or right-click the running model → Copy endpoint, and paste it into any chat app that accepts an \"OpenAI-compatible\" server (no API key needed — type anything if a key is required).",
+                                  "Simplest: open http://127.0.0.1:8080 in your browser — GGUF and MTPLX models include a built-in chat page (MTPLX also serves /dashboard/ and /docs; mlx-serve serves its own front page at http://127.0.0.1:11234/). Or right-click the running model → Copy endpoint, and paste it into any chat app that accepts an \"OpenAI-compatible\" server (no API key needed — type anything if a key is required).",
                                   detail: "Endpoint is http://127.0.0.1:PORT/v1 — standard OpenAI chat-completions API, bound to 127.0.0.1, so other machines can't reach it.",
                                   mono: false)
                     }
@@ -1340,6 +1340,11 @@ struct SettingsView: View {
                                   "Shows what MCP-connected agents have loaded or unloaded while you weren't looking. Click again (now an ✕) to go back to your models.",
                                   detail: "This history is kept whether or not \"Notify on agent actions\" is on — that toggle only controls the macOS notification, not what the clock icon can show you.",
                                   mono: false)
+                        helpEntry("Which engine runs your model?",
+                                  "The engine is decided when the app DISCOVERS the model — the file format plus the folder it lives in. GGUF files → llama-server (or ds4-server when they sit in the DS4 folder). Folders → MLX-shaped, then the tree that owns them wins: mtplx_runtime.json → MTPLX, the mlx-serve store → mlx-serve, the oMLX root → oMLX, otherwise mlx_lm.server. Six engines, one owner per tree — nothing double-lists.",
+                                  detail: "There is no engine picker: to run the same weights on another engine, put a REAL copy in that engine's root (symlinks are ignored) — or hot-load any MLX folder into mlx-serve with POST /v1/load-model. \"Switch\" swaps WHICH model runs, never the engine. Full map:",
+                                  mono: false)
+                        helpLinks([("Open the engine-selection map (browser)", "file://\(NSHomeDirectory())/AI/tools/lm-switcher-engine-map.html")])
                     }
 
                     helpSection(number: "3", title: "Settings explained", id: "s3", proxy: proxy) {
@@ -1790,7 +1795,7 @@ struct SettingsView: View {
 
                 // Description
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages five engines on your behalf — llama-server (GGUF), mlx_lm.server (Apple MLX), oMLX, MTPLX and ds4-server (DwarfStar). Models start on demand, serve on a local port, and stop cleanly when you unload them.")
+                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages six engines on your behalf — llama-server (GGUF), mlx_lm.server (Apple MLX), oMLX, MTPLX, ds4-server (DwarfStar) and mlx-serve. Models start on demand, serve on a local port, and stop cleanly when you unload them.")
                         .font(.body).foregroundStyle(.secondary)
                     Text("Discovered models appear in the menu bar dropdown. Click one to load it, right-click for single-model actions, or use the bulk controls to load and unload multiple models at once. All settings — context size, KV cache, sampling, per-model overrides — are persisted and shared with the companion llama CLI, so the terminal and the app always stay in sync.")
                         .font(.body).foregroundStyle(.secondary)
@@ -1843,6 +1848,9 @@ struct SettingsView: View {
                     }
                     if let url = URL(string: "https://github.com/ivanfioravanti/ds4-metal") {
                         Link("DS4 (DwarfStar)", destination: url).font(.caption)
+                    }
+                    if let url = URL(string: "https://github.com/ddalcu/mlx-serve") {
+                        Link("mlx-serve", destination: url).font(.caption)
                     }
                     // MTP issue link removed — fixed in llama.cpp b9859+
                 }

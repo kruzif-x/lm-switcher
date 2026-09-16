@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **mlx-serve backend** (`ModelBackend.mlxserve`). Discovery scans the store (`mlxServeModelDir`, org/model nesting depth ≤ 2) and the tree is excluded from the plain MLX scan in all three surfaces (app `mlxEntry`, CLI `list_all_models`, MCP `discoverModels`). The shared server is adopted when healthy (e.g. the LaunchAgent `com.rolandchia.mlx-serve`) or spawned on load; **unload frees ONE model via `POST /v1/unload-model` and leaves the server running** for other models/agents.
 - Settings rows (binary / model dir / port, default 11234) in Global → Backends, plus a Help entry and a `mlxserve` install hint.
 - CLI: `list` shows `[mlxserve]` entries; `load` adopts-or-spawns the shared server; `unload` posts a model-level unload and says the server stays up.
+- **Help: "Which engine runs your model?"** — explains engine selection (format + owning tree) and links a new HTML/SVG **engine-selection map** (`docs/engine-map.html`, deployed to `~/AI/tools/lm-switcher-engine-map.html` by install.sh). Step 0/Step 4 help text now covers mlx-serve.
+- **About** now lists **six** engines and links mlx-serve in References.
 
 ### Fixed
 - **ps-scan false positives on shared-server text** — the mlx-serve matcher in the app and the MCP is anchored on the real argv (command token `.../mlx-serve serve`), so a `grep mlx-serve serve` or a shell wrapper merely quoting the string can no longer be adopted as a server. That case used to trap the MCP with `Fatal error: Duplicate values for key`.

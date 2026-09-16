@@ -340,6 +340,17 @@ if [[ -f "$_UNINSTALL_SRC" ]]; then
 fi
 unset _UNINSTALL_SRC
 
+# Engine-selection map (Help → "Open the engine-selection map"). The app
+# opens it from a stable path outside the bundle so the diagram can be
+# updated without rebuilding, same pattern as the ds4 chat page.
+_DIAGRAM_SRC="$SCRIPT_DIR/../docs/engine-map.html"
+if [[ -f "$_DIAGRAM_SRC" ]]; then
+    mkdir -p "$HOME/AI/tools"
+    cp "$_DIAGRAM_SRC" "$HOME/AI/tools/lm-switcher-engine-map.html"
+    echo "  ✓ engine map installed → $HOME/AI/tools/lm-switcher-engine-map.html"
+fi
+unset _DIAGRAM_SRC
+
 
 # -----------------------------------------------------------------------------
 # Step 7: Install the LaunchAgent

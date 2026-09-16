@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LM Switcher — which engine runs your model?</title>
+<style>
+  :root {
+    --bg: #f5f5f7; --panel: #ffffff; --stroke: #d2d2d7; --dash: #86868b;
+    --ink: #1d1d1f; --sub: #6e6e73; --faint: #86868b;
+    --gguf: #0071e3; --mlx: #30b0c7; --omlx: #34c759; --mtplx: #ff9f0a; --ds4: #af52de; --mlxserve: #ff375f;
+    --chip: #f2f2f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111113; --panel: #1c1c1e; --stroke: #3a3a3c; --dash: #98989d;
+      --ink: #f5f5f7; --sub: #a1a1a6; --faint: #8e8e93; --chip: #2c2c2e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 24px 64px; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  header { max-width: 1160px; width: 100%; margin-bottom: 18px; }
+  h1 { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; margin: 0 0 6px; }
+  header p { margin: 0; color: var(--sub); max-width: 980px; }
+  .panel {
+    width: 100%; max-width: 1160px; background: var(--panel); border: 1px solid var(--stroke);
+    border-radius: 18px; padding: 18px 18px 6px; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+  }
+  svg { width: 100%; height: auto; display: block; }
+  .box    { fill: var(--panel); stroke: var(--stroke); stroke-width: 1.5; }
+  .decide { fill: var(--panel); stroke: var(--dash); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .card   { fill: var(--panel); stroke-width: 2; }
+  .chipbg { fill: var(--chip); }
+  .t      { fill: var(--ink); font-weight: 600; }
+  .s      { fill: var(--sub); font-size: 12.5px; }
+  .m      { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 11.5px; fill: var(--sub); }
+  .lbl    { fill: var(--faint); font-size: 12px; }
+  .flow   { stroke: var(--dash); stroke-width: 1.6; fill: none; marker-end: url(#arr); }
+  .bus    { stroke: var(--dash); stroke-width: 1.6; fill: none; }
+  .note { max-width: 1160px; width: 100%; margin-top: 22px; color: var(--sub); }
+  .note h2 { font-size: 15px; font-weight: 650; color: var(--ink); margin: 0 0 8px; }
+  .note li { margin: 4px 0; }
+  .note code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; background: var(--chip); padding: 1px 5px; border-radius: 5px; }
+  footer { max-width: 1160px; width: 100%; margin-top: 26px; color: var(--faint); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Which engine runs your model?</h1>
+  <p>LM Switcher decides the engine when it <b>discovers</b> a model — the file format plus the folder it lives in.
+     There is no engine picker; move a model to another engine's root (or hot-load it) to change engines.
+     One owner per tree: nothing lists twice.</p>
+</header>
+
+<div class="panel">
+<svg viewBox="0 0 1500 800" role="img" aria-label="Engine selection flow: GGUF files go to llama-server (or ds4-server when in the DS4 folder); MLX folders go to MTPLX, mlx-serve, oMLX or mlx_lm.server depending on the marker file and the tree that owns them.">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dash)"></path>
+    </marker>
+  </defs>
+
+  <!-- ===== spine (left of centre) ===== -->
+
+  <!-- start -->
+  <rect class="box" x="430" y="16" width="360" height="52" rx="26"></rect>
+  <text class="t" x="610" y="48" text-anchor="middle" font-size="15">A model appears under your roots</text>
+  <path class="flow" d="M610,68 V110"></path>
+
+  <!-- D1: gguf? -->
+  <rect class="decide" x="430" y="110" width="360" height="52" rx="12"></rect>
+  <text class="t" x="610" y="135" text-anchor="middle" font-size="15">Is it a .gguf file?</text>
+  <text class="s" x="610" y="152" text-anchor="middle" font-size="11.5">single-file models</text>
+
+  <path class="flow" d="M790,136 H836"></path>
+  <text class="lbl" x="812" y="128" text-anchor="middle">yes</text>
+
+  <path class="flow" d="M610,162 V205"></path>
+  <text class="lbl" x="622" y="187">no</text>
+
+  <!-- D2: config.json + safetensors? -->
+  <rect class="decide" x="430" y="205" width="360" height="52" rx="12"></rect>
+  <text class="t" x="610" y="230" text-anchor="middle" font-size="15">A folder with config.json</text>
+  <text class="t" x="610" y="248" text-anchor="middle" font-size="15">+ *.safetensors?</text>
+
+  <path class="flow" d="M430,231 H396"></path>
+  <text class="lbl" x="413" y="223" text-anchor="middle">no</text>
+  <path class="flow" d="M610,257 V300"></path>
+  <text class="lbl" x="622" y="282">yes</text>
+
+  <!-- ignored pill -->
+  <rect class="box" x="30" y="205" width="366" height="52" rx="26"></rect>
+  <text class="t" x="213" y="228" text-anchor="middle" font-size="14">Not a model — ignored</text>
+  <text class="s" x="213" y="245" text-anchor="middle" font-size="11">companions, caches, partial downloads</text>
+
+  <!-- D3: which tree / marker? -->
+  <rect class="decide" x="430" y="300" width="360" height="52" rx="12"></rect>
+  <text class="t" x="610" y="325" text-anchor="middle" font-size="15">Which tree or marker applies?</text>
+  <text class="s" x="610" y="342" text-anchor="middle" font-size="11.5">checked in this order — first match wins</text>
+
+  <!-- ===== gguf branch (top right) ===== -->
+
+  <rect class="decide" x="840" y="110" width="620" height="52" rx="12"></rect>
+  <text class="t" x="1150" y="135" text-anchor="middle" font-size="15">Is it inside the DS4 folder?</text>
+  <text class="m" x="1150" y="152" text-anchor="middle">~/Projects/ds4-metal/gguf</text>
+
+  <path class="flow" d="M990,162 V216"></path>
+  <text class="lbl" x="1003" y="192" text-anchor="middle">yes</text>
+  <path class="flow" d="M1310,162 V216"></path>
+  <text class="lbl" x="1323" y="192" text-anchor="middle">no</text>
+
+  <!-- DS4 card -->
+  <rect class="card" x="840" y="216" width="300" height="200" rx="14" stroke="var(--ds4)"></rect>
+  <text class="t" x="860" y="246" font-size="15.5">DS4 — ds4-server</text>
+  <rect class="chipbg" x="860" y="258" width="260" height="26" rx="13"></rect>
+  <text class="m" x="990" y="275" text-anchor="middle">*.gguf in the DS4 folder</text>
+  <text class="s" x="860" y="308">one process per model</text>
+  <text class="s" x="860" y="328">port :8090</text>
+  <text class="s" x="860" y="348">unload → stops that process</text>
+  <text class="s" x="860" y="374" font-size="11.5" fill="var(--faint)">curated GGUFs only; PLE sidecar</text>
+  <text class="s" x="860" y="390" font-size="11.5" fill="var(--faint)">attached automatically when needed</text>
+
+  <!-- GGUF card -->
+  <rect class="card" x="1160" y="216" width="300" height="200" rx="14" stroke="var(--gguf)"></rect>
+  <text class="t" x="1180" y="246" font-size="15.5">GGUF — llama-server</text>
+  <rect class="chipbg" x="1180" y="258" width="260" height="26" rx="13"></rect>
+  <text class="m" x="1310" y="275" text-anchor="middle">*.gguf under your Models dir</text>
+  <text class="s" x="1180" y="308">one process per model</text>
+  <text class="s" x="1180" y="328">next free port from 8080</text>
+  <text class="s" x="1180" y="348">unload → stops that process</text>
+  <text class="s" x="1180" y="374" font-size="11.5" fill="var(--faint)">mmproj-*/mtp-*/dflash-* files are</text>
+  <text class="s" x="1180" y="390" font-size="11.5" fill="var(--faint)">companions, never listed alone</text>
+
+  <!-- ===== fan-out bus to the four MLX-side engines ===== -->
+
+  <path class="flow" d="M610,352 V440"></path>
+  <path class="bus" d="M200,440 H1280"></path>
+  <path class="flow" d="M200,440 V470"></path>
+  <path class="flow" d="M560,440 V470"></path>
+  <path class="flow" d="M920,440 V470"></path>
+  <path class="flow" d="M1280,440 V470"></path>
+
+  <!-- MTPLX -->
+  <rect class="card" x="30" y="470" width="340" height="216" rx="14" stroke="var(--mtplx)"></rect>
+  <text class="t" x="50" y="500" font-size="16">MTPLX — mtplx serve</text>
+  <rect class="chipbg" x="50" y="512" width="300" height="26" rx="13"></rect>
+  <text class="m" x="200" y="529" text-anchor="middle">mtplx_runtime.json present</text>
+  <text class="s" x="50" y="566">one process per model</text>
+  <text class="s" x="50" y="588">port :8085 (per-model override)</text>
+  <text class="s" x="50" y="610">unload → stops that process</text>
+  <text class="s" x="50" y="640" font-size="11.5" fill="var(--faint)">native MTP speculative decoding —</text>
+  <text class="s" x="50" y="656" font-size="11.5" fill="var(--faint)">the fastest path for MTP models</text>
+
+  <!-- mlx-serve -->
+  <rect class="card" x="390" y="470" width="340" height="216" rx="14" stroke="var(--mlxserve)"></rect>
+  <text class="t" x="410" y="500" font-size="16">mlx-serve — native Zig</text>
+  <rect class="chipbg" x="410" y="512" width="300" height="26" rx="13"></rect>
+  <text class="m" x="560" y="529" text-anchor="middle">under ~/.mlx-serve/models</text>
+  <text class="s" x="410" y="566">ONE shared server</text>
+  <text class="s" x="410" y="588">port :11234 (fixed)</text>
+  <text class="s" x="410" y="610">unload → frees one model,</text>
+  <text class="s" x="410" y="626">server stays up for agents</text>
+  <text class="s" x="410" y="654" font-size="11.5" fill="var(--faint)">OpenAI + Anthropic + Ollama wires</text>
+
+  <!-- oMLX -->
+  <rect class="card" x="750" y="470" width="340" height="216" rx="14" stroke="var(--omlx)"></rect>
+  <text class="t" x="770" y="500" font-size="16">oMLX — omlx serve</text>
+  <rect class="chipbg" x="770" y="512" width="300" height="26" rx="13"></rect>
+  <text class="m" x="920" y="529" text-anchor="middle">under the oMLX model root</text>
+  <text class="s" x="770" y="566">ONE shared server</text>
+  <text class="s" x="770" y="588">port :8000 (fixed)</text>
+  <text class="s" x="770" y="610">unload → stops the server</text>
+  <text class="s" x="770" y="626">(every oMLX model goes with it)</text>
+  <text class="s" x="770" y="654" font-size="11.5" fill="var(--faint)">MTP/VLM settings live in oMLX itself</text>
+
+  <!-- MLX -->
+  <rect class="card" x="1110" y="470" width="340" height="216" rx="14" stroke="var(--mlx)"></rect>
+  <text class="t" x="1130" y="500" font-size="16">MLX — mlx_lm.server</text>
+  <rect class="chipbg" x="1130" y="512" width="300" height="26" rx="13"></rect>
+  <text class="m" x="1280" y="529" text-anchor="middle">any other folder under Models</text>
+  <text class="s" x="1130" y="566">one process per model</text>
+  <text class="s" x="1130" y="588">next free port from 8080</text>
+  <text class="s" x="1130" y="610">unload → stops that process</text>
+  <text class="s" x="1130" y="640" font-size="11.5" fill="var(--faint)">the default owner of plain MLX</text>
+  <text class="s" x="1130" y="656" font-size="11.5" fill="var(--faint)">folders in your Models directory</text>
+
+  <!-- bottom caption -->
+  <text class="lbl" x="750" y="726" text-anchor="middle" font-size="12">
+    Ports: llama.cpp &amp; MLX count up from the Default port (8080) · oMLX 8000 · MTPLX 8085 · DS4 8090 · mlx-serve 11234
+  </text>
+  <text class="lbl" x="750" y="746" text-anchor="middle" font-size="12">
+    Per-model overrides change port, context, sampling, MTP/DFlash and extra args — never the engine.
+  </text>
+</svg>
+</div>
+
+<div class="note">
+  <h2>Good to know</h2>
+  <ul>
+    <li><b>One owner per tree.</b> The oMLX root and the mlx-serve store are excluded from the plain MLX scan — in the app, the CLI and the MCP alike — so a model never lists twice.</li>
+    <li><b>Symlinks are skipped.</b> A linked model folder is invisible to every scan; put a real folder in the tree you want. A copy in two trees is two independent entries.</li>
+    <li><b>Moving engines = moving folders</b> (Settings → Global → Backends sets the roots). mlx-serve exception: it can also hot-load any MLX folder without moving it — <code>POST /v1/load-model {"model": "&lt;absolute path&gt;"}</code>.</li>
+    <li><b>“Switch” swaps models, not engines.</b> It loads the new model, verifies it, then unloads the old ones — safe model swaps for the same engines.</li>
+    <li><b>Shared servers behave differently on unload.</b> oMLX stops for everyone; mlx-serve frees just that model and stays up for agents (a LaunchAgent usually keeps it running).</li>
+  </ul>
+</div>
+
+<footer>
+  LM Switcher · engine-selection map · generated from the discovery rules in ServerManager (app), <code>list_all_models</code> (CLI) and <code>StateReader.discoverModels</code> (MCP).
+</footer>
+</body>
+</html>
