@@ -5,6 +5,18 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.7b] - 2026-09-16
+
+**mlx-serve state tells the truth, `load` actually loads, and an MCP crasher is gone.**
+
+### Fixed
+- **Stopping an mlx-serve model now sticks.** The shared server is always-on (the LaunchAgent keeps it up) and loads models from disk lazily, so "the server is up" was reported as "model running" in all three surfaces: stopping a model in the menu flipped its row back to RUNNING within one 3s sync tick (the ps-scan mapped the server onto every store entry, and the staleness pass kept the row alive because the shared PID never dies). Running state is now read from the server's own residency (`GET /v1/models`, per-model `loaded`) in the app, the CLI and the MCP; a failed probe falls back to presence-only and is never read as "unloaded".
+- **The MCP can no longer SIGTRAP on a duplicated model.** `Dictionary(uniqueKeysWithValues:)` over discovered models or running entries traps with `Fatal error: Duplicate values for key` when a model is discovered twice (a double-listing regression, or two scans claiming one tree) — that killed the MCP mid-tool-call. The three remaining sites (`readRunning`'s `byHash`/`byPath`, `listModels`' running map) build duplicate-tolerant dictionaries now, matching the port map fixed in 0.9.6b.
+
+### Changed
+- **`load` on an mlx-serve model actually loads it.** `POST /v1/load-model` (server-side synchronous: it answers only once the model is resident) replaces the old "already loaded" no-op in the CLI, and the app loads off the main thread — polling `/health` first when it just spawned the server — so a large model cannot freeze the menu; a stop issued during an in-flight load still wins.
+- **`llama status` lists resident mlx-serve models** (the shared server writes no pid file, so the pid-file scan could never see them) and reports which models in the store are actually loaded.
+
 ## [0.9.6b] - 2026-09-16
 
 **mlx-serve — the sixth engine — plus an in-app engine-selection map.** `ddalcu/mlx-serve`, a native Zig server that shares ONE process across every model in its store (`~/.mlx-serve/models`) on a single port (default 11234), OpenAI + Anthropic + Ollama compatible. Help explains how engines are chosen and shows the map in a window; the map ships inside the app bundle.
