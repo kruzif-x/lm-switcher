@@ -555,11 +555,29 @@ load_model() {
         return 0
     fi
 
-    # mlx-serve: same shared-server logic — a healthy server means the
-    # model is available (it loads on demand when a request names it).
+    # mlx-serve: ONE always-on shared server serves the whole store — but a
+    # healthy server only means "available on demand"; the model is NOT
+    # resident until something asks for it. Load THIS model explicitly
+    # (server-side the call returns once the model is loaded, so a large
+    # model takes a while). Ids are store-relative, folder-name fallback.
     if [[ "$type" == "mlxserve" ]] && nc -z 127.0.0.1 "$MLX_SERVE_PORT" 2>/dev/null; then
-        echo "● [$type] $name already loaded on port $MLX_SERVE_PORT (shared mlx-serve server)"
-        return 0
+        local ms_rel="${path#$MLX_SERVE_MODEL_DIR/}"
+        local ms_ok=0
+        if curl -sf -m 600 -X POST "http://127.0.0.1:$MLX_SERVE_PORT/v1/load-model" \
+             -H 'Content-Type: application/json' \
+             -d "{\"model\":\"$ms_rel\"}" >/dev/null 2>&1; then
+            ms_ok=1
+        elif curl -sf -m 600 -X POST "http://127.0.0.1:$MLX_SERVE_PORT/v1/load-model" \
+             -H 'Content-Type: application/json' \
+             -d "{\"model\":\"$(basename "$path")\"}" >/dev/null 2>&1; then
+            ms_ok=1
+        fi
+        if (( ms_ok )); then
+            echo "✓ [$type] $name loaded on port $MLX_SERVE_PORT (shared mlx-serve server; model resident)"
+            return 0
+        fi
+        echo "✗ [$type] $name: mlx-serve server on :$MLX_SERVE_PORT refused the load" >&2
+        return 1
     fi
 
     # If the same model is already running on some port, no-op.
@@ -1035,6 +1053,26 @@ cmd_status() {
         fi
     done
     shopt -u nullglob
+    # mlx-serve: the shared server is always-on and writes no pidfile, so
+    # the loop above cannot see it. Report what it actually has RESIDENT
+    # (residency, not process presence — the server serves its whole store
+    # lazily, so "server is up" alone would be a lie).
+    if nc -z 127.0.0.1 "$MLX_SERVE_PORT" 2>/dev/null; then
+        local ms_ids ms_spid
+        ms_ids=$(curl -sf -m 4 "http://127.0.0.1:$MLX_SERVE_PORT/v1/models" 2>/dev/null \
+            | tr -d ' \n' \
+            | grep -o '"id":"[^"]*"[^}]*"loaded":true' \
+            | sed 's/^"id":"\([^"]*\)".*/\1/')
+        ms_spid=$(pgrep -f 'mlx-serve serve' | head -1)
+        if [[ -n "$ms_ids" ]]; then
+            local mid
+            while IFS= read -r mid; do
+                [[ -z "$mid" ]] && continue
+                echo "● ${mid##*/}  :$MLX_SERVE_PORT  (PID ${ms_spid:-?}, mlx-serve)"
+                any=1
+            done <<< "$ms_ids"
+        fi
+    fi
     [[ $any -eq 0 ]] && echo "○ No models loaded"
 }
 

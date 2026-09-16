@@ -304,7 +304,15 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
                 seenPids.insert(pid)
                 var msPort = Prefs.int("mlxServePort", default: 11234)
                 if let p = firstMatch(#"--port (\d+)"#, in: args).flatMap(Int.init) { msPort = p }
+                // Residency, not process liveness: the shared server is
+                // always-on and loads models from disk lazily, so report
+                // only the models it actually has loaded. A failed probe
+                // falls back to reporting all (presence-only).
+                let loaded = mlxServeLoadedIds(port: msPort)
                 for m in msModels {
+                    if let loaded = loaded,
+                       !loaded.contains(mlxServeStoreId(forPath: m.path)),
+                       !loaded.contains((m.path as NSString).lastPathComponent) { continue }
                     out.append(RunningModel(hash: m.hash, pid: pid, port: msPort, model: m,
                                             displayName: m.name, backend: "mlx-serve", ctxSize: nil,
                                             fromPidFile: false))
@@ -357,6 +365,44 @@ func probeHealthy(port: Int, backend: String) -> Bool {
     }.resume()
     _ = sem.wait(timeout: .now() + 3.0)
     return ok
+}
+
+// MARK: - mlx-serve residency
+
+/// Store-relative id the mlx-serve API uses (`org/model` under the store
+/// root). Must mirror the app's `mlxServeModelId`.
+func mlxServeStoreId(forPath path: String) -> String {
+    let root = Prefs.string("mlxServeModelDir", default: NSHomeDirectory() + "/.mlx-serve/models")
+    if path.hasPrefix(root + "/") { return String(path.dropFirst(root.count + 1)) }
+    return (path as NSString).lastPathComponent
+}
+
+/// Model ids currently RESIDENT on a mlx-serve server (GET /v1/models,
+/// `loaded == true`). The store serves every model from ONE always-on
+/// process and loads them lazily, so "server is up" says nothing about a
+/// given model — residency is the truth. nil when the probe failed:
+/// callers must then fall back to presence-only, never read "unknown" as
+/// "unloaded".
+func mlxServeLoadedIds(port: Int) -> Set<String>? {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models") else { return nil }
+    var req = URLRequest(url: url)
+    req.timeoutInterval = 2.0
+    let sem = DispatchSemaphore(value: 0)
+    var ids: Set<String>? = nil
+    URLSession.shared.dataTask(with: req) { data, resp, _ in
+        defer { sem.signal() }
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let data = data,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["data"] as? [[String: Any]] else { return }
+        var loaded = Set<String>()
+        for m in arr where (m["loaded"] as? Bool) == true {
+            if let id = m["id"] as? String { loaded.insert(id) }
+        }
+        ids = loaded
+    }.resume()
+    _ = sem.wait(timeout: .now() + 3.0)
+    return ids
 }
 
 // MARK: - Port occupancy (lsof)

@@ -91,6 +91,25 @@ class ServerManager {
     /// not here, because we have no `Process` object for them.)
     private var processes: [String: Process] = [:]
 
+    /// mlx-serve: generation counter per model for in-flight
+    /// `/v1/load-model` requests. A stop (or a newer load) bumps it so a
+    /// completion from a superseded request can never resurrect the row.
+    /// Main-thread only.
+    private var mlxServeLoadEpoch: [String: Int] = [:]
+
+    /// mlx-serve: models whose in-flight load was superseded by a stop.
+    /// When that load nevertheless lands resident server-side, the
+    /// completion fires ONE follow-up unload so the user's last action
+    /// (stop) wins. Main-thread only.
+    private var mlxServePendingUnload: Set<String> = []
+
+    /// Whether the last `ps`-sync got a clean residency read from the
+    /// mlx-serve server. Written on `syncQueue` before the merge hop, read
+    /// on main inside `mergeExternalStates`; when false, an absent entry
+    /// must NOT be read as "model unloaded" (probe failed, not truth).
+    @ObservationIgnored
+    private var mlxServeResidencyKnown = false
+
     /// Serial queue used for the periodic `ps` reconciliation. Running the
     /// `Process` spawn and pipe reads on a background queue prevents a slow
     /// or hung `ps` from blocking the main thread (which would freeze the
@@ -1017,6 +1036,12 @@ class ServerManager {
     /// Is a mlx-serve server currently healthy on the configured port?
     private func mlxServeServerHealthy() -> Bool {
         let port = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
+        return mlxServeHealthy(port: port)
+    }
+
+    /// Health probe against an EXPLICIT port. Background callers use this —
+    /// `settings` is main-owned and must not be read off the main thread.
+    private func mlxServeHealthy(port: Int) -> Bool {
         guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return false }
         let sem = DispatchSemaphore(value: 0)
         var ok = false
@@ -1028,6 +1053,140 @@ class ServerManager {
         }.resume()
         _ = sem.wait(timeout: .now() + 3.0)
         return ok
+    }
+
+    /// Store-relative model id the mlx-serve API expects (`/v1/models`,
+    /// `/v1/load-model`, `/v1/unload-model`): the path under the store
+    /// root (`org/model`). The folder name is the documented fallback.
+    private func mlxServeModelId(for model: ModelEntry) -> String {
+        let root = resolvedMlxServeModelDir()
+        var rel = model.path.path
+        if rel.hasPrefix(root + "/") { rel = String(rel.dropFirst(root.count + 1)) }
+        return rel
+    }
+
+    /// Model ids currently RESIDENT on a mlx-serve server (GET /v1/models,
+    /// `loaded == true`). The store serves every model from ONE always-on
+    /// process and loads them lazily, so "the server is up" says NOTHING
+    /// about a given model — residency is the truth (2026-09-16: a stop in
+    /// the menu used to flip back to running within one 3s tick because the
+    /// shared server keeps serving *availability*). Returns nil when the
+    /// probe itself failed, so callers never treat "unknown" as "gone".
+    private func mlxServeLoadedModelIds(port: Int) -> Set<String>? {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models") else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        let sem = DispatchSemaphore(value: 0)
+        var ids: Set<String>? = nil
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            defer { sem.signal() }
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let arr = obj["data"] as? [[String: Any]] else { return }
+            var loaded = Set<String>()
+            for m in arr where (m["loaded"] as? Bool) == true {
+                if let id = m["id"] as? String { loaded.insert(id) }
+            }
+            ids = loaded
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.0)
+        return ids
+    }
+
+    /// POST `/v1/load-model` / `/v1/unload-model` to the shared server.
+    /// The server is SYNCHRONOUS for load-model — it answers only once the
+    /// model is resident — so the timeout must cover a real model load
+    /// (a 27B takes tens of seconds).
+    private func postMlxServe(_ endpoint: String, modelId: String, port: Int,
+                              timeout: TimeInterval) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/\(endpoint)") else { return false }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": modelId])
+        req.timeoutInterval = timeout
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) { ok = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 1.0)
+        return ok
+    }
+
+    /// Make `model` resident on the shared mlx-serve server WITHOUT blocking
+    /// the UI. The server answers `/v1/load-model` only once the model is
+    /// loaded, so this runs on a background queue and applies the result on
+    /// main: success marks the row running (pid/port taken from the shared
+    /// process), failure records `lastError` so the row explains itself.
+    /// `waitForHealth` polls `/health` first — used right after spawning the
+    /// server, when it is not answering yet.
+    private func beginMlxServeLoad(_ model: ModelEntry, port: Int, waitForHealth: Bool) {
+        assertMain()
+        // A new load supersedes any stop that is still awaiting its
+        // follow-up unload.
+        mlxServePendingUnload.remove(model.id)
+        let epoch = (mlxServeLoadEpoch[model.id] ?? 0) + 1
+        mlxServeLoadEpoch[model.id] = epoch
+        let modelId = mlxServeModelId(for: model)
+        let leaf = model.path.lastPathComponent
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            if waitForHealth {
+                var tries = 0
+                while tries < 30, !self.mlxServeHealthy(port: port) {
+                    Thread.sleep(forTimeInterval: 1.0)
+                    tries += 1
+                }
+            }
+            // Server-side ids are the store-relative path; the folder name
+            // is the documented fallback. An unknown id 404s immediately,
+            // so the fallback costs nothing when the first id is right.
+            let ok = self.postMlxServe("load-model", modelId: modelId, port: port, timeout: 300)
+                || self.postMlxServe("load-model", modelId: leaf, port: port, timeout: 300)
+            let pid = ok ? self.mlxServeServerPid() : nil
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                guard self.mlxServeLoadEpoch[model.id] == epoch else {
+                    // Superseded — a stop, or a newer load. If the user
+                    // stopped while this load was in flight, the model can
+                    // still land resident server-side; honour the stop with
+                    // ONE follow-up unload.
+                    if ok, self.mlxServePendingUnload.remove(model.id) != nil {
+                        let mId = modelId, leafId = leaf
+                        DispatchQueue.global(qos: .utility).async { [weak self] in
+                            guard let self = self else { return }
+                            _ = self.postMlxServe("unload-model", modelId: mId, port: port, timeout: 30)
+                                || self.postMlxServe("unload-model", modelId: leafId, port: port, timeout: 30)
+                        }
+                    }
+                    return
+                }
+                var s = self.modelStates[model.id] ?? ModelState()
+                if ok {
+                    s.isRunning = true
+                    s.pid = pid
+                    s.port = port
+                    s.ctxSize = 0
+                    s.lastError = nil
+                    // A running model is checked in the menu (same rule the
+                    // generic spawn path applies).
+                    self.selected.insert(model.id)
+                } else {
+                    s.isRunning = false
+                    s.pid = nil
+                    s.lastError = "mlx-serve on 127.0.0.1:\(port) refused to load \(modelId)"
+                }
+                self.modelStates[model.id] = s
+                // Re-read reality right away so the row settles now rather
+                // than on the next 3s tick.
+                self.syncQueue.async { [weak self] in
+                    self?.syncWithRunningProcesses()
+                }
+            }
+        }
     }
 
     /// PID of a running mlx-serve server process, if any. The argv carries
@@ -1319,26 +1478,27 @@ class ServerManager {
             // NOTE: ds4-server binds 127.0.0.1 by default.
         case .mlxserve:
             // mlx-serve (ddalcu): ONE shared server serves every model in
-            // its store on settings.mlxServePort. Loading any entry =
+            // its store on settings.mlxServePort. Loading an entry means
             // ensure the server is up (adopt a running one — e.g. the
-            // LaunchAgent's — or spawn it); models themselves load on
-            // demand when a request names them.
+            // LaunchAgent's — or spawn it) AND make THIS model resident:
+            // the store loads models from disk lazily, so a healthy server
+            // alone only means "available on demand", not "loaded".
+            // The load runs off the main thread (server-side it is
+            // synchronous — it can take tens of seconds for a large model)
+            // and the row flips to running only once the model is really
+            // resident; an optimistically-set row would be cleared by the
+            // 3s residency sync and the menu spinner would never settle.
             executable = resolvedMlxServeServerPath()
+            let msPort = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
             if mlxServeServerHealthy() {
-                if var s = modelStates[model.id] {
-                    s.isRunning = true
-                    s.pid = mlxServeServerPid()
-                    s.port = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
-                    s.ctxSize = 0
-                    s.lastError = nil
-                    modelStates[model.id] = s
-                }
+                beginMlxServeLoad(model, port: msPort, waitForHealth: false)
                 return
             }
             let msRoot = resolvedMlxServeModelDir()
             args += ["serve", "--host", "127.0.0.1", "--model-dir", msRoot]
-            statePort = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
+            statePort = msPort
             args += ["--port", "\(statePort)"]
+            beginMlxServeLoad(model, port: msPort, waitForHealth: true)
         }
 
         // Bind to localhost (security + convenience) and the chosen port.
@@ -1509,28 +1669,25 @@ class ServerManager {
         // it up) and reloads models on demand. Server-side model ids are
         // the path relative to the store root; fall back to the folder name.
         if model.backend == .mlxserve {
-            let root = resolvedMlxServeModelDir()
-            var rel = model.path.path
-            if rel.hasPrefix(root + "/") { rel = String(rel.dropFirst(root.count + 1)) }
+            // mlx-serve: ONE shared server. Unload frees JUST this model's
+            // memory (POST /v1/unload-model) and deliberately leaves the server
+            // running — it is the always-on agent endpoint (a LaunchAgent keeps
+            // it up) and reloads models on demand. Server-side model ids are
+            // the path relative to the store root; fall back to the folder name.
+            let rel = mlxServeModelId(for: model)
+            let leaf = model.path.lastPathComponent
             let port = settings.mlxServePort > 0 ? settings.mlxServePort : 11234
-            func postUnload(_ id: String) -> Bool {
-                guard let url = URL(string: "http://127.0.0.1:\(port)/v1/unload-model") else { return false }
-                var req = URLRequest(url: url)
-                req.httpMethod = "POST"
-                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": id])
-                req.timeoutInterval = 5.0
-                let sem = DispatchSemaphore(value: 0)
-                var ok = false
-                URLSession.shared.dataTask(with: req) { _, resp, _ in
-                    if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) { ok = true }
-                    sem.signal()
-                }.resume()
-                _ = sem.wait(timeout: .now() + 6.0)
-                return ok
-            }
+            // Invalidate any in-flight load so its completion cannot put the
+            // row back to running. If that load still lands resident
+            // server-side, the completion fires ONE follow-up unload that
+            // honours this stop (2026-09-16: without this, stopping a model
+            // could be undone by a load that was already in flight).
+            mlxServeLoadEpoch[model.id] = (mlxServeLoadEpoch[model.id] ?? 0) + 1
+            mlxServePendingUnload.insert(model.id)
             // Best effort: try the store-relative id, then the folder name.
-            if !postUnload(rel) { _ = postUnload(model.path.lastPathComponent) }
+            if !postMlxServe("unload-model", modelId: rel, port: port, timeout: 10) {
+                _ = postMlxServe("unload-model", modelId: leaf, port: port, timeout: 10)
+            }
             if var s = modelStates[model.id] {
                 s.isRunning = false
                 s.pid = nil
@@ -2126,7 +2283,18 @@ class ServerManager {
                 // dead via `kill(pid, 0)` (which sends no signal —
                 // it just tests for existence). This prevents
                 // loaded models from falsely appearing stopped.
-                if let pid = s.pid, kill(pid, 0) == 0 {
+                // mlx-serve: the shared server's process is always-on
+                // (LaunchAgent), so PID liveness says nothing about THIS
+                // model. A clean residency read that omits the model is
+                // authoritative: it is unloaded → clear the row.
+                let isMlxServe = models.first(where: { $0.id == id })?.backend == .mlxserve
+                if isMlxServe, mlxServeResidencyKnown {
+                    var cleared = s
+                    cleared.isRunning = false
+                    cleared.pid = nil
+                    modelStates[id] = cleared
+                    selected.remove(id)
+                } else if let pid = s.pid, kill(pid, 0) == 0 {
                     // PID alive — keep the running state.
                 } else {
                     var cleared = s
@@ -2366,6 +2534,8 @@ class ServerManager {
         let output = String(data: data, encoding: .utf8) ?? ""
 
         var externalStates: [String: (pid: Int32, port: Int, ctx: Int)] = [:]
+        // Reset per tick: only the mlx-serve branch below may set this true.
+        mlxServeResidencyKnown = false
 
         for line in output.split(separator: "\n") {
             let s = String(line)
@@ -2411,7 +2581,15 @@ class ServerManager {
                    let p = Int(String(s[pm].split(separator: " ").last ?? "")) {
                     port = p
                 }
+                // Residency, not process liveness: this server is always-on
+                // (LaunchAgent) and loads models from disk lazily, so map
+                // ONLY the models it currently reports as loaded. When the
+                // probe fails the flag stays false and the merge keeps prior
+                // state instead of reading "absent" as "unloaded".
+                let loaded = mlxServeLoadedModelIds(port: port)
+                mlxServeResidencyKnown = loaded != nil
                 for m in models where m.backend == .mlxserve {
+                    if let loaded = loaded, !loaded.contains(mlxServeModelId(for: m)) { continue }
                     externalStates[m.id] = (pid: pid, port: port, ctx: 0)
                 }
                 continue
