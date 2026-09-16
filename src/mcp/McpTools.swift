@@ -233,6 +233,7 @@ enum McpTools {
     }
 
     private static func backendBinaryMissing(_ m: DiscoveredModel) -> String? {
+        let home = NSHomeDirectory()
         let path: String
         if m.backend == "GGUF" {
             let p = Prefs.string("llamaServerPath")
@@ -248,14 +249,35 @@ enum McpTools {
                 let staged = NSHomeDirectory() + "/AI/tools/mlx-serve/current/mlx-serve"
                 path = FileManager.default.isExecutableFile(atPath: staged) ? staged : "/opt/homebrew/bin/mlx-serve"
             }
+        } else if m.backend == "oMLX" {
+            let p = Prefs.string("omlxServerPath")
+            if !p.isEmpty {
+                path = p
+            } else {
+                let venv = home + "/AI/envs/omlx-env/bin/omlx"
+                path = FileManager.default.isExecutableFile(atPath: venv) ? venv : "/opt/homebrew/bin/omlx"
+            }
+        } else if m.backend == "MTPLX" {
+            let p = Prefs.string("mtplxServerPath")
+            if !p.isEmpty {
+                path = p
+            } else {
+                let venv = home + "/AI/envs/omlx-env/bin/mtplx"
+                path = FileManager.default.isExecutableFile(atPath: venv) ? venv : home + "/.local/bin/mtplx"
+            }
         } else {
             let p = Prefs.string("mlxServerPath")
             if p.isEmpty {
-                // Fallback: newest Python user-install of mlx_lm.server.
-                let pyBase = NSHomeDirectory() + "/Library/Python"
+                // Fallback: newest Python user-install of mlx_lm.server
+                // (NUMERIC order — "3.9" sorts above "3.14" as text and
+                // would pick the stale python3.9 mlx_lm, which has no
+                // qwen3_5 model support).
+                let pyBase = home + "/Library/Python"
                 var found = ""
                 if let dirs = try? FileManager.default.contentsOfDirectory(atPath: pyBase) {
-                    for d in dirs.sorted(by: >) where d != "." && d != ".." {
+                    let ordered = dirs.filter { $0 != "." && $0 != ".." }
+                                      .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+                    for d in ordered {
                         let cand = "\(pyBase)/\(d)/bin/mlx_lm.server"
                         if FileManager.default.isExecutableFile(atPath: cand) { found = cand; break }
                     }

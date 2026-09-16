@@ -69,20 +69,31 @@ LLAMA_DIR="${LLAMA_DIR:-$HOME/.local/share/llama-menubar}"
 LLAMA_SERVER="${LLAMA_SERVER:-/opt/homebrew/bin/llama-server}"
 
 # Absolute path to the mlx_lm.server entry script (pip --user install).
-MLX_SERVER="${MLX_SERVER:-$(ls -d "$HOME"/Library/Python/*/bin/mlx_lm.server 2>/dev/null | tail -1)}"
+# Resolution: MLX_SERVER env, then the app's saved mlxServerPath setting,
+# then the newest python by VERSION sort. A plain glob + `tail -1` sorts
+# as strings and picks Python/3.9, whose stale mlx_lm (0.29.1) has no
+# qwen3_5 model and fails every qwen3_5 load with "Model type qwen3_5 not
+# supported" — the 3.14 install (0.31.3) has it.
+MLX_SERVER="${MLX_SERVER:-$(defaults read local.llama-menubar mlxServerPath 2>/dev/null)}"
+if [[ ! -x "$MLX_SERVER" ]]; then
+    MLX_SERVER=$(ls -d "$HOME"/Library/Python/*/bin/mlx_lm.server 2>/dev/null | sort -V | tail -1)
+fi
+MLX_SERVER="${MLX_SERVER:-$HOME/Library/Python/3.14/bin/mlx_lm.server}"
 
 # oMLX (jundot/omlx) — one server serves every model under OMLX_MODEL_DIR
 # on a single OMLX_PORT (oMLX convention: 8000). Binary resolution:
 # OMLX_SERVER env, then the app's saved setting, then known install paths.
 OMLX_SERVER="${OMLX_SERVER:-$(defaults read local.llama-menubar omlxServerPath 2>/dev/null)}"
 if [[ -z "$OMLX_SERVER" ]]; then
-    for _c in /opt/homebrew/bin/omlx /usr/local/bin/omlx; do
+    # The venv install is the documented home for omlx here; the
+    # pip --user / Homebrew paths are fallbacks.
+    for _c in "$HOME/AI/envs/omlx-env/bin/omlx" /opt/homebrew/bin/omlx /usr/local/bin/omlx; do
         [[ -x "$_c" ]] && OMLX_SERVER="$_c" && break
     done
 fi
 OMLX_SERVER="${OMLX_SERVER:-omlx}"
 OMLX_MODEL_DIR="${OMLX_MODEL_DIR:-$(defaults read local.llama-menubar omlxModelDir 2>/dev/null)}"
-OMLX_MODEL_DIR="${OMLX_MODEL_DIR:-$HOME/models/omlx}"
+OMLX_MODEL_DIR="${OMLX_MODEL_DIR:-$HOME/AI/models/omlx}"
 OMLX_PORT="${OMLX_PORT:-$(defaults read local.llama-menubar omlxPort 2>/dev/null)}"
 OMLX_PORT="${OMLX_PORT:-8000}"
 

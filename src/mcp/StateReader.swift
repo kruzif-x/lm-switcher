@@ -65,7 +65,7 @@ func discoverModels() -> [DiscoveredModel] {
     let fm = FileManager.default
     var out: [DiscoveredModel] = []
     // oMLX root known up front so the generic MLX scan below can skip it.
-    let omlxDir = Prefs.string("omlxModelDir", default: NSHomeDirectory() + "/models/omlx")
+    let omlxDir = Prefs.string("omlxModelDir", default: NSHomeDirectory() + "/AI/models/omlx")
     let ds4Dir = Prefs.string("ds4ModelDir", default: NSHomeDirectory() + "/Projects/ds4-metal/gguf")
     let mlxServeDir = Prefs.string("mlxServeModelDir", default: NSHomeDirectory() + "/.mlx-serve/models")
     let modelsDir = Prefs.string("modelsDir")

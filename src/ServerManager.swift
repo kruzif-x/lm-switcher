@@ -778,16 +778,18 @@ class ServerManager {
 
     // MARK: - oMLX backend
 
-    /// Resolved oMLX model root (settings override, else `~/models/omlx`).
+    /// Resolved oMLX model root (settings override, else `~/AI/models/omlx`).
     func resolvedOmlxModelDir() -> String {
         if !settings.omlxModelDir.isEmpty { return settings.omlxModelDir }
-        return NSHomeDirectory() + "/models/omlx"
+        return NSHomeDirectory() + "/AI/models/omlx"
     }
 
     /// Resolved oMLX binary (settings override, else known install paths).
     func resolvedOmlxServerPath() -> String {
         if !settings.omlxServerPath.isEmpty { return settings.omlxServerPath }
+        let home = NSHomeDirectory()
         let candidates = [
+            home + "/AI/envs/omlx-env/bin/omlx",   // documented venv install
             "/opt/homebrew/bin/omlx",
             "/usr/local/bin/omlx",
         ]
@@ -1966,7 +1968,11 @@ class ServerManager {
         // 3. Fallback — newest Python user-install; empty if none found.
         let pyBase = home + "/Library/Python"
         if let dirs = try? FileManager.default.contentsOfDirectory(atPath: pyBase) {
-            for d in dirs.sorted(by: >) where d != "." && d != ".." {
+            // NUMERIC order — string order puts "3.9" above "3.14" and would
+            // pick the stale python3.9 mlx_lm (no qwen3_5 model support).
+            let ordered = dirs.filter { $0 != "." && $0 != ".." }
+                              .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+            for d in ordered {
                 let p = "\(pyBase)/\(d)/bin/mlx_lm.server"
                 if FileManager.default.isExecutableFile(atPath: p) { return p }
             }
@@ -2684,7 +2690,7 @@ class ServerManager {
             ?? "/opt/homebrew/bin/llama-server"
         settings.mlxServerPath = d.string(forKey: "mlxServerPath")
             ?? Self.discoverMLXServerPath()
-        // oMLX: binary auto-resolved at launch; dir defaults to ~/models/omlx;
+        // oMLX: binary auto-resolved at launch; dir defaults to ~/AI/models/omlx;
         // port 8000 is the oMLX convention.
         settings.omlxServerPath = d.string(forKey: "omlxServerPath") ?? ""
         settings.omlxModelDir = d.string(forKey: "omlxModelDir") ?? ""
