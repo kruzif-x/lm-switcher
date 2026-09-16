@@ -227,6 +227,17 @@ else
     echo "  (no icon found at $ICON_SRC — bundle will use the default icon)"
 fi
 
+# The engine-selection map shown from Help → "Open the engine-selection map".
+# EngineMapWindow prefers this BUNDLED resource (what a DMG install has);
+# the copy deployed to ~/AI/tools is the fallback for dev installs.
+MAP_SRC="$SCRIPT_DIR/../docs/engine-map.html"
+if [[ -f "$MAP_SRC" ]]; then
+    cp "$MAP_SRC" "$APP_BUNDLE/Contents/Resources/engine-map.html"
+    echo "  ✓ Engine map bundled (Resources/engine-map.html)"
+else
+    echo "  ⚠ Engine map missing at $MAP_SRC — Help will fall back to ~/AI/tools"
+fi
+
 
 # -----------------------------------------------------------------------------
 # Step 3: Write Info.plist
@@ -259,9 +270,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
     <key>CFBundleDisplayName</key>
     <string>LM Switcher</string>
     <key>CFBundleVersion</key>
-    <string>0.9.5b</string>
+    <string>0.9.6b</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.9.5b</string>
+    <string>0.9.6b</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
