@@ -101,6 +101,28 @@ enum McpTools {
                 let vision = ((try? fm.contentsOfDirectory(atPath: dir)) ?? [])
                     .contains { $0.hasPrefix("mmproj-") && $0.hasSuffix(".gguf") }
                 entry["vision"] = vision
+            } else if m.backend == "mlx-serve" || m.backend == "MLX" {
+                // MLX vision is a property of the CONVERSION, not the engine:
+                // mlx-vlm conversions keep the tower as `vision_tower.*`
+                // weights (and declare `vision_config`), mlx-lm ones drop it.
+                // Report it so agents don't send images to a tower-less
+                // model (or refuse to send them to one that has it).
+                var vision = false
+                let idx = m.path + "/model.safetensors.index.json"
+                if let data = try? Data(contentsOf: URL(fileURLWithPath: idx)),
+                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let map = obj["weight_map"] as? [String: Any] {
+                    vision = map.keys.contains { $0.contains("vision_tower") || $0.contains("visual.") }
+                }
+                if !vision {
+                    let cfg = m.path + "/config.json"
+                    if let data = try? Data(contentsOf: URL(fileURLWithPath: cfg)),
+                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       obj["vision_config"] != nil {
+                        vision = true
+                    }
+                }
+                entry["vision"] = vision
             }
             return entry
         }
