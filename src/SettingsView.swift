@@ -1342,9 +1342,12 @@ struct SettingsView: View {
                                   mono: false)
                         helpEntry("Which engine runs your model?",
                                   "The engine is decided when the app DISCOVERS the model — the file format plus the folder it lives in. GGUF files → llama-server (or ds4-server when they sit in the DS4 folder). Folders → MLX-shaped, then the tree that owns them wins: mtplx_runtime.json → MTPLX, the mlx-serve store → mlx-serve, the oMLX root → oMLX, otherwise mlx_lm.server. Six engines, one owner per tree — nothing double-lists.",
-                                  detail: "There is no engine picker: to run the same weights on another engine, put a REAL copy in that engine's root (symlinks are ignored) — or hot-load any MLX folder into mlx-serve with POST /v1/load-model. \"Switch\" swaps WHICH model runs, never the engine. Full map:",
+                                  detail: "There is no engine picker: to run the same weights on another engine, put a REAL copy in that engine's root (symlinks are ignored) — or hot-load any MLX folder into mlx-serve with POST /v1/load-model. \"Switch\" swaps WHICH model runs, never the engine. Full map — opens in a window right here:",
                                   mono: false)
-                        helpLinks([("Open the engine-selection map (browser)", "file://\(NSHomeDirectory())/AI/tools/lm-switcher-engine-map.html")])
+                        Button("Open the engine-selection map") { EngineMapWindow.shared.show() }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .padding(.bottom, 8)
                     }
 
                     helpSection(number: "3", title: "Settings explained", id: "s3", proxy: proxy) {

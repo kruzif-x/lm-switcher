@@ -169,7 +169,7 @@ done
 # the floor when the OS is upgraded.
 swiftc -parse-as-library -o "$COMPILED_BIN" -O \
     -target arm64-apple-macos26.0 \
-    -framework SwiftUI -framework AppKit \
+    -framework SwiftUI -framework AppKit -framework WebKit \
     "${SWIFT_SOURCES[@]}"
 
 # MCP agent-access server (MCP_SPEC.md Phase 1). A separate binary that
