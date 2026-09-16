@@ -878,14 +878,30 @@ load_model() {
 
     # M-11 fix: replace the fixed 1s `kill -0` heuristic with a readiness
     # poll. A large GGUF can take several seconds to mmap; a fast-failing
-    # binary can die after 1s. Poll the port for up to ~15s: success when
-    # the port is listening, failure if the process dies first or we time
-    # out. `nc -z` is the primary probe; `lsof` is the fallback if nc is
-    # unavailable. DS4 (ds4-server) loads a ~45 GiB resident model before
-    # its port binds — cold starts measure 15-20s — so it gets a longer
-    # grace window than llama-server/mlx.
-    local _grace=15
-    [[ "$type" == "ds4" ]] && _grace=90
+    # binary can die after 1s. Poll the port until the child is ready:
+    # success when the port is listening, failure the moment the process
+    # dies, or when the deadline passes. `nc -z` is the primary probe;
+    # `lsof` is the fallback if nc is unavailable.
+    #
+    # The deadline is SIZE-AWARE (2026-09-17): a cold 9.5 GB Q8_0 needs
+    # ~18 s to mmap + init Metal, a 33 GB Q6_K_L ~60 s, a 20 GB MoE ~30 s;
+    # the old flat 15 s killed such loads mid-startup and reported
+    # "Failed to start" (the child was SIGTERMed by this very poll). The
+    # loop still breaks early on death, so a broken binary fails fast;
+    # a generous deadline only delays reporting when the child HANGS
+    # without dying. ds4-server allocates ~45 GiB before its port binds.
+    local _grace=90
+    local _sz_gb=0
+    if [[ -n "$path" && -f "$path" ]]; then
+        _sz_gb=$(( $(stat -f%z "$path" 2>/dev/null || echo 0) / 1073741824 ))
+    fi
+    if [[ "$type" == "ds4" ]]; then
+        _grace=180
+    elif (( _sz_gb >= 20 )); then
+        _grace=300
+    elif (( _sz_gb >= 8 )); then
+        _grace=180
+    fi
     local _deadline=$(( $(date +%s) + _grace ))
     local _ready=0
     while (( $(date +%s) < _deadline )); do
