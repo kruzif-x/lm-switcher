@@ -78,7 +78,10 @@ enum McpTools {
 
     private static func listModels() -> [String: Any] {
         let models = discoverModels()
-        let running = Dictionary(uniqueKeysWithValues: readRunning(models: models).map { ($0.hash, $0) })
+        // Duplicate-tolerant: see StateReader.readRunning's comment — a
+        // duplicated model hash must not trap this server.
+        var running: [String: RunningModel] = [:]
+        for r in readRunning(models: models) { running[r.hash] = r }
         let fm = FileManager.default
         let items: [[String: Any]] = models.map { m in
             let est = FootprintEstimator.estimate(model: m, ctxSize: Prefs.int("defaultCtxSize", default: 4096))

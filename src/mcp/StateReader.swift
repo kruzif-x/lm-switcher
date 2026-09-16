@@ -230,8 +230,15 @@ struct RunningModel {
 /// models the APP launched (it writes no PID files) or any other
 /// llama-server / mlx_lm.server whose model path is in our scan tree.
 func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
-    let byHash = Dictionary(uniqueKeysWithValues: models.map { ($0.hash, $0) })
-    let byPath = Dictionary(uniqueKeysWithValues: models.map { ($0.path, $0) })
+    // Duplicate-tolerant on purpose: `Dictionary(uniqueKeysWithValues:)`
+    // TRAPS ("Duplicate values for key") when a model is discovered twice
+    // — e.g. a tree two scans both claim, or the shared-backend exclusion
+    // regressing. That SIGTRAP killed the MCP mid-tool-call (diagnostic
+    // report 2026-09-16 22:23, `_NativeDictionary.merge trappingOnDuplicates`).
+    // Last write wins; presence is all the callers need.
+    var byHash: [String: DiscoveredModel] = [:]
+    var byPath: [String: DiscoveredModel] = [:]
+    for m in models { byHash[m.hash] = m; byPath[m.path] = m }
     var out: [RunningModel] = []
     var seenPids = Set<Int32>()
 
