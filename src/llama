@@ -1063,10 +1063,18 @@ cmd_status() {
                 # model (<hash>.<basename>.pid).
                 mname="${id_hash_full#*.}"
                 [[ -z "$mname" || "$mname" == "$id_hash_full" ]] && mname="$id_hash"
-            elif [[ "$argline" == *" -m "* ]]; then
+            elif [[ "$argline" == *"mtplx.server"* || "$argline" == *"mtplx serve"* ]]; then
+                # MTPLX runs as `python -m mtplx.server.openai --model <dir> …`.
+                # The generic ` -m ` branch below would match PYTHON's own -m
+                # (the module flag) and mangle the name into the whole argv
+                # (2026-09-17 fix — mirrors the app/MCP scanners).
+                if [[ "$argline" =~ \ --model\ (\S+) ]]; then
+                    mpath="${BASH_REMATCH[1]}"
+                fi
+            elif [[ "$argline" == *" -m "* && "${argline#*-m }" == *".gguf"* ]]; then
                 local rest="${argline#*-m }"
                 mpath="${rest%%.gguf*}.gguf"
-            elif [[ "$argline" =~ \ --model\ (.+)\ --host ]]; then
+            elif [[ "$argline" =~ \ --model\ (\S+) ]]; then
                 mpath="${BASH_REMATCH[1]}"
             fi
             if [[ -z "$mname" ]]; then
