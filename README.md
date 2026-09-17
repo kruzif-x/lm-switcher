@@ -48,6 +48,11 @@ the rest — and as one minimal client for all of them — the repo carries a si
 [`docs/chat.html`](docs/chat.html) (installed to `~/AI/tools/lm-switcher-chat.html`). Open it, pick the engine
 port, and it lists whatever that server has loaded (it auto-detects the model id from `/v1/models`).
 
+```bash
+# grab it and open it (no build, no server — a single HTML file)
+curl -fsSL -o chat.html https://raw.githubusercontent.com/kruzif-x/lm-switcher/main/docs/chat.html && open chat.html
+```
+
 | Engine | Its own browser UI | `docs/chat.html` can call it |
 |---|---|---|
 | llama.cpp (GGUF) | `http://127.0.0.1:<port>/` — built-in chat | ✅ (`Access-Control-Allow-Origin: null`) |
