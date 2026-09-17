@@ -53,6 +53,9 @@ port, and it lists whatever that server has loaded (it auto-detects the model id
 curl -fsSL -o chat.html https://raw.githubusercontent.com/kruzif-x/lm-switcher/main/docs/chat.html && open chat.html
 ```
 
+The app's Help tab covers the same ground — **Help → 8. Browser access (chat in a web page)** — including a button
+that opens the page in your default browser, plus the CORS caveat explained below.
+
 | Engine | Its own browser UI | `docs/chat.html` can call it |
 |---|---|---|
 | llama.cpp (GGUF) | `http://127.0.0.1:<port>/` — built-in chat | ✅ (`Access-Control-Allow-Origin: null`) |

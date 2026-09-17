@@ -1299,7 +1299,7 @@ struct SettingsView: View {
                                   "Click the model in the menu bar dropdown. A green dot and a port number (like :8080) mean it's running.",
                                   mono: false)
                         helpEntry("Step 4 — Talk to it",
-                                  "Simplest: open http://127.0.0.1:8080 in your browser — GGUF and MTPLX models include a built-in chat page (MTPLX also serves /dashboard/ and /docs; mlx-serve serves its own front page at http://127.0.0.1:11234/). Or right-click the running model → Copy endpoint, and paste it into any chat app that accepts an \"OpenAI-compatible\" server (no API key needed — type anything if a key is required).",
+                                  "Simplest: open the model's address in your browser — GGUF (llama.cpp) and MTPLX models include a built-in chat page (MTPLX also serves /dashboard/ and /docs; mlx-serve serves its own front page at http://127.0.0.1:11234/). See section 8 for the one-file chat page that covers the engines without a UI. Or right-click the running model → Copy endpoint, and paste it into any chat app that accepts an \"OpenAI-compatible\" server (no API key needed — type anything if a key is required).",
                                   detail: "Endpoint is http://127.0.0.1:PORT/v1 — standard OpenAI chat-completions API, bound to 127.0.0.1, so other machines can't reach it.",
                                   mono: false)
                     }
@@ -1560,7 +1560,28 @@ struct SettingsView: View {
                         }
                     }
 
-                    helpSection(number: "8", title: "Command line (for terminal users)", id: "s8", proxy: proxy) {
+                    helpSection(number: "8", title: "Browser access (chat in a web page)", id: "s8", proxy: proxy) {
+                        helpEntry("Every engine serves a web API — and most serve a web page too.",
+                                  "Load a model, then open its address in any browser. llama.cpp (GGUF) answers at http://127.0.0.1:<its port>/ with a built-in chat. MTPLX serves its own chat at http://127.0.0.1:8085/ plus /dashboard/ for live stats and /docs for the API. mlx-serve has a front page with a chat box at http://127.0.0.1:11234/. oMLX, DS4 and plain MLX (mlx_lm.server) have no page of their own — use the chat page below.",
+                                  mono: false)
+                        helpEntry("LM Switcher ships one chat page for every engine.",
+                                  "A single HTML file: no install, no server, no account. Open it, pick the engine (or just type a port), and it lists whatever that server has loaded — including each engine's own model ids. It also accepts ?port=<n> and ?q=<prompt> (prefills and sends), so you can bookmark \"ask this model this question\".",
+                                  detail: "Installed as ~/AI/tools/lm-switcher-chat.html (the repo copy is docs/chat.html). Nothing to configure — it talks straight to 127.0.0.1.",
+                                  mono: false)
+                        Button("Open the chat page in my browser") { openChatPage() }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                            .padding(.bottom, 8)
+                        helpEntry("One catch: cross-origin (CORS).",
+                                  "A page opened from a file may only call servers that allow cross-origin requests. llama.cpp, mlx-serve, oMLX and DS4 do; MTPLX deliberately refuses (403) — for MTPLX, use its own page at http://127.0.0.1:8085/. The chat page detects which case you hit and says so instead of failing silently.",
+                                  mono: false)
+                        helpEntry("Ports at a glance.",
+                                  "llama.cpp & MLX count up from the Default port (8080, 8081, …) · oMLX 8000 · MTPLX 8085 · DS4 8090 · mlx-serve 11234. The engine map (section 2) shows which engine owns which tree.",
+                                  detail: "Everything is bound to 127.0.0.1 — other machines on your network cannot reach your models, and neither can the browser page unless it runs on this Mac.",
+                                  mono: false)
+                    }
+
+                    helpSection(number: "9", title: "Command line (for terminal users)", id: "s9", proxy: proxy) {
                         helpEntry("Everything the menu does, scriptable.",
                                   "The llama CLI and the app share the same settings and see each other's models.",
                                   mono: false)
@@ -1579,7 +1600,7 @@ struct SettingsView: View {
                                   mono: false)
                     }
 
-                    helpSection(number: "9", title: "Troubleshooting & glossary", id: "s9", proxy: proxy) {
+                    helpSection(number: "10", title: "Troubleshooting & glossary", id: "s10", proxy: proxy) {
                         Group {
                             helpEntry("The list is empty",
                                       "The panel shows a 3-step setup guide automatically — follow it, or set Models directory yourself in the Global tab, then click ↻ Refresh. Note: mmproj-* and mtp-* files are hidden on purpose — they're companions, not models.",
@@ -1647,8 +1668,9 @@ struct SettingsView: View {
                 ("5", "s5", "Performance & memory"),
                 ("6", "s6", "Vision models"),
                 ("7", "s7", "Agent access (MCP)"),
-                ("8", "s8", "Command line"),
-                ("9", "s9", "Troubleshooting"),
+                ("8", "s8", "Browser access (chat)"),
+                ("9", "s9", "Command line"),
+                ("10", "s10", "Troubleshooting"),
             ]
 
             let cols = [GridItem(.flexible()), GridItem(.flexible())]
@@ -1674,6 +1696,22 @@ struct SettingsView: View {
         .padding(12)
         .background(Color.secondary.opacity(0.06))
         .id("toc")
+    }
+
+    /// Help → 8. Browser access: open the single-file chat page in the
+    /// user's default browser. Prefers the deployed copy (what install.sh
+    /// writes to ~/AI/tools) and falls back to the copy bundled in the app
+    /// (DMG installs have no repo checkout).
+    private func openChatPage() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var candidates = [home.appendingPathComponent("AI/tools/lm-switcher-chat.html").path]
+        if let bundled = Bundle.main.path(forResource: "chat", ofType: "html") {
+            candidates.append(bundled)
+        }
+        for p in candidates where FileManager.default.fileExists(atPath: p) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: p))
+            return
+        }
     }
 
     private func helpSection<Content: View>(number: String, title: String, id: String, proxy: ScrollViewProxy, @ViewBuilder content: () -> Content) -> some View {

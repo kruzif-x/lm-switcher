@@ -238,6 +238,16 @@ else
     echo "  ⚠ Engine map missing at $MAP_SRC — Help will fall back to ~/AI/tools"
 fi
 
+# The browser chat page rides along too: Help → 8 opens the deployed copy,
+# falling back to this bundled one for DMG installs (no repo checkout).
+CHAT_SRC="$SCRIPT_DIR/../docs/chat.html"
+if [[ -f "$CHAT_SRC" ]]; then
+    cp "$CHAT_SRC" "$APP_BUNDLE/Contents/Resources/chat.html"
+    echo "  ✓ Chat page bundled (Resources/chat.html)"
+else
+    echo "  ⚠ Chat page missing at $CHAT_SRC — Help will fall back to ~/AI/tools"
+fi
+
 
 # -----------------------------------------------------------------------------
 # Step 3: Write Info.plist
