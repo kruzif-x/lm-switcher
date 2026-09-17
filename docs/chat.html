@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LM Switcher — local model chat</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#e8eaf0; --dim:#9aa3b2; --acc:#7aa2ff; --line:#262b36; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin:0; font:15px/1.55 -apple-system, "SF Pro Text", system-ui, sans-serif; background:var(--bg); color:var(--fg); display:flex; flex-direction:column; }
+  header { padding:10px 14px; background:var(--panel); display:flex; gap:10px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  header .t { font-weight:600; }
+  header select, header input, header button { background:#222735; color:var(--fg); border:1px solid #313848; border-radius:6px; padding:5px 8px; font-size:13px; }
+  header button { cursor:pointer; }
+  #port { width:86px; }
+  #status { margin-left:auto; font-size:12px; color:var(--dim); }
+  #status.ok { color:#7ddc9a; }
+  #status.bad { color:#ff8f8f; }
+  #chat { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width:82%; padding:10px 13px; border-radius:10px; white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; }
+  .user { align-self:flex-end; background:#2a3550; }
+  .bot { align-self:flex-start; background:var(--panel); border:1px solid var(--line); }
+  .think { color:var(--dim); font-size:13px; display:block; border-left:2px solid #313848; padding-left:8px; margin:4px 0; white-space:pre-wrap; }
+  footer { display:flex; gap:8px; padding:12px 14px; background:var(--panel); border-top:1px solid var(--line); }
+  #input { flex:1; resize:none; height:58px; background:#10131a; border:1px solid #313848; color:var(--fg); border-radius:8px; padding:8px 10px; font:inherit; }
+  #send { padding:0 20px; background:var(--acc); color:#0b0e14; border:0; border-radius:8px; font-weight:600; cursor:pointer; }
+  #send:disabled { opacity:.45; cursor:default; }
+  .hint { color:var(--dim); font-size:12px; padding:0 16px 10px; background:var(--panel); }
+  .hint b { color:var(--fg); }
+</style>
+</head>
+<body>
+<header>
+  <span class="t">Local model chat</span>
+  <select id="engine" title="Engine (server)"></select>
+  <input id="port" type="number" min="1" max="65535" title="Port (edit for a custom server)">
+  <select id="model" title="Model (from the server's /v1/models)"><option value="">auto (first loaded)</option></select>
+  <button id="clear" title="Clear conversation">Clear</button>
+  <span id="status">checking…</span>
+</header>
+<div id="chat"></div>
+<div class="hint">
+  Load / unload models from the <b>LM Switcher</b> menu bar (or <b>llama load &lt;model&gt;</b>) — the page lists whatever the
+  chosen server has. Presets: llama.cpp <b>8080</b> · oMLX <b>8000</b> · MTPLX <b>8085</b> · DS4 <b>8090</b> · mlx-serve <b>11234</b>.
+  Engines that ship their own UI (llama.cpp <b>:port/</b>, MTPLX <b>:8085/</b>, mlx-serve <b>:11234/</b>) and refuse cross-origin
+  calls will say so above — open that URL instead. Enter = send, Shift+Enter = newline.
+</div>
+<footer>
+  <textarea id="input" placeholder="Message…" autofocus></textarea>
+  <button id="send">Send</button>
+</footer>
+<script>
+"use strict";
+const PRESETS = [
+  ["8080",  "llama.cpp (GGUF)"],
+  ["8000",  "oMLX"],
+  ["8085",  "MTPLX"],
+  ["8090",  "DS4 (DwarfStar)"],
+  ["11234", "mlx-serve"],
+];
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+let port = parseInt(params.get("port") || localStorage.getItem("lms-chat-port") || "8080", 10);
+if (!(port > 0 && port < 65536)) port = 8080;
+let history = [];
+let busy = false;
+let models = [];
+let fixedModel = params.get("model") || "";
+
+const api = () => "http://127.0.0.1:" + port + "/v1";
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function buildEngineSelect() {
+  const sel = $("engine");
+  sel.innerHTML = "";
+  let matched = false;
+  for (const [p, label] of PRESETS) {
+    const o = document.createElement("option");
+    o.value = p; o.textContent = label + " :" + p;
+    if (parseInt(p, 10) === port) { o.selected = true; matched = true; }
+    sel.appendChild(o);
+  }
+  if (!matched) {
+    const o = document.createElement("option");
+    o.value = String(port); o.textContent = "custom :" + port;
+    o.selected = true;
+    sel.appendChild(o);
+  }
+  $("port").value = port;
+}
+
+function renderOut(el, reason, content) {
+  let html = "";
+  if (reason) html += '<span class="think">' + esc(reason) + "</span>";
+  let rest = content;
+  for (;;) {
+    const i = rest.indexOf("<think>");
+    if (i < 0) { html += esc(rest); break; }
+    html += esc(rest.slice(0, i));
+    const j = rest.indexOf("</think>", i + 7);
+    if (j < 0) { html += '<span class="think">' + esc(rest.slice(i + 7)) + "</span>"; break; }
+    html += '<span class="think">' + esc(rest.slice(i + 7, j)) + "</span>";
+    rest = rest.slice(j + 8);
+  }
+  el.innerHTML = html;
+  $("chat").scrollTop = $("chat").scrollHeight;
+}
+
+function setStatus(text, cls) { $("status").textContent = text; $("status").className = cls || ""; }
+
+function fillModels(ids) {
+  const sel = $("model");
+  const keep = fixedModel || sel.value;
+  sel.innerHTML = "";
+  const auto = document.createElement("option");
+  auto.value = ""; auto.textContent = "auto (first listed)";
+  sel.appendChild(auto);
+  for (const id of ids) {
+    const o = document.createElement("option");
+    o.value = id; o.textContent = id;
+    sel.appendChild(o);
+  }
+  if (keep && ids.includes(keep)) sel.value = keep;
+  else if (fixedModel && ids.length && !ids.includes(fixedModel)) {
+    const o = document.createElement("option");
+    o.value = fixedModel; o.textContent = fixedModel + " (not listed)";
+    sel.appendChild(o); sel.value = fixedModel;
+  }
+}
+
+async function check() {
+  try {
+    const r = await fetch(api() + "/models", { cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    const j = await r.json();
+    const ids = (j.data || j.models || []).map((m) => m.id || m.name || "").filter(Boolean);
+    models = ids;
+    fillModels(ids);
+    if (!ids.length) { setStatus("no models — load one from the LM Switcher menu", "bad"); }
+    else { setStatus("connected · " + ids.length + " model" + (ids.length > 1 ? "s" : ""), "ok"); }
+  } catch (e) {
+    // Distinguish "nothing listening" from "server rejects cross-origin
+    // calls": MTPLX answers 403 to Origin: null and has no CORS flag, so a
+    // file:// page can never call it. A no-cors probe resolves for ANY HTTP
+    // response (even an error), and rejects only when nothing is listening.
+    let reachable = false;
+    try { await fetch(api() + "/models", { mode: "no-cors", cache: "no-store" }); reachable = true; } catch (_) {}
+    if (reachable) {
+      setStatus("server on :" + port + " blocks this page (CORS) — use http://127.0.0.1:" + port + "/ instead", "bad");
+    } else {
+      setStatus("no server on :" + port + " — load a model in the LM Switcher menu", "bad");
+    }
+  }
+}
+
+function addMessage(role) {
+  const d = document.createElement("div");
+  d.className = "msg " + role;
+  $("chat").appendChild(d);
+  $("chat").scrollTop = $("chat").scrollHeight;
+  return d;
+}
+
+async function send() {
+  const text = $("input").value.trim();
+  if (!text || busy) return;
+  busy = true; $("send").disabled = true;
+  $("input").value = "";
+  const userEl = addMessage("user"); userEl.textContent = text;
+  history.push({ role: "user", content: text });
+  const bot = addMessage("bot");
+  bot.textContent = "…";
+  let out = "", reason = "";
+  const model = $("model").value || models[0] || "";
+  try {
+    const r = await fetch(api() + "/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: history, stream: true, temperature: 0.8, max_tokens: 4096 })
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status + ": " + (await r.text()).slice(0, 300));
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        const s = line.trim();
+        if (!s.startsWith("data:")) continue;
+        const payload = s.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        let j; try { j = JSON.parse(payload); } catch (_) { continue; }
+        const d = (j.choices && j.choices[0] && j.choices[0].delta) || {};
+        if (d.reasoning_content) reason += d.reasoning_content;
+        if (d.reasoning) reason += d.reasoning;
+        if (d.content) out += d.content;
+        if (d.content || d.reasoning_content || d.reasoning) renderOut(bot, reason, out);
+      }
+    }
+    renderOut(bot, reason, out);
+    const finalContent = out.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+    history.push({ role: "assistant", content: finalContent || out });
+  } catch (e) {
+    bot.textContent = (out ? out + "\n" : "") + "[error] " + e.message +
+      " — is a model loaded, and does the server allow this page to call it (CORS)?";
+  } finally {
+    busy = false; $("send").disabled = false; check();
+  }
+}
+
+function setPort(p) {
+  port = p;
+  localStorage.setItem("lms-chat-port", String(p));
+  $("port").value = p;
+  models = []; $("model").innerHTML = '<option value="">auto (first listed)</option>';
+  check();
+}
+
+$("engine").onchange = (e) => setPort(parseInt(e.target.value, 10));
+$("port").onchange = (e) => { const p = parseInt(e.target.value, 10); if (p > 0 && p < 65536) setPort(p); };
+$("send").onclick = send;
+$("clear").onclick = () => { history = []; $("chat").innerHTML = ""; };
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+buildEngineSelect();
+// ?q=<prompt> prefills and auto-sends (bookmarkable prompts; headless smoke tests)
+const autoPrompt = params.get("q");
+if (autoPrompt) { $("input").value = autoPrompt; setTimeout(send, 500); }
+check();
+setInterval(check, 6000);
+</script>
+</body>
+</html>

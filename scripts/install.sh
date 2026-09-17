@@ -362,6 +362,18 @@ if [[ -f "$_DIAGRAM_SRC" ]]; then
 fi
 unset _DIAGRAM_SRC
 
+# Browser chat page (docs/chat.html): single-file client for any engine's
+# OpenAI-compatible API — the way to chat with engines that ship no web UI
+# (DS4, oMLX). Deployed next to the engine map for convenience; the repo
+# copy is the source of truth.
+_CHAT_SRC="$SCRIPT_DIR/../docs/chat.html"
+if [[ -f "$_CHAT_SRC" ]]; then
+    mkdir -p "$HOME/AI/tools"
+    cp "$_CHAT_SRC" "$HOME/AI/tools/lm-switcher-chat.html"
+    echo "  ✓ chat page installed → $HOME/AI/tools/lm-switcher-chat.html"
+fi
+unset _CHAT_SRC
+
 
 # -----------------------------------------------------------------------------
 # Step 7: Install the LaunchAgent

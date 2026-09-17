@@ -41,6 +41,36 @@ LM Switcher is a native macOS app that lives in your menu bar (next to the clock
 
 A companion shell command `llama` provides the same functionality from your terminal, and the two tools share state automatically.
 
+## Chat with your models in a browser
+
+Every engine serves an OpenAI-compatible API on loopback (`127.0.0.1`). Three engines ship their own web UI; for
+the rest — and as one minimal client for all of them — the repo carries a single-file chat page:
+[`docs/chat.html`](docs/chat.html) (installed to `~/AI/tools/lm-switcher-chat.html`). Open it, pick the engine
+port, and it lists whatever that server has loaded (it auto-detects the model id from `/v1/models`).
+
+| Engine | Its own browser UI | `docs/chat.html` can call it |
+|---|---|---|
+| llama.cpp (GGUF) | `http://127.0.0.1:<port>/` — built-in chat | ✅ (`Access-Control-Allow-Origin: null`) |
+| MTPLX | `http://127.0.0.1:8085/` — chat; `/dashboard/` live stats; `/docs` API | ❌ rejects cross-origin (403) → **use its own UI** |
+| mlx-serve | `http://127.0.0.1:11234/` — landing page with a chat box | ✅ (`Access-Control-Allow-Origin: *`) |
+| oMLX | — (no landing page) | ✅ (`*`) |
+| DS4 (DwarfStar) | — | ✅ (launchers pass `--cors`) |
+| MLX (`mlx_lm.server`) | — | not tested |
+
+**Example — Qwen3.8-27B via MTPLX (27B, MTP speculative decoding, ~25 t/s on M2 Max):**
+
+1. Load it: click the model in the **LM Switcher** menu bar (or `llama load Youssofal-Qwen3.8-27B-MTPLX-Optimized-Speed-FP16`). Cold load ≈ 20–30 s.
+2. Chat in a browser at **<http://127.0.0.1:8085/>** — the server's own UI, always works, shows live dashboard and API docs.
+3. API clients: `http://127.0.0.1:8085/v1` (OpenAI-compatible, no auth — loopback only), model id
+   `mtplx-qwen38-27b-optimized-speed-fp16`, context 262144.
+4. `docs/chat.html?port=8085` also works for everything except the HTTP call itself — MTPLX refuses cross-origin
+   requests, and the page says so and points at :8085.
+
+**Example — engines with no UI (DS4, oMLX):** load the model, then open `docs/chat.html?port=8090` (DS4) or
+`?port=8000` (oMLX). Handy params: `?port=`, `?q=<prompt>` (prefills and sends — bookmarkable), and the page
+remembers the last port. If a fetch fails the page tells you *why*: nothing listening vs. a server that blocks
+cross-origin calls.
+
 ## Features Explained
 
 ### mmproj Auto-Pairing with Fallback Matching
