@@ -1057,7 +1057,10 @@ cmd_status() {
             # old greedy regex `(.+\.gguf)` matched the LAST .gguf (the
             # drafter). Instead: cut everything before " -m ", then cut at
             # the FIRST ".gguf" (lazy semantics, space-safe).
-            local mpath="" mname
+            # NOTE (macOS bash 3.2): `local a="" b` resets ONLY the first
+            # variable — a value left in `b` by a previous loop iteration
+            # survives, which silently mis-names entries. Assign each one.
+            local mpath="" mname="" rest=""
             if [[ "$argline" == *"omlx serve"* || "$argline" == *"omlx-server"* ]]; then
                 # oMLX carries no -m/--model; the pidfile stem encodes the
                 # model (<hash>.<basename>.pid).
@@ -1068,17 +1071,23 @@ cmd_status() {
                 # The generic ` -m ` branch below would match PYTHON's own -m
                 # (the module flag) and mangle the name into the whole argv
                 # (2026-09-17 fix — mirrors the app/MCP scanners).
-                if [[ "$argline" =~ \ --model\ (\S+) ]]; then
+                # NOTE: `\S` is NOT valid ERE for macOS bash 3.2 — it must be
+                # a bracket class (`[^ ]+`), or the capture silently misses.
+                if [[ "$argline" =~ \ --model\ ([^ ]+) ]]; then
                     mpath="${BASH_REMATCH[1]}"
                 fi
             elif [[ "$argline" == *" -m "* && "${argline#*-m }" == *".gguf"* ]]; then
-                local rest="${argline#*-m }"
+                rest="${argline#*-m }"
                 mpath="${rest%%.gguf*}.gguf"
-            elif [[ "$argline" =~ \ --model\ (\S+) ]]; then
+            elif [[ "$argline" =~ \ --model\ ([^ ]+) ]]; then
                 mpath="${BASH_REMATCH[1]}"
             fi
             if [[ -z "$mname" ]]; then
-                [[ -n "$mpath" ]] && mname=$(basename "$mpath") || mname="$id_hash"
+                if [[ -n "$mpath" ]]; then
+                    mname=$(basename "$mpath")
+                else
+                    mname="$id_hash"
+                fi
             fi
             echo "● $mname  :$port  (PID $pid)"
             any=1
