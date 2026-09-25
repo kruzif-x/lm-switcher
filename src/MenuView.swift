@@ -95,6 +95,14 @@ struct MenuView: View {
             footerRow
         }
         .frame(width: 300)
+        // Opaque panel surface. Without this the MenuBarExtra window falls back
+        // to the system's translucent "glass" material (macOS 26/27 renders it
+        // far more see-through than the old menu material): the desktop/windows
+        // behind bled through ~27% of the panel and washed every label out
+        // (measured 2026-09-25: same panel read rgb(124,124,124) over a white
+        // backdrop vs rgb(60,68,76) over a dark one). The window clips this to
+        // its rounded corners, so an opaque fill is all that's needed.
+        .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .bottom) {
             VStack(spacing: 6) {
                 if !undoStash.isEmpty {
