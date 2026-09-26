@@ -674,6 +674,17 @@ class ServerManager {
                 if let entry = mlxEntry(at: url, baseDir: baseDir) {
                     entries.append(entry)
                 } else {
+                    // Trees owned by a dedicated scan (oMLX, mlx-serve) must
+                    // not be claimed here either: a mtplx_runtime.json pack
+                    // staged inside the oMLX root is an oMLX model (its scan
+                    // adds the row). Without this guard the same path is
+                    // claimed twice — double-listed by the CLI/MCP surfaces
+                    // and mislabelled [MTPLX] in the app (reproduced
+                    // 2026-09-26 with a probe dir under ~/AI/models/omlx).
+                    if url.path.hasPrefix(resolvedOmlxModelDir() + "/")
+                        || url.path.hasPrefix(resolvedMlxServeModelDir() + "/") {
+                        continue
+                    }
                     // MTPLX model? Check for mtplx_runtime.json.
                     // The MTP companion is detected separately in mlxEntry
                     // which returns nil when mtplx_runtime.json exists.
@@ -760,7 +771,7 @@ class ServerManager {
             includingPropertiesForKeys: nil
         ) else { return nil }
         // Skip MTPLX models — they have mtplx_runtime.json and are
-        // discovered by mtplxEntries() with backend .mtplx.
+        // discovered by the inline MTPLX branch in scanDirectory().
         let names = contents.map { $0.lastPathComponent.lowercased() }
         if names.contains("mtplx_runtime.json") { return nil }
         let hasSafetensors = contents.contains { $0.pathExtension.lowercased() == "safetensors" }
@@ -880,37 +891,6 @@ class ServerManager {
                 path: url,
                 backend: .ds4
             ))
-        }
-    }
-
-    /// Scan modelsDir for MTPLX-format model directories.
-    /// MTPLX models are directories containing config.json, *.safetensors,
-    /// AND mtplx_runtime.json (distinguishes them from plain MLX).
-    /// Uses FileManager.enumerator to recurse (like the CLI find).
-    private func mtplxEntries(at root: URL, into entries: inout [ModelEntry]) {
-        let fm = FileManager.default
-        guard let enumerator = fm.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return }
-        for case let url as URL in enumerator {
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
-            guard let files = try? fm.contentsOfDirectory(atPath: url.path) else { continue }
-            let lower = files.map { $0.lowercased() }
-            if lower.contains("config.json") &&
-               lower.contains(where: { $0.hasSuffix(".safetensors") }) &&
-               lower.contains("mtplx_runtime.json") {
-                // Don't recurse into this dir — it IS the model.
-                enumerator.skipDescendants()
-                entries.append(ModelEntry(
-                    id: url.path,
-                    name: url.lastPathComponent,
-                    path: url,
-                    backend: .mtplx
-                ))
-            }
         }
     }
 

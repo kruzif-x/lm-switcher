@@ -137,7 +137,13 @@ func discoverModels() -> [DiscoveredModel] {
                 let full = modelsDir + "/" + rel
                 if (rel as NSString).lastPathComponent == "mtplx_runtime.json" {
                     let dir = (full as NSString).deletingLastPathComponent
-                    guard !mtplxDirs.contains(dir) else { continue }
+                    // Trees owned by a dedicated scan (oMLX / mlx-serve) are
+                    // skipped: a pack staged inside the oMLX root belongs to
+                    // the oMLX row — claiming it here double-lists the same
+                    // path under two backends (reproduced 2026-09-26).
+                    guard !mtplxDirs.contains(dir),
+                          !dir.hasPrefix(omlxDir + "/"),
+                          !dir.hasPrefix(mlxServeDir + "/") else { continue }
                     if let files = try? fm.contentsOfDirectory(atPath: dir),
                        files.contains(where: { $0.hasSuffix(".safetensors") }) {
                         mtplxDirs.insert(dir)

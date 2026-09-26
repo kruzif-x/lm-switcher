@@ -307,8 +307,12 @@ list_all_models() {
 
     # MTPLX: directories with config.json + safetensors + mtplx_runtime.json.
     # These sit inside MODELS_DIR alongside MLX dirs — they were excluded from
-    # the MLX scan above so they appear here as 'mtplx' backend.
+    # the MLX scan above so they appear here as 'mtplx' backend. Trees owned
+    # by a dedicated scan (oMLX / mlx-serve) are skipped too: a pack staged
+    # inside the oMLX root belongs to the omlx scan's row — without the skip
+    # the same path is listed twice (omlx + mtplx).
     while IFS= read -r d; do
+        case "$d" in "$OMLX_MODEL_DIR"/*|"$MLX_SERVE_MODEL_DIR"/*) continue ;; esac
         if [[ -f "$d/mtplx_runtime.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
             echo "mtplx|$d|$(basename "$d")"
         fi
