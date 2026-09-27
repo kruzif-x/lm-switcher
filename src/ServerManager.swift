@@ -1000,9 +1000,15 @@ class ServerManager {
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
             if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true { continue }
-            if let files = try? fm.contentsOfDirectory(atPath: url.path),
-               files.contains(where: { $0.lowercased() == "config.json" }),
-               files.contains(where: { $0.lowercased().hasSuffix(".safetensors") }) {
+            let names = ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).map { $0.lowercased() }
+            // A store model is either a plain MLX dir (config.json +
+            // root-level *.safetensors) or a diffusers-style pipeline
+            // whose weights live in component subdirs and which is marked
+            // by model_index.json (e.g. the Qwen-Image image models).
+            let isPlainMLX = names.contains("config.json")
+                && names.contains(where: { $0.hasSuffix(".safetensors") })
+            let isPipeline = names.contains("model_index.json")
+            if isPlainMLX || isPipeline {
                 entries.append(ModelEntry(
                     id: url.path,
                     name: url.lastPathComponent,

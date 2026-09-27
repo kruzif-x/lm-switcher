@@ -167,12 +167,19 @@ func discoverModels() -> [DiscoveredModel] {
                 var isDir: ObjCBool = false
                 guard fm.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue,
                       !visited.contains(dir) else { continue }
-                if let files = try? fm.contentsOfDirectory(atPath: dir),
-                   files.contains(where: { $0.lowercased() == "config.json" }),
-                   files.contains(where: { $0.lowercased().hasSuffix(".safetensors") }) {
-                    visited.insert(dir)
-                    out.append(DiscoveredModel(backend: "mlx-serve", path: dir,
-                                               name: (dir as NSString).lastPathComponent))
+                if let files = try? fm.contentsOfDirectory(atPath: dir) {
+                    let names = files.map { $0.lowercased() }
+                    // Plain MLX dir (config.json + root safetensors) OR a
+                    // diffusers-style pipeline (weights in component
+                    // subdirs, marked by model_index.json — e.g. Qwen-Image).
+                    let isPlainMLX = names.contains("config.json")
+                        && names.contains(where: { $0.hasSuffix(".safetensors") })
+                    let isPipeline = names.contains("model_index.json")
+                    if isPlainMLX || isPipeline {
+                        visited.insert(dir)
+                        out.append(DiscoveredModel(backend: "mlx-serve", path: dir,
+                                                   name: (dir as NSString).lastPathComponent))
+                    }
                 }
             }
         }

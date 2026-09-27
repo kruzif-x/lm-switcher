@@ -332,10 +332,14 @@ list_all_models() {
 
     # mlx-serve (ddalcu): one shared server serves every model under the
     # store root (org/model nesting, depth <= 2). Same exclusion note as
-    # oMLX: the MLX scan above skips this tree.
+    # oMLX: the MLX scan above skips this tree. A store model is a plain
+    # MLX dir (config.json + root-level *.safetensors) OR a diffusers-style
+    # pipeline whose weights live in component subdirs and which is marked
+    # by model_index.json (e.g. the Qwen-Image image models).
     if [[ -d "$MLX_SERVE_MODEL_DIR" ]]; then
         while IFS= read -r d; do
-            if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
+            if { [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; } \
+                || [[ -f "$d/model_index.json" ]]; then
                 echo "mlxserve|$d|$(basename "$d")"
             fi
         done < <(find "$MLX_SERVE_MODEL_DIR" -maxdepth 2 -type d 2>/dev/null)

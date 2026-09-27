@@ -131,11 +131,29 @@ enum FootprintEstimator {
         if model.backend == "GGUF" || model.backend == "DS4" {
             return ((try? fm.attributesOfItem(atPath: model.path))?[.size] as? UInt64) ?? 0
         }
-        // MLX: Σ safetensors sizes (MoE file size ≈ fully mapped — conservative).
         guard let files = try? fm.contentsOfDirectory(atPath: model.path) else { return 0 }
-        return files.filter { $0.hasSuffix(".safetensors") }.reduce(0 as UInt64) { sum, f in
+        // MLX: Σ safetensors sizes (MoE file size ≈ fully mapped — conservative).
+        let rootSum = files.filter { $0.hasSuffix(".safetensors") }.reduce(0 as UInt64) { sum, f in
             sum + (((try? fm.attributesOfItem(atPath: model.path + "/" + f))?[.size] as? UInt64) ?? 0)
         }
+        if rootSum > 0 { return rootSum }
+        // Diffusers-style pipeline (marked by model_index.json, e.g. the
+        // Qwen-Image image models): weights live in component subdirs
+        // (transformer/, text_encoder/, vae/ …). Sum them recursively —
+        // without this the footprint was 0 and callers fell back to the
+        // directory entry's own size (a few hundred bytes).
+        guard files.contains("model_index.json") else { return 0 }
+        var total: UInt64 = 0
+        if let en = fm.enumerator(atPath: model.path) {
+            for case let rel as String in en where rel.hasSuffix(".safetensors") {
+                let full = model.path + "/" + rel
+                if let a = try? fm.attributesOfItem(atPath: full),
+                   (a[.type] as? FileAttributeType) == .typeRegular {
+                    total += (a[.size] as? UInt64) ?? 0
+                }
+            }
+        }
+        return total
     }
 
     // MARK: - Geometry
