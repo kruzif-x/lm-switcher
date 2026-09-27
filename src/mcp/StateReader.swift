@@ -55,7 +55,7 @@ func perModelValue(_ suffix: String, hash: String) -> Any? {
 // MARK: - Discovery (mirrors the CLI's list_all_models)
 
 struct DiscoveredModel {
-    let backend: String   // "GGUF" | "MLX" | "oMLX" | "MTPLX" | "DS4" | "mlx-serve"
+    let backend: String   // "GGUF" | "MLX" | "oMLX" | "MTPLX" | "DS4" | "mlx-serve" | "Splash"
     let path: String
     let name: String
     var hash: String { idHash12(path) }
@@ -185,6 +185,36 @@ func discoverModels() -> [DiscoveredModel] {
         }
     }
 
+    // Splash (paperniuk/splash M1/M2 fork): packages under the engine's own
+    // install root (<org>/<repo> nesting, depth <= 2). Installed entries are
+    // SYMLINKS into the shared HF cache — fileExists follows them, so both
+    // the real and symlinked layout discovery works. ONE server per model;
+    // the root is outside every other scan tree, so no exclusion is needed.
+    let splashDir = Prefs.string("splashModelDir", default: NSHomeDirectory() + "/Library/Application Support/Splash/models")
+    if !splashDir.isEmpty, fm.fileExists(atPath: splashDir) {
+        let orgs = (try? fm.contentsOfDirectory(atPath: splashDir)) ?? []
+        for org in orgs where !org.hasPrefix(".") {
+            let orgPath = splashDir + "/" + org
+            var isD: ObjCBool = false
+            guard fm.fileExists(atPath: orgPath, isDirectory: &isD), isD.boolValue else { continue }
+            let repos = (try? fm.contentsOfDirectory(atPath: orgPath)) ?? []
+            for repo in repos where !repo.hasPrefix(".") {
+                let dir = orgPath + "/" + repo
+                var isP: ObjCBool = false
+                guard fm.fileExists(atPath: dir, isDirectory: &isP), isP.boolValue else { continue }
+                if let files = try? fm.contentsOfDirectory(atPath: dir) {
+                    let names = files.map { $0.lowercased() }
+                    // A Splash package is the engine's own layout:
+                    // manifest.json + target/ (layer bins).
+                    if names.contains("manifest.json"), names.contains("target") {
+                        out.append(DiscoveredModel(backend: "Splash", path: dir,
+                                                   name: (dir as NSString).lastPathComponent))
+                    }
+                }
+            }
+        }
+    }
+
     // DS4 (DwarfStar): curated GGUF dir, one server per model.
     if !ds4Dir.isEmpty, fm.fileExists(atPath: ds4Dir) {
         if let files = try? fm.contentsOfDirectory(atPath: ds4Dir) {
@@ -294,6 +324,7 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
                 || text.contains("omlx serve") || text.contains("omlx-server")
                 || text.contains("mtplx.server") || text.contains("mtplx serve")
                 || text.contains("ds4-server")
+                || (text.contains("Splash-M1/") && text.contains("server.py"))
                 || text.range(of: #"^\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
             guard let sp = text.firstIndex(of: " "), let pid = Int32(text[..<sp]),
                   !seenPids.contains(pid) else { continue }
@@ -340,6 +371,23 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
                 continue
             }
 
+            // Splash (paperniuk/splash M1/M2 fork): the launcher execs as
+            // `python3 -u …/Splash-M1/<ver>/server/server.py <model>/target
+            // <model>/draft … --model org/repo --port N`. Only the server
+            // line carries `server.py` (the `serve-native` engine child has
+            // no port) — one pid per server. The model DIR is the positional
+            // `<…>/Splash/models/<org>/<repo>`; map it to a discovered entry.
+            if args.contains("Splash-M1/") && args.contains("server.py") {
+                guard let dir = firstMatch(#"(/.+?Splash/models/[^ ]+?)/target"#, in: args),
+                      let model = byPath[dir] else { continue }
+                seenPids.insert(pid)
+                let port = firstMatch(#"--port (\d+)"#, in: args).flatMap(Int.init) ?? 0
+                out.append(RunningModel(hash: model.hash, pid: pid, port: port, model: model,
+                                        displayName: model.name, backend: model.backend, ctxSize: nil,
+                                        fromPidFile: false))
+                continue
+            }
+
             // MTPLX: the argv carries `-P -m mtplx.server.openai` BEFORE
             // `--model <dir>` — the generic `(?:-m|--model)` first match
             // would capture "mtplx.server.openai" and never map to a
@@ -370,10 +418,10 @@ func firstMatch(_ pattern: String, in text: String) -> String? {
 
 // MARK: - Health probe
 
-/// llama-server serves /health; mlx_lm.server, oMLX and DS4 serve
-/// /v1/models (§3.3).
+/// llama-server serves /health; mlx_lm.server, oMLX, DS4, mlx-serve and
+/// Splash serve /v1/models (§3.3).
 func probeHealthy(port: Int, backend: String) -> Bool {
-    let path = (backend == "MLX" || backend == "oMLX" || backend == "DS4" || backend == "mlx-serve") ? "/v1/models" : "/health"
+    let path = (backend == "MLX" || backend == "oMLX" || backend == "DS4" || backend == "mlx-serve" || backend == "Splash") ? "/v1/models" : "/health"
     guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return false }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2.0
@@ -486,6 +534,7 @@ func stateSnapshot() -> [String: Any] {
     let omlxPort = Prefs.int("omlxPort", default: 8000)
     let ds4Port = Prefs.int("ds4Port", default: 8090)
     let mlxServePort = Prefs.int("mlxServePort", default: 11234)
+    let splashPort = Prefs.int("splashPort", default: 8095)
     var portLo = defaultPort
     var portHi = defaultPort + 200
     if omlxPort < portLo { portLo = omlxPort }
@@ -494,6 +543,8 @@ func stateSnapshot() -> [String: Any] {
     if ds4Port > portHi { portHi = ds4Port }
     if mlxServePort < portLo { portLo = mlxServePort }
     if mlxServePort > portHi { portHi = mlxServePort }
+    if splashPort < portLo { portLo = splashPort }
+    if splashPort > portHi { portHi = splashPort }
     // A shared server (mlx-serve, oMLX) maps onto EVERY model it serves,
     // so several Running entries can share one port — build the map
     // tolerantly (first wins) instead of trapping on a duplicate key.

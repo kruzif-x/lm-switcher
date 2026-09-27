@@ -147,6 +147,24 @@ MLX_SERVE_PORT="${MLX_SERVE_PORT:-11234}"
 MLX_SERVE_MODEL_DIR="${MLX_SERVE_MODEL_DIR:-$(defaults read local.llama-menubar mlxServeModelDir 2>/dev/null)}"
 MLX_SERVE_MODEL_DIR="${MLX_SERVE_MODEL_DIR:-$HOME/.mlx-serve/models}"
 
+# Splash (paperniuk/splash M1/M2 fork) — ONE server per model. Models are
+# Hugging Face "Splash packages" installed under the engine's own root
+# (<root>/<org>/<repo>; the installer symlinks entries into the shared HF
+# cache). `--model` takes the repo id (owner/repo) — the engine rejects
+# local paths. Binary precedence: env var, saved setting, Homebrew shim,
+# ~/.local/bin, PATH. Port: per-model override, else 8095.
+SPLASH_SERVER="${SPLASH_SERVER:-$(defaults read local.llama-menubar splashServerPath 2>/dev/null)}"
+if [[ -z "$SPLASH_SERVER" ]]; then
+    for _c in /opt/homebrew/bin/splash-m1 "$HOME/.local/bin/splash-m1"; do
+        [[ -x "$_c" ]] && SPLASH_SERVER="$_c" && break
+    done
+fi
+SPLASH_SERVER="${SPLASH_SERVER:-splash-m1}"
+SPLASH_PORT="${SPLASH_PORT:-$(defaults read local.llama-menubar splashPort 2>/dev/null)}"
+SPLASH_PORT="${SPLASH_PORT:-8095}"
+SPLASH_MODEL_DIR="${SPLASH_MODEL_DIR:-$(defaults read local.llama-menubar splashModelDir 2>/dev/null)}"
+SPLASH_MODEL_DIR="${SPLASH_MODEL_DIR:-$HOME/Library/Application Support/Splash/models}"
+
 # B1 fix: restrictive umask. PID files and server logs (which capture
 # stdout/stderr — model paths, sometimes verbose content) must be
 # owner-only. The default umask (022) leaves them world-readable (644),
@@ -343,6 +361,25 @@ list_all_models() {
                 echo "mlxserve|$d|$(basename "$d")"
             fi
         done < <(find "$MLX_SERVE_MODEL_DIR" -maxdepth 2 -type d 2>/dev/null)
+    fi
+
+    # Splash (paperniuk/splash M1/M2 fork): packages under the engine's own
+    # install root (<org>/<repo>, depth <= 2). Installed entries are
+    # symlinks into the shared HF cache — `find -type d` misses them (find
+    # does not follow a symlink argument), so glob instead: `*/` matches
+    # symlinks-to-dirs. Package marker: manifest.json + target/. The root
+    # lives outside MODELS_DIR, so no exclusion is needed anywhere.
+    if [[ -d "$SPLASH_MODEL_DIR" ]]; then
+        shopt -s nullglob
+        local _orgd _repod
+        for _orgd in "$SPLASH_MODEL_DIR"/*/; do
+            for _repod in "$_orgd"*/; do
+                if [[ -f "$_repod/manifest.json" && -d "$_repod/target" ]]; then
+                    echo "splash|${_repod%/}|$(basename "$_repod")"
+                fi
+            done
+        done
+        shopt -u nullglob
     fi
 }
 
@@ -621,6 +658,9 @@ load_model() {
     elif [[ "$type" == "ds4" ]]; then
         port=$(per_model_port "$id_hash")
         [[ "$port" -le 0 ]] && port=$DS4_PORT
+    elif [[ "$type" == "splash" ]]; then
+        port=$(per_model_port "$id_hash")
+        [[ "$port" -le 0 ]] && port=$SPLASH_PORT
     elif [[ -n "$FORCE_PORT" && "$FORCE_PORT" -gt 0 ]]; then
         port=$FORCE_PORT
     elif [[ "$preferred" -gt 0 ]]; then
@@ -861,6 +901,19 @@ load_model() {
         # MTP: measured +22% decode on M2 Max 64GB (2026-09-11); exact
         # sampling keeps the ordinary distribution under speculation.
         [[ "$(pm_bool enableMtp true)" == "true" ]] && args+=("--mtp" "--mtp-exact-sampling")
+    elif [[ "$type" == "splash" ]]; then
+        # Splash (paperniuk/splash M1/M2 fork): one server per model.
+        # `--model` takes the FULL Hugging Face repo id (owner/repo) —
+        # derive it from the package path under SPLASH_MODEL_DIR; the
+        # engine rejects local paths (the installer symlinks the packages
+        # there and the engine verifies them against manifest.json).
+        # Binds 127.0.0.1 by default (no --host needed); sampling is the
+        # engine's own (no sampling/ctx flags passed, like MTPLX/oMLX).
+        executable="$SPLASH_SERVER"
+        local _sl_repo
+        _sl_repo="${path#$SPLASH_MODEL_DIR/}"
+        if [[ "$_sl_repo" == "$path" ]]; then _sl_repo=$(basename "$path"); fi
+        args=("serve" "--model" "$_sl_repo" "--port" "$port")
     fi
 
     # Append any user-provided extra args (split on whitespace).
@@ -916,6 +969,12 @@ load_model() {
     fi
     if [[ "$type" == "ds4" ]]; then
         _grace=180
+    elif [[ "$type" == "splash" ]]; then
+        # Splash verifies the package against manifest.json at startup
+        # (warm launch ~20 s, first launch ~40 s). Flat 300 s — its
+        # "model" is a directory, so the file-size ladder below cannot
+        # size it.
+        _grace=300
     elif (( _sz_gb >= 20 )); then
         _grace=300
     elif (( _sz_gb >= 8 )); then
@@ -959,7 +1018,8 @@ load_model() {
 _is_engine_cmd() {
     local cmd="$1"
     [[ "$cmd" == *llama-server* || "$cmd" == *mlx_lm.server* || "$cmd" == *omlx* \
-       || "$cmd" == *mtplx* || "$cmd" == *ds4-server* || "$cmd" == *mlx-serve* ]]
+       || "$cmd" == *mtplx* || "$cmd" == *ds4-server* || "$cmd" == *mlx-serve* \
+       || "$cmd" == *Splash-M1* ]]
 }
 
 # Stop a single model. Takes the PID file path and a display name (the
@@ -1225,6 +1285,23 @@ cmd_unload() {
                     echo "✓ $name unloaded (shared mlx-serve server on :$MLX_SERVE_PORT stays up)"
                 else
                     echo "○ $name is not currently resident on the mlx-serve server (nothing to free)"
+                fi
+            elif [[ "$type" == "splash" && ! -f "$pf" ]]; then
+                # Splash: one server per model. No pidfile means the APP
+                # (or another shell) launched it — find the server by its
+                # model dir in argv and stop it. The engine child
+                # (`engine/splash serve-native`) dies with the python
+                # server (verified 2026-09-27: no orphans).
+                local spid
+                spid=$(pgrep -f "Splash/models/[^ ]*/$(basename "$path")/target" 2>/dev/null | head -1)
+                if [[ -n "$spid" ]]; then
+                    echo "Stopping $name (PID $spid) ..."
+                    kill "$spid" 2>/dev/null
+                    sleep 1
+                    kill -0 "$spid" 2>/dev/null && kill -9 "$spid" 2>/dev/null
+                    echo "✓ $name stopped"
+                else
+                    echo "○ $name not loaded"
                 fi
             elif [[ "$type" == "omlx" && ! -f "$pf" ]] && nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
                 # Externally-launched oMLX server (no pidfile): stop the

@@ -103,6 +103,13 @@ enum ModelBackend: String, CaseIterable, Identifiable {
     /// compatible; models load on demand, unload model-by-model via
     /// POST /v1/unload-model. A LaunchAgent usually keeps it running.
     case mlxserve = "mlx-serve"
+    /// Splash (paperniuk/splash — the M1/M2 fork of incoai/splash): a
+    /// Metal inference engine with register-matrix kernels. ONE server
+    /// per model (like MTPLX); models are Hugging Face "Splash packages"
+    /// installed under the engine's own root
+    /// (`~/Library/Application Support/Splash/models/<org>/<repo>`,
+    /// symlinked into the shared HF cache). Binary: `splash-m1`.
+    case splash = "Splash"
 
     /// `Identifiable` conformance uses the raw value (e.g. "GGUF").
     var id: String { rawValue }
@@ -120,6 +127,7 @@ enum ModelBackend: String, CaseIterable, Identifiable {
         case .mtplx: return "forward"
         case .ds4: return "star"
         case .mlxserve: return "bolt.horizontal"
+        case .splash: return "drop"
         }
     }
 }
@@ -273,6 +281,23 @@ struct AppSettings {
     /// own convention — clear of llama.cpp 8080, oMLX 8000, MTPLX 8085,
     /// DS4 8090).
     var mlxServePort: Int = 11234
+
+    /// Absolute path to the `splash-m1` launcher (paperniuk/splash M1/M2
+    /// fork). Empty = auto-resolve (`/opt/homebrew/bin/splash-m1`, then
+    /// `~/.local/bin/splash-m1`, then PATH).
+    var splashServerPath: String = ""
+
+    /// Root scanned for Splash packages (default
+    /// `~/Library/Application Support/Splash/models` — the engine's own
+    /// install root, `<org>/<repo>` nesting). Splash serves only those
+    /// HF-installed packages; plain GGUF/MLX checkpoints cannot load.
+    var splashModelDir: String = ""
+
+    /// TCP port for Splash server instances. Default 8095 — clear of
+    /// llama.cpp 8080, oMLX 8000, MTPLX 8085, DS4 8090, mlx-serve 11234.
+    /// One server per model (like MTPLX); per-model port overrides win,
+    /// so set one to run two Splash models at once.
+    var splashPort: Int = 8095
 
     /// Free-form string of extra args passed to every server process.
     /// Parsed with `parseArgs` in `ServerManager` to handle quoting.

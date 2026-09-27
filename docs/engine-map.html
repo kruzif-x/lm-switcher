@@ -8,7 +8,7 @@
   :root {
     --bg: #f5f5f7; --panel: #ffffff; --stroke: #d2d2d7; --dash: #86868b;
     --ink: #1d1d1f; --sub: #6e6e73; --faint: #86868b;
-    --gguf: #0071e3; --mlx: #30b0c7; --omlx: #34c759; --mtplx: #ff9f0a; --ds4: #af52de; --mlxserve: #ff375f;
+    --gguf: #0071e3; --mlx: #30b0c7; --omlx: #34c759; --mtplx: #ff9f0a; --ds4: #af52de; --mlxserve: #ff375f; --splash: #5e5ce6;
     --chip: #f2f2f4;
   }
   @media (prefers-color-scheme: dark) {
@@ -57,7 +57,7 @@
 </header>
 
 <div class="panel">
-<svg viewBox="0 0 1500 800" role="img" aria-label="Engine selection flow: GGUF files go to llama-server (or ds4-server when in the DS4 folder); MLX folders go to MTPLX, mlx-serve, oMLX or mlx_lm.server depending on the marker file and the tree that owns them.">
+<svg viewBox="0 0 1500 800" role="img" aria-label="Engine selection flow: GGUF files go to llama-server (or ds4-server when in the DS4 folder); MLX folders go to MTPLX, mlx-serve, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; Splash packages (manifest.json + target/) under the Splash root go to splash-m1.">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dash)"></path>
@@ -92,10 +92,29 @@
   <path class="flow" d="M610,257 V300"></path>
   <text class="lbl" x="622" y="282">yes</text>
 
+  <!-- Splash card (top-left: reached from D2-no → D2b-yes) -->
+  <rect class="card" x="30" y="16" width="366" height="160" rx="14" stroke="var(--splash)"></rect>
+  <text class="t" x="50" y="44" font-size="15.5">Splash — splash-m1</text>
+  <rect class="chipbg" x="50" y="54" width="326" height="26" rx="13"></rect>
+  <text class="m" x="213" y="71" text-anchor="middle">manifest.json + target/, in the Splash root</text>
+  <text class="s" x="50" y="100">one process per model</text>
+  <text class="s" x="50" y="119">port :8095 (per-model override)</text>
+  <text class="s" x="50" y="138">unload → stops that process</text>
+  <text class="s" x="50" y="160" font-size="11.5" fill="var(--faint)">engine-format packs, served by HF repo id</text>
+
+  <!-- D2b: splash package? (on the D2-no path) -->
+  <rect class="decide" x="30" y="205" width="366" height="52" rx="12"></rect>
+  <text class="t" x="213" y="229" text-anchor="middle" font-size="14.5">Is it a Splash package?</text>
+  <text class="s" x="213" y="246" text-anchor="middle" font-size="11">manifest.json + target/ in the Splash root</text>
+  <path class="flow" d="M213,205 V186"></path>
+  <text class="lbl" x="225" y="199" text-anchor="middle">yes</text>
+  <path class="flow" d="M213,257 V285"></path>
+  <text class="lbl" x="225" y="276" text-anchor="middle">no</text>
+
   <!-- ignored pill -->
-  <rect class="box" x="30" y="205" width="366" height="52" rx="26"></rect>
-  <text class="t" x="213" y="228" text-anchor="middle" font-size="14">Not a model — ignored</text>
-  <text class="s" x="213" y="245" text-anchor="middle" font-size="11">companions, caches, partial downloads</text>
+  <rect class="box" x="30" y="285" width="366" height="52" rx="26"></rect>
+  <text class="t" x="213" y="308" text-anchor="middle" font-size="14">Not a model — ignored</text>
+  <text class="s" x="213" y="325" text-anchor="middle" font-size="11">companions, caches, partial downloads</text>
 
   <!-- D3: which tree / marker? -->
   <rect class="decide" x="430" y="300" width="360" height="52" rx="12"></rect>
@@ -190,7 +209,7 @@
 
   <!-- bottom caption -->
   <text class="lbl" x="750" y="726" text-anchor="middle" font-size="12">
-    Ports: llama.cpp &amp; MLX count up from the Default port (8080) · oMLX 8000 · MTPLX 8085 · DS4 8090 · mlx-serve 11234
+    Ports: llama.cpp &amp; MLX count up from the Default port (8080) · oMLX 8000 · MTPLX 8085 · DS4 8090 · Splash 8095 · mlx-serve 11234
   </text>
   <text class="lbl" x="750" y="746" text-anchor="middle" font-size="12">
     Per-model overrides change port, context, sampling, MTP/DFlash and extra args — never the engine.
@@ -202,7 +221,8 @@
   <h2>Good to know</h2>
   <ul>
     <li><b>One owner per tree.</b> The oMLX root and the mlx-serve store are excluded from the plain MLX scan — in the app, the CLI and the MCP alike — so a model never lists twice.</li>
-    <li><b>Symlinks are skipped.</b> A linked model folder is invisible to every scan; put a real folder in the tree you want. A copy in two trees is two independent entries.</li>
+    <li><b>Symlinks are skipped.</b> A linked model folder is invisible to every scan; put a real folder in the tree you want. A copy in two trees is two independent entries. <b>Exception:</b> the Splash installer symlinks each package from the shared Hugging Face cache into the Splash root on purpose — the Splash scans accept those links (and only those).</li>
+    <li><b>Splash packages are engine-format.</b> Only packages installed under the Splash root (<code>manifest.json</code> + <code>target/</code>, e.g. via the fork's <code>install-m1.sh</code>) can load — the engine's <code>--model</code> takes the Hugging Face repo id (<code>owner/repo</code>) and rejects plain GGUF/MLX files.</li>
     <li><b>Moving engines = moving folders</b> (Settings → Global → Backends sets the roots). mlx-serve exception: it can also hot-load any MLX folder without moving it — <code>POST /v1/load-model {"model": "&lt;absolute path&gt;"}</code>.</li>
     <li><b>“Switch” swaps models, not engines.</b> It loads the new model, verifies it, then unloads the old ones — safe model swaps for the same engines.</li>
     <li><b>Shared servers behave differently on unload.</b> oMLX stops for everyone; mlx-serve frees just that model and stays up for agents (a LaunchAgent usually keeps it running).</li>

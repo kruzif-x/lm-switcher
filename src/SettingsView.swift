@@ -177,6 +177,9 @@ struct SettingsView: View {
     @State private var mlxServeServerPath: String
     @State private var mlxServeModelDir: String
     @State private var mlxServePortStr: String
+    @State private var splashServerPath: String
+    @State private var splashModelDir: String
+    @State private var splashPortStr: String
     @State private var globalExtraArgs: String
     @State private var chatTemplatePath: String
     @State private var enableMtp: Bool
@@ -222,6 +225,9 @@ struct SettingsView: View {
         _mlxServeServerPath = State(initialValue: manager.settings.mlxServeServerPath)
         _mlxServeModelDir   = State(initialValue: manager.settings.mlxServeModelDir)
         _mlxServePortStr    = State(initialValue: "\(manager.settings.mlxServePort)")
+        _splashServerPath   = State(initialValue: manager.settings.splashServerPath)
+        _splashModelDir     = State(initialValue: manager.settings.splashModelDir)
+        _splashPortStr      = State(initialValue: "\(manager.settings.splashPort)")
         _globalExtraArgs  = State(initialValue: manager.settings.globalExtraArgs)
         _chatTemplatePath = State(initialValue: manager.settings.chatTemplatePath)
         _enableMtp        = State(initialValue: manager.settings.enableMtp)
@@ -307,6 +313,9 @@ struct SettingsView: View {
         .onChange(of: mlxServeServerPath) { _, v in manager.settings.mlxServeServerPath = v }
         .onChange(of: mlxServeModelDir)   { _, v in manager.settings.mlxServeModelDir = v; manager.refreshModels() }
         .onChange(of: mlxServePortStr)    { _, v in manager.settings.mlxServePort = Int(v) ?? 11234 }
+        .onChange(of: splashServerPath)   { _, v in manager.settings.splashServerPath = v }
+        .onChange(of: splashModelDir)     { _, v in manager.settings.splashModelDir = v; manager.refreshModels() }
+        .onChange(of: splashPortStr)      { _, v in manager.settings.splashPort = Int(v) ?? 8095 }
     }
 
     // MARK: - Save / Restore
@@ -339,6 +348,9 @@ struct SettingsView: View {
         mlxServeServerPath = d.mlxServeServerPath
         mlxServeModelDir   = d.mlxServeModelDir
         mlxServePortStr    = "\(d.mlxServePort)"
+        splashServerPath   = d.splashServerPath
+        splashModelDir     = d.splashModelDir
+        splashPortStr      = "\(d.splashPort)"
         globalExtraArgs = d.globalExtraArgs
         chatTemplatePath = d.chatTemplatePath
         enableMtp       = d.enableMtp
@@ -394,6 +406,9 @@ struct SettingsView: View {
         mlxServeServerPath = s.mlxServeServerPath
         mlxServeModelDir   = s.mlxServeModelDir
         mlxServePortStr    = "\(s.mlxServePort)"
+        splashServerPath   = s.splashServerPath
+        splashModelDir     = s.splashModelDir
+        splashPortStr      = "\(s.splashPort)"
         globalExtraArgs = s.globalExtraArgs
         chatTemplatePath = s.chatTemplatePath
         enableMtp       = s.enableMtp
@@ -605,6 +620,36 @@ struct SettingsView: View {
                 text: $mlxServePortStr
             )
             .help("Shared TCP port for the mlx-serve server (default 11234).")
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "splash-m1",
+                hint: "splash-m1 launcher (paperniuk/splash M1/M2 fork) — one server per model; install with install-m1.sh from the fork's releases",
+                text: $splashServerPath,
+                isDir: false,
+                checkExecutable: true
+            ) { url in
+                splashServerPath = url.path
+                manager.settings.splashServerPath = url.path
+            }
+            Divider().padding(.leading, 14)
+            pathRow(
+                label: "Splash model dir",
+                hint: "Root scanned for Splash packages (default: ~/Library/Application Support/Splash/models — org/model nesting, symlinked into the shared HF cache)",
+                text: $splashModelDir,
+                isDir: true,
+                checkExecutable: false
+            ) { url in
+                splashModelDir = url.path
+                manager.settings.splashModelDir = url.path
+                manager.refreshModels()
+            }
+            Divider().padding(.leading, 14)
+            inlineFieldRow(
+                label: "Splash port",
+                placeholder: "8095",
+                text: $splashPortStr
+            )
+            .help("TCP port for Splash server instances (default 8095). One server per model — set a per-model port to run two Splash models at once.")
             Divider().padding(.leading, 14)
             pathRow(
                 label: "Chat template",
@@ -1282,8 +1327,8 @@ struct SettingsView: View {
                                   "No account, no cloud, no data leaving your machine. You download model files; this app starts and stops them for you.",
                                   mono: false)
                         helpEntry("Step 0 — Install an engine (one-time)",
-                                  "In Terminal: brew install llama.cpp — that covers GGUF models, which is all most people need. For Apple MLX models, also: pip install mlx-lm. For MTPLX models (native MTP spec-decode — fastest Mac speedups), install: pip install mtplx.",
-                                  detail: "Paths are auto-detected; override in Global → Backends. Defaults: /opt/homebrew/bin/llama-server, the newest Python user-install of mlx_lm.server, your active venv's mtplx (LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first), and mlx-serve (~/AI/tools/mlx-serve/current/mlx-serve, then /opt/homebrew/bin/mlx-serve).",
+                                  "In Terminal: brew install llama.cpp — that covers GGUF models, which is all most people need. For Apple MLX models, also: pip install mlx-lm. For MTPLX models (native MTP spec-decode), install: pip install mtplx. For Splash (the M1/M2 Metal engine), run install-m1.sh from the paperniuk/splash releases page — it installs splash-m1 to /opt/homebrew/bin.",
+                                  detail: "Paths are auto-detected; override in Global → Backends. Defaults: /opt/homebrew/bin/llama-server, the newest Python user-install of mlx_lm.server, your active venv's mtplx (LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first), mlx-serve (~/AI/tools/mlx-serve/current/mlx-serve, then /opt/homebrew/bin/mlx-serve), and splash-m1 (/opt/homebrew/bin/splash-m1, then ~/.local/bin/splash-m1).",
                                   mono: false)
                         helpEntry("Step 1 — Download a model",
                                   "Models are free files from Hugging Face (links below). Not sure what fits your Mac? Use the table in section 5 — e.g. with 16 GB of RAM, search \"Qwen3.5 9B GGUF\" and download the file ending in Q4_K_M.gguf.",
@@ -1299,7 +1344,7 @@ struct SettingsView: View {
                                   "Click the model in the menu bar dropdown. A green dot and a port number (like :8080) mean it's running.",
                                   mono: false)
                         helpEntry("Step 4 — Talk to it",
-                                  "Simplest: open the model's address in your browser — GGUF (llama.cpp) and MTPLX models include a built-in chat page (MTPLX also serves /dashboard/ and /docs; mlx-serve serves its own front page at http://127.0.0.1:11234/). See section 8 for the one-file chat page that covers the engines without a UI. Or right-click the running model → Copy endpoint, and paste it into any chat app that accepts an \"OpenAI-compatible\" server (no API key needed — type anything if a key is required).",
+                                  "Simplest: open the model's address in your browser — GGUF (llama.cpp), MTPLX and Splash models include a built-in chat page (MTPLX also serves /dashboard/ and /docs; Splash serves its chat at http://127.0.0.1:8095/; mlx-serve serves its own front page at http://127.0.0.1:11234/). See section 8 for the one-file chat page that covers the engines without a UI. Or right-click the running model → Copy endpoint, and paste it into any chat app that accepts an \"OpenAI-compatible\" server (no API key needed — type anything if a key is required).",
                                   detail: "Endpoint is http://127.0.0.1:PORT/v1 — standard OpenAI chat-completions API, bound to 127.0.0.1, so other machines can't reach it.",
                                   mono: false)
                     }
@@ -1341,8 +1386,8 @@ struct SettingsView: View {
                                   detail: "This history is kept whether or not \"Notify on agent actions\" is on — that toggle only controls the macOS notification, not what the clock icon can show you.",
                                   mono: false)
                         helpEntry("Which engine runs your model?",
-                                  "The engine is decided when the app DISCOVERS the model — the file format plus the folder it lives in. GGUF files → llama-server (or ds4-server when they sit in the DS4 folder). Folders → MLX-shaped, then the tree that owns them wins: mtplx_runtime.json → MTPLX, the mlx-serve store → mlx-serve, the oMLX root → oMLX, otherwise mlx_lm.server. Six engines, one owner per tree — nothing double-lists.",
-                                  detail: "There is no engine picker: to run the same weights on another engine, put a REAL copy in that engine's root (symlinks are ignored) — or hot-load any MLX folder into mlx-serve with POST /v1/load-model. \"Switch\" swaps WHICH model runs, never the engine. Full map — opens in a window right here:",
+                                  "The engine is decided when the app DISCOVERS the model — the file format plus the folder it lives in. GGUF files → llama-server (or ds4-server when they sit in the DS4 folder). Folders → MLX-shaped, then the tree that owns them wins: mtplx_runtime.json → MTPLX, the mlx-serve store → mlx-serve, the oMLX root → oMLX, a Splash package (manifest.json + target/, under the Splash root) → Splash, otherwise mlx_lm.server. Seven engines, one owner per tree — nothing double-lists.",
+                                  detail: "There is no engine picker: to run the same weights on another engine, put a REAL copy in that engine's root (symlinks are ignored — except in the Splash root, where the installer symlinks packages on purpose). Or hot-load any MLX folder into mlx-serve with POST /v1/load-model. \"Switch\" swaps WHICH model runs, never the engine. Full map — opens in a window right here:",
                                   mono: false)
                         Button("Open the engine-selection map") { EngineMapWindow.shared.show() }
                             .buttonStyle(.link)
@@ -1369,7 +1414,7 @@ struct SettingsView: View {
                                       detail: "A model folder under the oMLX root (org/model nesting up to 2 levels) is listed as an oMLX model and excluded from the plain MLX scan, so it is never double-listed. An oMLX server that is already running is adopted instead of spawning a second one.")
                             helpEntry("oMLX model dir · oMLX port", "Root folder scanned for oMLX-served models (default ~/AI/models/omlx) and the shared port for the one oMLX server (default 8000 — clear of llama.cpp 8080, MTPLX 8085, DS4 8090).",
                                       detail: "oMLX is the one SHARED server: stopping any oMLX model stops the server for all of them (the omlx-server worker is killed by port listener, since it survives its parent). Sampling, MTP and vision settings for oMLX models are oMLX's own — they live in ~/.omlx/model_settings.json (mtp_enabled) and LM Switcher passes no sampling flags for oMLX.")
-                            helpEntry("mtplx", "MTPLX binary — the pipeline for models with native MTP spec-decode (e.g. Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed). Leave empty to auto-detect: LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first, then ~/.local/bin/mtplx, then PATH.", 
+                            helpEntry("mtplx", "MTPLX binary — the pipeline for models with native MTP spec-decode. Leave empty to auto-detect: LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first, then ~/.local/bin/mtplx, then PATH.", 
                                       detail: "Recognized automatically when a model directory contains mtplx_runtime.json. One server per model, port/depth/profile configurable here and per-model.")
                             helpEntry("MTPLX port · Depth · Profile", "Port for MTPLX servers (default 8085). Depth = MTP draft depth 1–3 (start at 3). Profile: turbo (fastest), sustained, or exact.",
                                       detail: "Measured on an M2 Max 64 GB with Qwen3.8-27B-MTPLX-Optimized-Speed: ≈12 t/s plain autoregressive vs ≈18 / 19 / 25 t/s at depth 1 / 2 / 3 — depth 3 is ~2×. Run `mtplx tune --model <model folder> --depths 1,2,3` to benchmark the depths for a specific model; it saves the best depth for that model automatically (artifacts under ~/outputs/cli/tune/).")
@@ -1383,6 +1428,12 @@ struct SettingsView: View {
                                       detail: "DS4 models launch at the daily settings measured for 64 GB Macs: 1024-token prefill chunks, MTP speculation with exact sampling, context from Context size above. Memory: ~44.8 GiB planned at 64K context, plus demand-paged PLE pages.")
                             helpEntry("mlx-serve", "mlx-serve (ddalcu) — ONE native server serves every model in its store (~/.mlx-serve/models) on a single port (default 11234). Models load on demand when a request names them; Unload frees ONE model's RAM and the server stays up, ready for agents. Leave the binary empty to auto-detect ~/AI/tools/mlx-serve/current/mlx-serve, then /opt/homebrew/bin/mlx-serve, then PATH.",
                                       detail: "Install: brew install mlx-serve (tap ddalcu/mlx-serve) or stage a release tarball from github.com/ddalcu/mlx-serve/releases. Serves OpenAI, Anthropic AND Ollama wires at http://127.0.0.1:11234 — Claude Code, pi, opencode can point straight at it. A LaunchAgent (com.rolandchia.mlx-serve) keeps it always available. Its store is excluded from the plain MLX scan, so models never double-list.")
+                            helpEntry("splash-m1", "splash-m1 launcher — the paperniuk/splash fork of incoai/splash, a Metal engine for M1/M2 Macs (register-matrix kernels; measured ~2.3× MTPLX on the 27B). ONE server per model. Leave empty to auto-detect /opt/homebrew/bin/splash-m1, then ~/.local/bin/splash-m1, then PATH.",
+                                      detail: "Install: download install-m1.sh from github.com/paperniuk/splash releases (release 1.0.2-m1.1) and run it in Terminal — it verifies a SHA-256, installs per-user under ~/Library/Application Support/Splash-M1, and never touches a brew-installed splash. Needs macOS 26.4+ (Metal 4).")
+                            helpEntry("Splash model dir · Splash port", "Root scanned for Splash packages (default ~/Library/Application Support/Splash/models — org/model nesting up to 2 levels) and the port for Splash servers (default 8095 — clear of llama.cpp 8080, oMLX 8000, MTPLX 8085, DS4 8090, mlx-serve 11234).",
+                                      detail: "A Splash package is the engine's own layout: manifest.json + target/ (layer bins) + draft/ (DFlash2 drafter) + tokenizer/, optionally vision/. Only packages under this root load — --model takes the Hugging Face repo id (owner/repo) and the engine rejects plain GGUF/MLX files entirely. One server per model: set a per-model port to run two packs at once.")
+                            helpEntry("Splash packs to run", "Download the official packages (the installer symlinks them into the Splash root; `hf download incoai/Qwen3.8-27B-Splash` also works). Two packs: incoai/Qwen3.8-27B-Splash (~17 GB dense — strongest 27B on this Mac) and incoai/Qwen3.6-35B-A3B-Splash (~21 GB MoE — the agent-throughput pick, ~203 tok/s on M2 Max).",
+                                      detail: "Measured on an M2 Max 64 GB (2026-09-27, greedy 400-token runs, same harness): the 27B decoded ~2.3× faster than MTPLX turbo depth-3 at equal prefill. MCP note: Splash packages carry no KV geometry, so the agent swap guard sees file-size-only estimates and refuses an MCP load unless \"Allow swap for agent loads\" is ON — app loads are never blocked.")
                             helpEntry("Chat template", "Leave empty — the model's built-in template is right for normal chat. Set a custom .jinja file only if a coding agent misbehaves with tool calls. MTPLX models always use their own tokenizer template — the chat template field does not apply to them.",
                                       detail: "Passed as --chat-template-file. Needed mainly for Gemma 4 agentic use — see section 6.")
                         }
@@ -1562,7 +1613,7 @@ struct SettingsView: View {
 
                     helpSection(number: "8", title: "Browser access (chat in a web page)", id: "s8", proxy: proxy) {
                         helpEntry("Every engine serves a web API — and most serve a web page too.",
-                                  "Load a model, then open its address in any browser. llama.cpp (GGUF) answers at http://127.0.0.1:<its port>/ with a built-in chat. MTPLX serves its own chat at http://127.0.0.1:8085/ plus /dashboard/ for live stats and /docs for the API. mlx-serve has a front page with a chat box at http://127.0.0.1:11234/. oMLX, DS4 and plain MLX (mlx_lm.server) have no page of their own — use the chat page below.",
+                                  "Load a model, then open its address in any browser. llama.cpp (GGUF) answers at http://127.0.0.1:<its port>/ with a built-in chat. MTPLX serves its own chat at http://127.0.0.1:8085/ plus /dashboard/ for live stats and /docs for the API. Splash serves its own chat UI at http://127.0.0.1:8095/ while a pack is loaded. mlx-serve has a front page with a chat box at http://127.0.0.1:11234/. oMLX, DS4 and plain MLX (mlx_lm.server) have no page of their own — use the chat page below.",
                                   mono: false)
                         helpEntry("LM Switcher ships one chat page for every engine.",
                                   "A single HTML file: no install, no server, no account. Open it, pick the engine (or just type a port), and it lists whatever that server has loaded — including each engine's own model ids. It also accepts ?port=<n> and ?q=<prompt> (prefills and sends), so you can bookmark \"ask this model this question\".",
@@ -1573,7 +1624,7 @@ struct SettingsView: View {
                             .font(.caption)
                             .padding(.bottom, 8)
                         helpEntry("One catch: cross-origin (CORS).",
-                                  "A page opened from a file may only call servers that allow cross-origin requests. llama.cpp, mlx-serve, oMLX and DS4 do; MTPLX deliberately refuses (403) — for MTPLX, use its own page at http://127.0.0.1:8085/. The chat page detects which case you hit and says so instead of failing silently.",
+                                  "A page opened from a file may only call servers that allow cross-origin requests. llama.cpp, mlx-serve, oMLX and DS4 do; MTPLX and Splash deliberately refuse (403) — use their own pages (MTPLX http://127.0.0.1:8085/, Splash http://127.0.0.1:8095/). The chat page detects which case you hit and says so instead of failing silently.",
                                   mono: false)
                         helpEntry("Ports at a glance.",
                                   "llama.cpp & MLX count up from the Default port (8080, 8081, …) · oMLX 8000 · MTPLX 8085 · DS4 8090 · mlx-serve 11234. The engine map (section 2) shows which engine owns which tree.",
@@ -1828,7 +1879,7 @@ struct SettingsView: View {
                     }
                     Text("LM Switcher")
                         .font(.title2).fontWeight(.medium)
-                    Text("Version 0.9.8b (beta)")
+                    Text("Version 0.9.9b (beta)")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.top, 24)
@@ -1836,7 +1887,7 @@ struct SettingsView: View {
 
                 // Description
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages six engines on your behalf — llama-server (GGUF), mlx_lm.server (Apple MLX), oMLX, MTPLX, ds4-server (DwarfStar) and mlx-serve. Models start on demand, serve on a local port, and stop cleanly when you unload them.")
+                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages seven engines on your behalf — llama-server (GGUF), mlx_lm.server (Apple MLX), oMLX, MTPLX, ds4-server (DwarfStar), mlx-serve and Splash (the M1/M2 fork of incoai/splash). Models start on demand, serve on a local port, and stop cleanly when you unload them.")
                         .font(.body).foregroundStyle(.secondary)
                     Text("Discovered models appear in the menu bar dropdown. Click one to load it, right-click for single-model actions, or use the bulk controls to load and unload multiple models at once. All settings — context size, KV cache, sampling, per-model overrides — are persisted and shared with the companion llama CLI, so the terminal and the app always stay in sync.")
                         .font(.body).foregroundStyle(.secondary)

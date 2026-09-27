@@ -131,6 +131,28 @@ enum FootprintEstimator {
         if model.backend == "GGUF" || model.backend == "DS4" {
             return ((try? fm.attributesOfItem(atPath: model.path))?[.size] as? UInt64) ?? 0
         }
+        if model.backend == "Splash" {
+            // Splash package (engine-format weights): the resident model is
+            // the target/ layer bins plus the DFlash2 draft/ drafter. Bins
+            // are symlinks into the HF blobs store (dirs too) — resolve
+            // before stat so the REAL size counts. The package carries no
+            // KV geometry (execution params only), so estimates remain
+            // file_size_only and the MCP swap guard keeps failing closed;
+            // the weight number itself is exact.
+            var total: UInt64 = 0
+            for sub in ["target", "draft"] {
+                let dir = model.path + "/" + sub
+                guard let bins = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+                for b in bins where b.hasSuffix(".bin") {
+                    let full = URL(fileURLWithPath: dir + "/" + b).resolvingSymlinksInPath().path
+                    if let a = try? fm.attributesOfItem(atPath: full),
+                       (a[.type] as? FileAttributeType) == .typeRegular {
+                        total += (a[.size] as? UInt64) ?? 0
+                    }
+                }
+            }
+            return total
+        }
         guard let files = try? fm.contentsOfDirectory(atPath: model.path) else { return 0 }
         // MLX: Σ safetensors sizes (MoE file size ≈ fully mapped — conservative).
         let rootSum = files.filter { $0.hasSuffix(".safetensors") }.reduce(0 as UInt64) { sum, f in

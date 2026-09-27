@@ -615,6 +615,15 @@ class ServerManager {
            FileManager.default.fileExists(atPath: mlxServeDir.path) {
             mlxServeEntries(at: mlxServeDir, depth: 0, into: &entries)
         }
+        // Splash (paperniuk/splash M1/M2 fork) packages live under the
+        // engine's own install root (~/Library/Application Support/Splash/
+        // models, org/model nesting) — OUTSIDE modelsDir entirely, so no
+        // generic-scan exclusion is needed anywhere. ONE server per model.
+        let splashDir = URL(fileURLWithPath: resolvedSplashModelDir())
+        if splashDir.path != dir.path,
+           FileManager.default.fileExists(atPath: splashDir.path) {
+            splashEntries(at: splashDir, depth: 0, into: &entries)
+        }
         // MTPLX models are now discovered inline in scanDirectory()
         // Dedupe by id and sort alphabetically by name.
         var seen = Set<String>()
@@ -1017,6 +1026,75 @@ class ServerManager {
                 ))
             } else {
                 mlxServeEntries(at: url, depth: depth + 1, into: &entries)
+            }
+        }
+    }
+
+    // MARK: - Splash backend (paperniuk/splash M1/M2 fork)
+
+    /// Resolved Splash model root (settings override, else the engine's
+    /// own install root: ~/Library/Application Support/Splash/models).
+    func resolvedSplashModelDir() -> String {
+        if !settings.splashModelDir.isEmpty { return settings.splashModelDir }
+        return NSHomeDirectory() + "/Library/Application Support/Splash/models"
+    }
+
+    /// Resolved `splash-m1` launcher (settings override, else the
+    /// installer's Homebrew shim, else PATH).
+    func resolvedSplashPath() -> String {
+        if !settings.splashServerPath.isEmpty { return settings.splashServerPath }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let candidates = [
+            "/opt/homebrew/bin/splash-m1",
+            home.appendingPathComponent(".local/bin/splash-m1").path,
+        ]
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
+            return c
+        }
+        return "splash-m1"   // last resort: PATH lookup
+    }
+
+    /// `owner/repo` id the Splash launcher expects for a model dir — its
+    /// `--model` flag takes a full Hugging Face repo id and REJECTS local
+    /// paths. The dir layout under the Splash root IS `<org>/<repo>`.
+    private func splashModelRepoId(for model: ModelEntry) -> String {
+        let root = resolvedSplashModelDir()
+        if model.path.path.hasPrefix(root + "/") {
+            return String(model.path.path.dropFirst(root.count + 1))
+        }
+        return model.path.lastPathComponent
+    }
+
+    /// Walk the Splash root (org/model nesting, max depth 2) and collect
+    /// package directories. A Splash package is the engine's own layout:
+    /// `manifest.json` + `target/` (layer bins), `draft/` (DFlash2 spec-
+    /// decode drafter), `tokenizer/`, optionally `vision/`. NOTE: the
+    /// installed `<org>/<repo>` entries are SYMLINKS into the shared HF
+    /// cache — they must NOT be skipped (the engine's argv carries this
+    /// exact symlink path, so the id must too). Deeper symlinks are not
+    /// followed unless they are packages.
+    private func splashEntries(at dir: URL, depth: Int, into entries: inout [ModelEntry]) {
+        guard depth < 2 else { return }
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for url in contents {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            let isLink = (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+            let names = ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).map { $0.lowercased() }
+            if names.contains("manifest.json"), names.contains("target") {
+                entries.append(ModelEntry(
+                    id: url.path,
+                    name: url.lastPathComponent,
+                    path: url,
+                    backend: .splash
+                ))
+            } else if !isLink {
+                splashEntries(at: url, depth: depth + 1, into: &entries)
             }
         }
     }
@@ -1487,13 +1565,26 @@ class ServerManager {
             statePort = msPort
             args += ["--port", "\(statePort)"]
             beginMlxServeLoad(model, port: msPort, waitForHealth: true)
+        case .splash:
+            // Splash (paperniuk/splash M1/M2 fork): one server per model
+            // (like MTPLX). `--model` must be the FULL Hugging Face repo
+            // id (owner/repo) — the launcher rejects local paths and
+            // serves the package from its own install root. It verifies
+            // the package against manifest.json at startup (warm launch
+            // ~20 s; first launch ~40 s). Binds 127.0.0.1 by default.
+            executable = resolvedSplashPath()
+            args += ["serve", "--model", splashModelRepoId(for: model)]
+            let splashPreferredPort = perModelPort(for: model)
+            let resolvedSplashPort = splashPreferredPort != 0 ? splashPreferredPort : settings.splashPort
+            args += ["--port", "\(resolvedSplashPort)"]
+            statePort = resolvedSplashPort
         }
 
         // Bind to localhost (security + convenience) and the chosen port.
-        // oMLX, MTPLX and DS4 build their own bind flags (fixed port,
-        // localhost default).
+        // oMLX, MTPLX, DS4 and Splash build their own bind flags (fixed
+        // port, localhost default).
         if model.backend != .omlx && model.backend != .mtplx && model.backend != .ds4
-            && model.backend != .mlxserve {
+            && model.backend != .mlxserve && model.backend != .splash {
             args += ["--host", "127.0.0.1", "--port", "\(port)"]
         }
 
@@ -1540,6 +1631,7 @@ class ServerManager {
             case .mtplx: installHint = "pip install mtplx — install in ~/AI/envs/omlx-env with: source ~/AI/envs/omlx-env/bin/activate && pip install mtplx"
             case .ds4: installHint = "build the DwarfStar engine: git clone -b qwen3.8-flash-next https://github.com/ivanfioravanti/ds4-metal && make -j8 (ds4-server lands at the repo root)"
             case .mlxserve: installHint = "brew install mlx-serve (tap: ddalcu/mlx-serve) — or stage a release tarball from github.com/ddalcu/mlx-serve/releases"
+            case .splash: installHint = "install the M1/M2 fork: download install-m1.sh from github.com/paperniuk/splash releases (release 1.0.2-m1.1) and run it — installs splash-m1 to /opt/homebrew/bin"
             }
             var s = modelStates[model.id] ?? ModelState()
             s.isRunning = false
@@ -2540,6 +2632,7 @@ class ServerManager {
                 || s.contains("omlx serve") || s.contains("omlx-server")
                 || s.contains("mtplx.server") || s.contains("mtplx serve")
                 || s.contains("ds4-server")
+                || (s.contains("Splash-M1/") && s.contains("server.py"))
                 || s.range(of: #"^\s*\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
 
             // oMLX: one server serves every model under the oMLX root.
@@ -2584,6 +2677,35 @@ class ServerManager {
                     if let loaded = loaded, !loaded.contains(mlxServeModelId(for: m)) { continue }
                     externalStates[m.id] = (pid: pid, port: port, ctx: 0)
                 }
+                continue
+            }
+
+            // Splash (paperniuk/splash M1/M2 fork): the launcher execs as
+            // `python3 -u …/Splash-M1/<ver>/server/server.py <model>/target
+            // <model>/draft … --model org/repo --port N`. The child engine
+            // (`…/engine/splash serve-native …`) carries no `server.py`, so
+            // only the real server line matches — one pid per server. The
+            // model DIRECTORY is the positional arg `<…>/Splash/models/
+            // <org>/<repo>` and maps 1:1 onto a discovered entry; paths
+            // contain spaces ("Application Support"), so the regex crosses
+            // them up to the `/target` boundary.
+            if s.contains("Splash-M1/") && s.contains("server.py") {
+                let trimmed = s.drop(while: { $0 == " " })
+                let pidStr = trimmed.prefix(while: { $0.isNumber })
+                guard let pid = Int32(pidStr), pid > 0 else { continue }
+                var port = settings.splashPort > 0 ? settings.splashPort : 8095
+                if let pm = s.range(of: #"--port (\d+)"#, options: .regularExpression) {
+                    port = Int(String(s[pm].split(separator: " ").last ?? "")) ?? port
+                }
+                var splashDir: String?
+                if let re = try? NSRegularExpression(pattern: #"(/.+?Splash/models/[^ ]+?)/target"#),
+                   let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+                   m.numberOfRanges >= 2, let r = Range(m.range(at: 1), in: s) {
+                    splashDir = String(s[r])
+                }
+                guard let modelDir = splashDir,
+                      models.contains(where: { $0.id == modelDir }) else { continue }
+                externalStates[modelDir] = (pid: pid, port: port, ctx: 0)
                 continue
             }
 

@@ -5,6 +5,24 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.9b] - 2026-09-27
+
+**Splash backend — the paperniuk/splash M1/M2 fork (seventh engine), plus the retired Youssofal MTPLX pack.**
+
+### Added
+- **Splash backend** (paperniuk/splash, the Apple7/8 fork of incoai/splash): discovery in all three surfaces (app in `ServerManager`, CLI `list_all_models`, MCP `StateReader`), load/unload with adoption of externally-launched servers, and settings — splash-m1 path, Splash model dir (default `~/Library/Application Support/Splash/models`), Splash port (default 8095). One server per model; per-model port overrides win.
+- Splash packages `incoai/Qwen3.8-27B-Splash` (17 GB dense) and `incoai/Qwen3.6-35B-A3B-Splash` (21 GB MoE) are discovered as `[Splash]` once the installer symlinks them into the Splash root.
+- Backends card + Help entries (install via `install-m1.sh`, package layout, port map), MCP `list_models` reports `vision` for Splash packs, and the MCP footprint estimator sums exact weights from `target/` + `draft/`.
+
+### Fixed
+- Splash packages are installed as **symlinks** into the shared HF cache — the Splash scans accept them on purpose (CLI globs `*/`, Swift `fileExists` follows the link), unlike every other scanner, which skips symlinks. `find -type d` was verified to miss them.
+
+### Notes
+- The engine's `--model` takes the full Hugging Face repo id (`owner/repo`) and REJECTS local paths; the CLI/app derive it from the package path under the Splash root.
+- Measured on an M2 Max 64 GB (2026-09-27, greedy 400-token runs, same harness): Splash 27B ≈ 2.3× MTPLX turbo depth-3 decode (69.8 vs 30.2 tok/s client-side) at equal prefill (116 vs 115 tok/s); 35B-A3B ≈ 203 tok/s.
+- MCP note: Splash packs carry no KV geometry, so agent loads are refused unless "Allow swap for agent loads" is ON (file-size-only estimate; the weight number itself is exact).
+- The Youssofal Qwen3.8-27B-MTPLX-Optimized-Speed pack was deleted (+40 GB reclaimed with its session bank) — superseded by the Splash 27B on M1/M2 Macs.
+
 ## [0.9.8b] - 2026-09-17
 
 **Backend resolution fixes found while engine-testing MLX models, a size-aware load grace, and honest vision reporting.**

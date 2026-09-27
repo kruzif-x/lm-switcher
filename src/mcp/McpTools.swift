@@ -123,6 +123,12 @@ enum McpTools {
                     }
                 }
                 entry["vision"] = vision
+            } else if m.backend == "Splash" {
+                // Splash packages carry an optional `vision/` component — the
+                // incoai Qwen3.8/3.6 packs ship one (vision tower binaries
+                // alongside target/).
+                let names = ((try? fm.contentsOfDirectory(atPath: m.path)) ?? []).map { $0.lowercased() }
+                entry["vision"] = names.contains("vision")
             }
             return entry
         }
@@ -132,9 +138,10 @@ enum McpTools {
     private static func getSettings() -> [String: Any] {
         var global: [String: Any] = [:]
         let stringKeys = ["modelsDir", "llamaServerPath", "mlxServerPath", "chatTemplatePath",
-                          "globalExtraArgs", "kvCacheTypeK", "kvCacheTypeV"]
+                          "globalExtraArgs", "kvCacheTypeK", "kvCacheTypeV",
+                          "splashServerPath", "splashModelDir"]
         let intKeys = ["defaultPort", "defaultCtxSize", "topK", "seed", "cpuThreads", "batchSize",
-                       "mlxMaxKvSize", "ttlMinutes"]
+                       "mlxMaxKvSize", "ttlMinutes", "splashPort"]
         // Per-key defaults — matching AppSettings' Swift-side defaults
         // (DomainTypes.swift). A blanket `false` here previously made
         // every true-by-default toggle (MTP, flash attention, thinking,
@@ -286,6 +293,14 @@ enum McpTools {
             } else {
                 let venv = home + "/AI/envs/omlx-env/bin/mtplx"
                 path = FileManager.default.isExecutableFile(atPath: venv) ? venv : home + "/.local/bin/mtplx"
+            }
+        } else if m.backend == "Splash" {
+            let p = Prefs.string("splashServerPath")
+            if !p.isEmpty {
+                path = p
+            } else {
+                let hb = "/opt/homebrew/bin/splash-m1"
+                path = FileManager.default.isExecutableFile(atPath: hb) ? hb : home + "/.local/bin/splash-m1"
             }
         } else {
             let p = Prefs.string("mlxServerPath")
