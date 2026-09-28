@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Splash packages are installed as **symlinks** into the shared HF cache — the Splash scans accept them on purpose (CLI globs `*/`, Swift `fileExists` follows the link), unlike every other scanner, which skips symlinks. `find -type d` was verified to miss them.
+- **Menu panel surface is opaque again.** The MenuBarExtra panel shipped with no explicit background, so on macOS 26/27 it inherited the system's translucent glass material and every label was washed out (reported as "the UI looks greyed out but it is working"). The panel root now paints the window background colour.
+- **MTPLX packs under the oMLX root listed twice.** A pack carrying `mtplx_runtime.json` inside the oMLX root was claimed by both scans — `[mtplx]` by the generic scan and `[oMLX]` by the oMLX scan; the CLI and MCP double-listed it and the app's row showed the wrong backend. All three discovery surfaces now skip the oMLX root and the mlx-serve store before the MTPLX claim.
 
 ### Notes
 - The engine's `--model` takes the full Hugging Face repo id (`owner/repo`) and REJECTS local paths; the CLI/app derive it from the package path under the Splash root.
