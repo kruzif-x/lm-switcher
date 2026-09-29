@@ -15,7 +15,13 @@ enum Launcher {
     /// (blocking on a model download, a stuck mmap, a wedged pipe) must not
     /// freeze the MCP stdio loop — that makes the agent think the server is
     /// dead and may get it killed. We terminate the child if it exceeds this.
-    static let cliTimeout: TimeInterval = 60
+    /// 300 s (raised from 60 on 2026-09-29): a shared-server load (mlx-serve,
+    /// sushi) blocks the CLI until the model is RESIDENT — 40-55 s for a
+    /// 49 GB sushi pack, tens of seconds for a 27B mlx-serve model, and a
+    /// cold 42 GiB ds4 model can take ~180 s to bind its port. The old cap
+    /// killed those children mid-load (the server-side load could still
+    /// land, so agents saw a failure for a load that actually succeeded).
+    static let cliTimeout: TimeInterval = 300
 
     static func runCli(_ args: [String]) -> CliResult {
         let p = Process()

@@ -1,6 +1,6 @@
 # LM Switcher (MacOS Apple Silicon Only)
 
-A macOS menu bar app + CLI + MCP for managing local LLM models (GGUF and Apple MLX/oMLX/MTPLX/DS4/Mlx-Serve/Splash).
+A macOS menu bar app + CLI + MCP for managing local LLM models (GGUF and Apple MLX/oMLX/MTPLX/DS4/Mlx-Serve/Splash/sushi).
 
 Made this initially for my wife, so that it would be easy for her to switch models instead of typing on the CLI, 
 then I expanded it with more features for my lazy self. I use Deepseek-v4-flash and GLM 5.2 to assist me to code this
@@ -8,13 +8,13 @@ app. Added the MCP so that my Hermes Agent could load and unload models as and w
 
 ![LM Switcher icon](assets/AppIcon.png)
 
-> **Beta — v0.9.9b.** This is an early release of LM Switcher. The core model management
-> paths (discover / load / unload — GGUF, MLX, oMLX, MTPLX, DS4, mlx-serve and Splash backends)
+> **Beta — v0.9.10b.** This is an early release of LM Switcher. The core model management
+> paths (discover / load / unload — GGUF, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash and sushi backends)
 > are stable, but expect rough edges; see the changelog for what landed so far.
 
 ## Which engine runs your model?
 
-![LM Switcher engine-selection map — GGUF goes to llama-server (or ds4-server inside the DS4 folder); MLX folders go to MTPLX, mlx-serve, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; Splash packages (manifest.json + target/) under the Splash root go to splash-m1](docs/engine-map.svg)
+![LM Switcher engine-selection map — GGUF goes to llama-server (or ds4-server inside the DS4 folder); MLX folders go to MTPLX, mlx-serve, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; folders under the sushi store (~/.sushi/models) go to the sushi engine (the mlx-serve fork); Splash packages (manifest.json + target/) under the Splash root go to splash-m1](docs/engine-map.svg)
 
 The engine is chosen when a model is **discovered** — file format *plus the folder it lives in*. There is no
 engine picker: move a model into another engine's root (or hot-load it) to change engines, and one tree has one
@@ -26,7 +26,7 @@ model?**); source: [`docs/engine-map.html`](docs/engine-map.html) — the SVG ab
 
 LM Switcher is a native macOS app that lives in your menu bar (next to the clock). It lets you:
 
-- 🔍 **Discover** GGUF and MLX/oMLX/MTPLX/DS4/Splash models in a directory of your choice (recursive scan)
+- 🔍 **Discover** GGUF and MLX/oMLX/MTPLX/DS4/Splash/sushi models in a directory of your choice (recursive scan)
 - ▶️ **Load** any model with one click (spawns the right backend: `llama-server` or `mlx_lm.server`)
 - ⏹ **Unload** any model independently — no more "kill the wrong process" surprises
 - 🔄 **Run multiple models simultaneously**, each on its own port (e.g. one chat model on :8080, an embedder on :8081)
@@ -43,8 +43,8 @@ A companion shell command `llama` provides the same functionality from your term
 
 ## Chat with your models in a browser
 
-Every engine serves an OpenAI-compatible API on loopback (`127.0.0.1`). Four engines ship their own web UI (llama.cpp,
-MTPLX, Splash, mlx-serve); for the rest — and as one minimal client for all of them — the repo carries a single-file chat page:
+Every engine serves an OpenAI-compatible API on loopback (`127.0.0.1`). Five engines ship their own web UI (llama.cpp,
+MTPLX, Splash, mlx-serve, sushi); for the rest — and as one minimal client for all of them — the repo carries a single-file chat page:
 [`docs/chat.html`](docs/chat.html) (installed to `~/AI/tools/lm-switcher-chat.html`). Open it, pick the engine
 port, and it lists whatever that server has loaded (it auto-detects the model id from `/v1/models`).
 
@@ -62,6 +62,7 @@ that opens the page in your default browser, plus the CORS caveat explained belo
 | MTPLX | `http://127.0.0.1:8085/` — chat; `/dashboard/` live stats; `/docs` API | ❌ rejects cross-origin (403) → **use its own UI** |
 | Splash | `http://127.0.0.1:8095/` — built-in chat UI | ❌ rejects cross-origin (403) → **use its own UI** |
 | mlx-serve | `http://127.0.0.1:11234/` — landing page with a chat box | ✅ (`Access-Control-Allow-Origin: *`) |
+| sushi | `http://127.0.0.1:12345/` — built-in chat page | ✅ (`Access-Control-Allow-Origin: *`) |
 | oMLX | — (no landing page) | ✅ (`*`) |
 | DS4 (DwarfStar) | — | ✅ (launchers pass `--cors`) |
 | MLX (`mlx_lm.server`) | — | not tested |
@@ -473,7 +474,7 @@ Because that's the lightest-weight way to keep a tool always available on macOS 
 
 ## Version
 
-Current: **v0.9.9b** — beta. Splash backend (paperniuk/splash M1/M2 fork), menu bar + Per-Model redesign, MCP agent access, idle auto-unload, seven engines (llama.cpp, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash), and an in-app engine-selection map. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
+Current: **v0.9.10b** — beta. sushi backend (beamivalice/sushi, the mlx-serve fork with EXL3/affine packs — one shared server, models load on demand), Splash backend (paperniuk/splash M1/M2 fork), menu bar + Per-Model redesign, MCP agent access, idle auto-unload, eight engines (llama.cpp, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash, sushi), and an in-app engine-selection map. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
 
 See `CHANGELOG.md` for full version history.
 

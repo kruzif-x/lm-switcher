@@ -165,6 +165,25 @@ SPLASH_PORT="${SPLASH_PORT:-8095}"
 SPLASH_MODEL_DIR="${SPLASH_MODEL_DIR:-$(defaults read local.llama-menubar splashModelDir 2>/dev/null)}"
 SPLASH_MODEL_DIR="${SPLASH_MODEL_DIR:-$HOME/Library/Application Support/Splash/models}"
 
+# sushi (beamivalice/sushi) — ONE shared server serves every model in
+# its store on a single SUSHI_PORT (default 12345). Models load on demand
+# by name; `unload` frees a single model via POST /v1/unload-model and
+# the server stays up. Spawn flags (verified on Sirius 64 GB, 2026-09-29):
+# --ctx-size 131072 (context-billed load) + --max-resident-mem 0 (disable
+# the free-RAM-derived registry cap). Binary precedence: env var, saved
+# setting, Homebrew, ~/.local/bin, PATH.
+SUSHI_SERVER="${SUSHI_SERVER:-$(defaults read local.llama-menubar sushiServerPath 2>/dev/null)}"
+if [[ -z "$SUSHI_SERVER" ]]; then
+    for _c in /opt/homebrew/bin/sushi "$HOME/.local/bin/sushi"; do
+        [[ -x "$_c" ]] && SUSHI_SERVER="$_c" && break
+    done
+fi
+SUSHI_SERVER="${SUSHI_SERVER:-sushi}"
+SUSHI_PORT="${SUSHI_PORT:-$(defaults read local.llama-menubar sushiPort 2>/dev/null)}"
+SUSHI_PORT="${SUSHI_PORT:-12345}"
+SUSHI_MODEL_DIR="${SUSHI_MODEL_DIR:-$(defaults read local.llama-menubar sushiModelDir 2>/dev/null)}"
+SUSHI_MODEL_DIR="${SUSHI_MODEL_DIR:-$HOME/.sushi/models}"
+
 # B1 fix: restrictive umask. PID files and server logs (which capture
 # stdout/stderr — model paths, sometimes verbose content) must be
 # owner-only. The default umask (022) leaves them world-readable (644),
@@ -302,7 +321,7 @@ list_all_models() {
     # tree is owned by the omlx scan below — skip it here so models don't
     # double-list.
     while IFS= read -r d; do
-        case "$d" in "$OMLX_MODEL_DIR"/*|"$MLX_SERVE_MODEL_DIR"/*) continue ;; esac
+        case "$d" in "$OMLX_MODEL_DIR"/*|"$MLX_SERVE_MODEL_DIR"/*|"$SUSHI_MODEL_DIR"/*) continue ;; esac
         if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
             # Skip MTPLX models (have mtplx_runtime.json)
             [[ -f "$d/mtplx_runtime.json" ]] && continue
@@ -330,7 +349,7 @@ list_all_models() {
     # inside the oMLX root belongs to the omlx scan's row — without the skip
     # the same path is listed twice (omlx + mtplx).
     while IFS= read -r d; do
-        case "$d" in "$OMLX_MODEL_DIR"/*|"$MLX_SERVE_MODEL_DIR"/*) continue ;; esac
+        case "$d" in "$OMLX_MODEL_DIR"/*|"$MLX_SERVE_MODEL_DIR"/*|"$SUSHI_MODEL_DIR"/*) continue ;; esac
         if [[ -f "$d/mtplx_runtime.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
             echo "mtplx|$d|$(basename "$d")"
         fi
@@ -361,6 +380,17 @@ list_all_models() {
                 echo "mlxserve|$d|$(basename "$d")"
             fi
         done < <(find "$MLX_SERVE_MODEL_DIR" -maxdepth 2 -type d 2>/dev/null)
+    fi
+
+    # sushi (beamivalice/sushi): one shared server serves every model
+    # under its store root (folder nesting, depth <= 2). Same exclusion
+    # note as oMLX: the MLX scan above skips this tree.
+    if [[ -d "$SUSHI_MODEL_DIR" ]]; then
+        while IFS= read -r d; do
+            if [[ -f "$d/config.json" ]] && ls "$d"/*.safetensors >/dev/null 2>&1; then
+                echo "sushi|$d|$(basename "$d")"
+            fi
+        done < <(find "$SUSHI_MODEL_DIR" -maxdepth 2 -type d 2>/dev/null)
     fi
 
     # Splash (paperniuk/splash M1/M2 fork): packages under the engine's own
@@ -636,6 +666,30 @@ load_model() {
         return 1
     fi
 
+    # sushi: same shape as mlx-serve — a healthy shared server only means
+    # "available on demand"; load THIS model explicitly (the call answers
+    # once the model is resident; ~40-55 s for a 49 GB pack). Ids are
+    # store-relative, folder-name fallback.
+    if [[ "$type" == "sushi" ]] && nc -z 127.0.0.1 "$SUSHI_PORT" 2>/dev/null; then
+        local sh_rel="${path#$SUSHI_MODEL_DIR/}"
+        local sh_ok=0
+        if curl -sf -m 600 -X POST "http://127.0.0.1:$SUSHI_PORT/v1/load-model" \
+             -H 'Content-Type: application/json' \
+             -d "{\"model\":\"$sh_rel\"}" >/dev/null 2>&1; then
+            sh_ok=1
+        elif curl -sf -m 600 -X POST "http://127.0.0.1:$SUSHI_PORT/v1/load-model" \
+             -H 'Content-Type: application/json' \
+             -d "{\"model\":\"$(basename "$path")\"}" >/dev/null 2>&1; then
+            sh_ok=1
+        fi
+        if (( sh_ok )); then
+            echo "✓ [$type] $name loaded on port $SUSHI_PORT (shared sushi server; model resident)"
+            return 0
+        fi
+        echo "✗ [$type] $name: sushi server on :$SUSHI_PORT refused the load (see ~/.sushi/logs/serve.log; the free-memory preflight names the figures)" >&2
+        return 1
+    fi
+
     # If the same model is already running on some port, no-op.
     if is_loaded "$id_hash" "$path"; then
         echo "● [$type] $name already loaded on port $(get_port_for "$id_hash" "$path")"
@@ -652,6 +706,8 @@ load_model() {
         port=$OMLX_PORT
     elif [[ "$type" == "mlxserve" ]]; then
         port=$MLX_SERVE_PORT
+    elif [[ "$type" == "sushi" ]]; then
+        port=$SUSHI_PORT
     elif [[ "$type" == "mtplx" ]]; then
         port=$(per_model_port "$id_hash")
         [[ "$port" -le 0 ]] && port=$MTPLX_PORT
@@ -869,6 +925,17 @@ load_model() {
         # fixed MLX_SERVE_PORT. No sampling args — models load on demand.
         executable="$MLX_SERVE_SERVER"
         args=("serve" "--host" "127.0.0.1" "--port" "$port" "--model-dir" "$MLX_SERVE_MODEL_DIR")
+    elif [[ "$type" == "sushi" ]]; then
+        # sushi: ONE shared server for every model in its store on the
+        # fixed SUSHI_PORT. The explicit --ctx-size switches the load to
+        # the context-billed requirement (the flat auto-context bill
+        # refuses on a 64 GB box) and --max-resident-mem 0 disables the
+        # free-RAM-derived registry cap. Logs go to ~/.sushi/logs.
+        executable="$SUSHI_SERVER"
+        mkdir -p "$HOME/.sushi/logs"
+        args=("serve" "--host" "127.0.0.1" "--port" "$port" "--model-dir" "$SUSHI_MODEL_DIR" \
+              "--ctx-size" "131072" "--max-resident-mem" "0" \
+              "--log-file" "$HOME/.sushi/logs/serve.log")
     elif [[ "$type" == "mtplx" ]]; then
         # MTPLX: one server per model with native MTP spec-decode.
         # Binds 127.0.0.1 by default (no --host needed).
@@ -942,11 +1009,18 @@ load_model() {
     # per-model log file so the user can `tail -f` it.
     nohup "$executable" "${args[@]}" > "$lf" 2>&1 &
 
-    # Capture the new PID and write the PID file.
+    # Capture the new PID and write the PID file — EXCEPT for sushi: its
+    # server is SHARED (one process serves the whole store), so a pidfile
+    # keyed to one model would make every surface treat that model as
+    # running even after the model itself is unloaded. Residency, not
+    # process liveness, is the truth — same rule as mlx-serve (which also
+    # writes no pidfile).
     local newpid; newpid=$!
-    echo "$newpid" > "$pf"
-    # Second line is the port — for fast get_port_for() without ps.
-    echo "$newpid --port $port" >> "$pf"
+    if [[ "$type" != "sushi" ]]; then
+        echo "$newpid" > "$pf"
+        # Second line is the port — for fast get_port_for() without ps.
+        echo "$newpid --port $port" >> "$pf"
+    fi
 
     # M-11 fix: replace the fixed 1s `kill -0` heuristic with a readiness
     # poll. A large GGUF can take several seconds to mmap; a fast-failing
@@ -1003,6 +1077,23 @@ load_model() {
 
     if (( _ready == 1 )); then
         echo "● [$type] $name loaded on :$port (PID $newpid)"
+        # sushi: a freshly spawned shared server is only "available" —
+        # make THIS model resident so the load actually happened (the
+        # server answers /v1/load-model only once resident). Mirrors the
+        # app's load flow.
+        if [[ "$type" == "sushi" ]]; then
+            local _sh_rel="${path#$SUSHI_MODEL_DIR/}"
+            if curl -sf -m 600 -X POST "http://127.0.0.1:$SUSHI_PORT/v1/load-model" \
+                 -H 'Content-Type: application/json' \
+                 -d "{\"model\":\"$_sh_rel\"}" >/dev/null 2>&1 \
+               || curl -sf -m 600 -X POST "http://127.0.0.1:$SUSHI_PORT/v1/load-model" \
+                 -H 'Content-Type: application/json' \
+                 -d "{\"model\":\"$(basename "$path")\"}" >/dev/null 2>&1; then
+                echo "  ✓ model resident (sushi)"
+            else
+                echo "  ✗ sushi refused to load the model (see ~/.sushi/logs/serve.log)" >&2
+            fi
+        fi
     else
         echo "✗ Failed to start $name (not listening on :$port)"
         kill -TERM "$newpid" 2>/dev/null
@@ -1019,7 +1110,7 @@ _is_engine_cmd() {
     local cmd="$1"
     [[ "$cmd" == *llama-server* || "$cmd" == *mlx_lm.server* || "$cmd" == *omlx* \
        || "$cmd" == *mtplx* || "$cmd" == *ds4-server* || "$cmd" == *mlx-serve* \
-       || "$cmd" == *Splash-M1* ]]
+       || "$cmd" == *Splash-M1* || "$cmd" == *sushi* ]]
 }
 
 # Stop a single model. Takes the PID file path and a display name (the
@@ -1134,6 +1225,11 @@ cmd_status() {
                 # model (<hash>.<basename>.pid).
                 mname="${id_hash_full#*.}"
                 [[ -z "$mname" || "$mname" == "$id_hash_full" ]] && mname="$id_hash"
+            elif [[ "$argline" == *"sushi serve"* ]]; then
+                # sushi: shared server, no -m/--model either — the pidfile
+                # stem names the model that spawned it.
+                mname="${id_hash_full#*.}"
+                [[ -z "$mname" || "$mname" == "$id_hash_full" ]] && mname="$id_hash"
             elif [[ "$argline" == *"mtplx.server"* || "$argline" == *"mtplx serve"* ]]; then
                 # MTPLX runs as `python -m mtplx.server.openai --model <dir> …`.
                 # The generic ` -m ` branch below would match PYTHON's own -m
@@ -1183,6 +1279,25 @@ cmd_status() {
                 echo "● ${mid##*/}  :$MLX_SERVE_PORT  (PID ${ms_spid:-?}, mlx-serve)"
                 any=1
             done <<< "$ms_ids"
+        fi
+    fi
+    # sushi: same shape as mlx-serve — the shared server stays up and
+    # writes no pidfile for app-launched loads, so report what it actually
+    # has RESIDENT.
+    if nc -z 127.0.0.1 "$SUSHI_PORT" 2>/dev/null; then
+        local sh_ids sh_spid
+        sh_ids=$(curl -sf -m 4 "http://127.0.0.1:$SUSHI_PORT/v1/models" 2>/dev/null \
+            | tr -d ' \n' \
+            | grep -o '"id":"[^"]*"[^}]*"loaded":true' \
+            | sed 's/^"id":"\([^"]*\)".*/\1/')
+        sh_spid=$(pgrep -f 'sushi serve' | head -1)
+        if [[ -n "$sh_ids" ]]; then
+            local shid
+            while IFS= read -r shid; do
+                [[ -z "$shid" ]] && continue
+                echo "● ${shid##*/}  :$SUSHI_PORT  (PID ${sh_spid:-?}, sushi)"
+                any=1
+            done <<< "$sh_ids"
         fi
     fi
     [[ $any -eq 0 ]] && echo "○ No models loaded"
@@ -1285,6 +1400,25 @@ cmd_unload() {
                     echo "✓ $name unloaded (shared mlx-serve server on :$MLX_SERVE_PORT stays up)"
                 else
                     echo "○ $name is not currently resident on the mlx-serve server (nothing to free)"
+                fi
+            elif [[ "$type" == "sushi" ]] && nc -z 127.0.0.1 "$SUSHI_PORT" 2>/dev/null; then
+                # Shared sushi server: free THIS model; the server stays up
+                # (stop the server itself with: pkill -f 'sushi serve').
+                local sh_rel="${path#$SUSHI_MODEL_DIR/}"
+                local sh_ok=0
+                if curl -sf -m 10 -X POST "http://127.0.0.1:$SUSHI_PORT/v1/unload-model" \
+                     -H 'Content-Type: application/json' \
+                     -d "{\"model\":\"$sh_rel\"}" >/dev/null 2>&1; then
+                    sh_ok=1
+                elif curl -sf -m 10 -X POST "http://127.0.0.1:$SUSHI_PORT/v1/unload-model" \
+                     -H 'Content-Type: application/json' \
+                     -d "{\"model\":\"$(basename "$path")\"}" >/dev/null 2>&1; then
+                    sh_ok=1
+                fi
+                if (( sh_ok )); then
+                    echo "✓ $name unloaded (shared sushi server on :$SUSHI_PORT stays up)"
+                else
+                    echo "○ $name is not currently resident on the sushi server (nothing to free)"
                 fi
             elif [[ "$type" == "splash" && ! -f "$pf" ]]; then
                 # Splash: one server per model. No pidfile means the APP

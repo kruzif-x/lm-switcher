@@ -42,8 +42,8 @@
 <div id="chat"></div>
 <div class="hint">
   Load / unload models from the <b>LM Switcher</b> menu bar (or <b>llama load &lt;model&gt;</b>) — the page lists whatever the
-  chosen server has. Presets: llama.cpp <b>8080</b> · oMLX <b>8000</b> · MTPLX <b>8085</b> · DS4 <b>8090</b> · Splash <b>8095</b> · mlx-serve <b>11234</b>.
-  Engines that ship their own UI (llama.cpp <b>:port/</b>, MTPLX <b>:8085/</b>, Splash <b>:8095/</b>, mlx-serve <b>:11234/</b>) and refuse cross-origin
+  chosen server has. Presets: llama.cpp <b>8080</b> · oMLX <b>8000</b> · MTPLX <b>8085</b> · DS4 <b>8090</b> · Splash <b>8095</b> · mlx-serve <b>11234</b> · sushi <b>12345</b>.
+  Engines that ship their own UI (llama.cpp <b>:port/</b>, MTPLX <b>:8085/</b>, Splash <b>:8095/</b>, mlx-serve <b>:11234/</b>, sushi <b>:12345/</b>) and refuse cross-origin
   calls will say so above — open that URL instead. Enter = send, Shift+Enter = newline.
 </div>
 <footer>
@@ -59,6 +59,7 @@ const PRESETS = [
   ["8090",  "DS4 (DwarfStar)"],
   ["8095",  "Splash"],
   ["11234", "mlx-serve"],
+  ["12345", "sushi"],
 ];
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);

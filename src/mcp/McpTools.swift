@@ -101,7 +101,7 @@ enum McpTools {
                 let vision = ((try? fm.contentsOfDirectory(atPath: dir)) ?? [])
                     .contains { $0.hasPrefix("mmproj-") && $0.hasSuffix(".gguf") }
                 entry["vision"] = vision
-            } else if m.backend == "mlx-serve" || m.backend == "MLX" {
+            } else if m.backend == "mlx-serve" || m.backend == "MLX" || m.backend == "sushi" {
                 // MLX vision is a property of the CONVERSION, not the engine:
                 // mlx-vlm conversions keep the tower as `vision_tower.*`
                 // weights (and declare `vision_config`), mlx-lm ones drop it.
@@ -139,9 +139,10 @@ enum McpTools {
         var global: [String: Any] = [:]
         let stringKeys = ["modelsDir", "llamaServerPath", "mlxServerPath", "chatTemplatePath",
                           "globalExtraArgs", "kvCacheTypeK", "kvCacheTypeV",
-                          "splashServerPath", "splashModelDir"]
+                          "splashServerPath", "splashModelDir",
+                          "sushiServerPath", "sushiModelDir"]
         let intKeys = ["defaultPort", "defaultCtxSize", "topK", "seed", "cpuThreads", "batchSize",
-                       "mlxMaxKvSize", "ttlMinutes", "splashPort"]
+                       "mlxMaxKvSize", "ttlMinutes", "splashPort", "sushiPort"]
         // Per-key defaults — matching AppSettings' Swift-side defaults
         // (DomainTypes.swift). A blanket `false` here previously made
         // every true-by-default toggle (MTP, flash attention, thinking,
@@ -234,8 +235,8 @@ enum McpTools {
     /// through `llama unload`; app-launched ones (no PID file — invisible to
     /// the CLI) are TERMed directly, exactly what the app's own Unload does.
     private static func unloadRunning(_ r: RunningModel) -> Bool {
-        if r.backend == "mlx-serve" {
-            // Shared always-on server: unload frees THIS model's memory
+        if r.backend == "mlx-serve" || r.backend == "sushi" {
+            // Shared server: unload frees THIS model's memory
             // (server-level, not process-level — the pid legitimately stays
             // alive), so don't wait for pid death.
             let rc = Launcher.runCli(["unload", r.displayName]).status
@@ -301,6 +302,14 @@ enum McpTools {
             } else {
                 let hb = "/opt/homebrew/bin/splash-m1"
                 path = FileManager.default.isExecutableFile(atPath: hb) ? hb : home + "/.local/bin/splash-m1"
+            }
+        } else if m.backend == "sushi" {
+            let p = Prefs.string("sushiServerPath")
+            if !p.isEmpty {
+                path = p
+            } else {
+                let hb = "/opt/homebrew/bin/sushi"
+                path = FileManager.default.isExecutableFile(atPath: hb) ? hb : home + "/.local/bin/sushi"
             }
         } else {
             let p = Prefs.string("mlxServerPath")

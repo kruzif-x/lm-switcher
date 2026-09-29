@@ -110,6 +110,13 @@ class ServerManager {
     @ObservationIgnored
     private var mlxServeResidencyKnown = false
 
+    /// sushi: mirror of the mlx-serve in-flight machinery (epoch +
+    /// pending-unload + residency-known) — same shared-server semantics,
+    /// independent state.
+    private var sushiLoadEpoch: [String: Int] = [:]
+    private var sushiPendingUnload: Set<String> = []
+    private var sushiResidencyKnown = false
+
     /// Serial queue used for the periodic `ps` reconciliation. Running the
     /// `Process` spawn and pipe reads on a background queue prevents a slow
     /// or hung `ps` from blocking the main thread (which would freeze the
@@ -615,6 +622,14 @@ class ServerManager {
            FileManager.default.fileExists(atPath: mlxServeDir.path) {
             mlxServeEntries(at: mlxServeDir, depth: 0, into: &entries)
         }
+        // sushi (beamivalice/sushi) models live under their own store
+        // root; ONE shared server serves them all (loading on demand by
+        // name) — same shape as mlx-serve.
+        let sushiDir = URL(fileURLWithPath: resolvedSushiModelDir())
+        if sushiDir.path != dir.path,
+           FileManager.default.fileExists(atPath: sushiDir.path) {
+            sushiEntries(at: sushiDir, depth: 0, into: &entries)
+        }
         // Splash (paperniuk/splash M1/M2 fork) packages live under the
         // engine's own install root (~/Library/Application Support/Splash/
         // models, org/model nesting) — OUTSIDE modelsDir entirely, so no
@@ -691,7 +706,8 @@ class ServerManager {
                     // and mislabelled [MTPLX] in the app (reproduced
                     // 2026-09-26 with a probe dir under ~/AI/models/omlx).
                     if url.path.hasPrefix(resolvedOmlxModelDir() + "/")
-                        || url.path.hasPrefix(resolvedMlxServeModelDir() + "/") {
+                        || url.path.hasPrefix(resolvedMlxServeModelDir() + "/")
+                        || url.path.hasPrefix(resolvedSushiModelDir() + "/") {
                         continue
                     }
                     // MTPLX model? Check for mtplx_runtime.json.
@@ -774,6 +790,8 @@ class ServerManager {
         // The mlx-serve store is owned by the mlxserve scan — skip it here
         // so its models don't double-list as plain MLX.
         if dir.path.hasPrefix(resolvedMlxServeModelDir() + "/") { return nil }
+        // The sushi store is owned by the sushi scan — same rule.
+        if dir.path.hasPrefix(resolvedSushiModelDir() + "/") { return nil }
         let fm = FileManager.default
         guard let contents = try? fm.contentsOfDirectory(
             at: dir,
@@ -990,6 +1008,219 @@ class ServerManager {
             return c
         }
         return "mlx-serve"   // last resort: PATH lookup
+    }
+
+    // MARK: - sushi backend (beamivalice/sushi — the mlx-serve fork)
+
+    /// Resolved sushi model root (settings override, else the shared
+    /// `~/.sushi/models` store).
+    func resolvedSushiModelDir() -> String {
+        if !settings.sushiModelDir.isEmpty { return settings.sushiModelDir }
+        return NSHomeDirectory() + "/.sushi/models"
+    }
+
+    /// Resolved sushi binary (settings override, else Homebrew, else
+    /// ~/.local/bin, else PATH).
+    func resolvedSushiServerPath() -> String {
+        if !settings.sushiServerPath.isEmpty { return settings.sushiServerPath }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let candidates = [
+            "/opt/homebrew/bin/sushi",
+            home.appendingPathComponent(".local/bin/sushi").path,
+        ]
+        for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
+            return c
+        }
+        return "sushi"   // last resort: PATH lookup
+    }
+
+    /// Walk the sushi store (folder nesting, max depth 2) and collect
+    /// directories that look like models (config.json + *.safetensors).
+    /// ONE shared server serves them all on sushiPort; models load on
+    /// demand and unload one at a time via POST /v1/unload-model.
+    private func sushiEntries(at dir: URL, depth: Int, into entries: inout [ModelEntry]) {
+        guard depth < 2 else { return }
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: dir,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for url in contents {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true { continue }
+            let names = ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).map { $0.lowercased() }
+            let isModel = names.contains("config.json")
+                && names.contains(where: { $0.hasSuffix(".safetensors") })
+            if isModel {
+                entries.append(ModelEntry(
+                    id: url.path,
+                    name: url.lastPathComponent,
+                    path: url,
+                    backend: .sushi
+                ))
+            } else {
+                sushiEntries(at: url, depth: depth + 1, into: &entries)
+            }
+        }
+    }
+
+    /// Is a sushi server currently healthy on the configured port?
+    private func sushiServerHealthy() -> Bool {
+        let port = settings.sushiPort > 0 ? settings.sushiPort : 12345
+        return sushiHealthy(port: port)
+    }
+
+    /// Health probe against an EXPLICIT port. Background callers use this —
+    /// `settings` is main-owned and must not be read off the main thread.
+    private func sushiHealthy(port: Int) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return false }
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) { ok = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.0)
+        return ok
+    }
+
+    /// Store-relative model id the sushi API expects (`/v1/models`,
+    /// `/v1/load-model`, `/v1/unload-model`): the path under the store
+    /// root. The folder name is the documented fallback.
+    private func sushiModelId(for model: ModelEntry) -> String {
+        let root = resolvedSushiModelDir()
+        var rel = model.path.path
+        if rel.hasPrefix(root + "/") { rel = String(rel.dropFirst(root.count + 1)) }
+        return rel
+    }
+
+    /// Model ids currently RESIDENT on a sushi server (GET /v1/models,
+    /// `loaded == true`). The store serves every model from ONE process
+    /// and loads them lazily, so "the server is up" says NOTHING about a
+    /// given model — residency is the truth. Returns nil when the probe
+    /// itself failed, so callers never treat "unknown" as "gone".
+    private func sushiLoadedModelIds(port: Int) -> Set<String>? {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models") else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        let sem = DispatchSemaphore(value: 0)
+        var ids: Set<String>? = nil
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            defer { sem.signal() }
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let arr = obj["data"] as? [[String: Any]] else { return }
+            var loaded = Set<String>()
+            for m in arr where (m["loaded"] as? Bool) == true {
+                if let id = m["id"] as? String { loaded.insert(id) }
+            }
+            ids = loaded
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.0)
+        return ids
+    }
+
+    /// POST `/v1/load-model` / `/v1/unload-model` to the shared sushi
+    /// server. The server is SYNCHRONOUS for load-model — it answers only
+    /// once the model is resident — so the timeout must cover a real
+    /// model load (49 GB pack: ~40-55 s).
+    private func postSushi(_ endpoint: String, modelId: String, port: Int,
+                           timeout: TimeInterval) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/\(endpoint)") else { return false }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": modelId])
+        req.timeoutInterval = timeout
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) { ok = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 1.0)
+        return ok
+    }
+
+    /// Make `model` resident on the shared sushi server WITHOUT blocking
+    /// the UI (mirror of `beginMlxServeLoad`; server-side the call answers
+    /// only once resident, ~40-55 s for the 49 GB Qwen3.8 pack). A
+    /// preflight refusal surfaces as a fast 503 — no long wait there.
+    private func beginSushiLoad(_ model: ModelEntry, port: Int, waitForHealth: Bool) {
+        assertMain()
+        sushiPendingUnload.remove(model.id)
+        let epoch = (sushiLoadEpoch[model.id] ?? 0) + 1
+        sushiLoadEpoch[model.id] = epoch
+        let modelId = sushiModelId(for: model)
+        let leaf = model.path.lastPathComponent
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            if waitForHealth {
+                var tries = 0
+                while tries < 30, !self.sushiHealthy(port: port) {
+                    Thread.sleep(forTimeInterval: 1.0)
+                    tries += 1
+                }
+            }
+            let ok = self.postSushi("load-model", modelId: modelId, port: port, timeout: 300)
+                || self.postSushi("load-model", modelId: leaf, port: port, timeout: 300)
+            let pid = ok ? self.sushiServerPid() : nil
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                guard self.sushiLoadEpoch[model.id] == epoch else {
+                    // Superseded — honour a stop that arrived mid-load with
+                    // ONE follow-up unload if the load still landed.
+                    if ok, self.sushiPendingUnload.remove(model.id) != nil {
+                        let mId = modelId, leafId = leaf
+                        DispatchQueue.global(qos: .utility).async { [weak self] in
+                            guard let self = self else { return }
+                            _ = self.postSushi("unload-model", modelId: mId, port: port, timeout: 30)
+                                || self.postSushi("unload-model", modelId: leafId, port: port, timeout: 30)
+                        }
+                    }
+                    return
+                }
+                var s = self.modelStates[model.id] ?? ModelState()
+                if ok {
+                    s.isRunning = true
+                    s.pid = pid
+                    s.port = port
+                    s.ctxSize = 0
+                    s.lastError = nil
+                    self.selected.insert(model.id)
+                } else {
+                    s.isRunning = false
+                    s.pid = nil
+                    s.lastError = "sushi on 127.0.0.1:\(port) refused to load \(modelId)"
+                }
+                self.modelStates[model.id] = s
+                self.syncQueue.async { [weak self] in
+                    self?.syncWithRunningProcesses()
+                }
+            }
+        }
+    }
+
+    /// PID of a running sushi server process, if any.
+    private func sushiServerPid() -> Int32? {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = ["-c", "pgrep -f 'sushi serve' | head -1"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            let s = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return Int32(s)
+        } catch { return nil }
     }
 
     /// Walk the mlx-serve store (org/model nesting, max depth 2) and collect
@@ -1578,13 +1809,45 @@ class ServerManager {
             let resolvedSplashPort = splashPreferredPort != 0 ? splashPreferredPort : settings.splashPort
             args += ["--port", "\(resolvedSplashPort)"]
             statePort = resolvedSplashPort
+        case .sushi:
+            // sushi (beamivalice/sushi — the mlx-serve fork): ONE shared
+            // server serves every model in its store on settings.sushiPort.
+            // Loading an entry means ensure the server is up (adopt a
+            // running one or spawn it) AND make THIS model resident
+            // (POST /v1/load-model — synchronous, ~40-55 s for the 49 GB
+            // Qwen3.8 pack; the row flips to running only once really
+            // resident). Spawn flags are the Sirius-validated 64 GB recipe
+            // (2026-09-29): an explicit --ctx-size switches the load to
+            // the context-billed requirement (the flat auto-context bill
+            // of ~56 GiB refuses on this box) and --max-resident-mem 0
+            // disables the free-RAM-derived registry cap (observed
+            // 46.09 GB) that otherwise refuses the 49 GB load.
+            executable = resolvedSushiServerPath()
+            let sushiPort = settings.sushiPort > 0 ? settings.sushiPort : 12345
+            if sushiServerHealthy() {
+                beginSushiLoad(model, port: sushiPort, waitForHealth: false)
+                return
+            }
+            let sushiRoot = resolvedSushiModelDir()
+            args += ["serve", "--host", "127.0.0.1", "--model-dir", sushiRoot]
+            statePort = sushiPort
+            args += ["--port", "\(statePort)"]
+            args += ["--ctx-size", "131072", "--max-resident-mem", "0"]
+            // Keep a persistent log next to the store so diagnostics
+            // survive the /dev/null redirect below.
+            let sushiLogDir = NSHomeDirectory() + "/.sushi/logs"
+            try? FileManager.default.createDirectory(
+                atPath: sushiLogDir, withIntermediateDirectories: true)
+            args += ["--log-file", sushiLogDir + "/serve.log"]
+            beginSushiLoad(model, port: sushiPort, waitForHealth: true)
         }
 
         // Bind to localhost (security + convenience) and the chosen port.
         // oMLX, MTPLX, DS4 and Splash build their own bind flags (fixed
         // port, localhost default).
         if model.backend != .omlx && model.backend != .mtplx && model.backend != .ds4
-            && model.backend != .mlxserve && model.backend != .splash {
+            && model.backend != .mlxserve && model.backend != .splash
+            && model.backend != .sushi {
             args += ["--host", "127.0.0.1", "--port", "\(port)"]
         }
 
@@ -1632,6 +1895,7 @@ class ServerManager {
             case .ds4: installHint = "build the DwarfStar engine: git clone -b qwen3.8-flash-next https://github.com/ivanfioravanti/ds4-metal && make -j8 (ds4-server lands at the repo root)"
             case .mlxserve: installHint = "brew install mlx-serve (tap: ddalcu/mlx-serve) — or stage a release tarball from github.com/ddalcu/mlx-serve/releases"
             case .splash: installHint = "install the M1/M2 fork: download install-m1.sh from github.com/paperniuk/splash releases (release 1.0.2-m1.1) and run it — installs splash-m1 to /opt/homebrew/bin"
+            case .sushi: installHint = "brew install beamivalice/tap/sushi — or stage the release tarball from github.com/beamivalice/sushi/releases"
             }
             var s = modelStates[model.id] ?? ModelState()
             s.isRunning = false
@@ -1767,6 +2031,26 @@ class ServerManager {
             // Best effort: try the store-relative id, then the folder name.
             if !postMlxServe("unload-model", modelId: rel, port: port, timeout: 10) {
                 _ = postMlxServe("unload-model", modelId: leaf, port: port, timeout: 10)
+            }
+            if var s = modelStates[model.id] {
+                s.isRunning = false
+                s.pid = nil
+                modelStates[model.id] = s
+            }
+            selected.remove(model.id)
+            return
+        }
+        // sushi: same shared-server semantics as mlx-serve — unload frees
+        // JUST this model (POST /v1/unload-model) and the server stays up
+        // (stop the server itself with: pkill -f 'sushi serve').
+        if model.backend == .sushi {
+            let rel = sushiModelId(for: model)
+            let leaf = model.path.lastPathComponent
+            let port = settings.sushiPort > 0 ? settings.sushiPort : 12345
+            sushiLoadEpoch[model.id] = (sushiLoadEpoch[model.id] ?? 0) + 1
+            sushiPendingUnload.insert(model.id)
+            if !postSushi("unload-model", modelId: rel, port: port, timeout: 10) {
+                _ = postSushi("unload-model", modelId: leaf, port: port, timeout: 10)
             }
             if var s = modelStates[model.id] {
                 s.isRunning = false
@@ -2372,7 +2656,8 @@ class ServerManager {
                 // model. A clean residency read that omits the model is
                 // authoritative: it is unloaded → clear the row.
                 let isMlxServe = models.first(where: { $0.id == id })?.backend == .mlxserve
-                if isMlxServe, mlxServeResidencyKnown {
+                let isSushi = models.first(where: { $0.id == id })?.backend == .sushi
+                if (isMlxServe && mlxServeResidencyKnown) || (isSushi && sushiResidencyKnown) {
                     var cleared = s
                     cleared.isRunning = false
                     cleared.pid = nil
@@ -2618,8 +2903,10 @@ class ServerManager {
         let output = String(data: data, encoding: .utf8) ?? ""
 
         var externalStates: [String: (pid: Int32, port: Int, ctx: Int)] = [:]
-        // Reset per tick: only the mlx-serve branch below may set this true.
+        // Reset per tick: only the mlx-serve / sushi branches below may
+        // set these true.
         mlxServeResidencyKnown = false
+        sushiResidencyKnown = false
 
         for line in output.split(separator: "\n") {
             let s = String(line)
@@ -2633,7 +2920,8 @@ class ServerManager {
                 || s.contains("mtplx.server") || s.contains("mtplx serve")
                 || s.contains("ds4-server")
                 || (s.contains("Splash-M1/") && s.contains("server.py"))
-                || s.range(of: #"^\s*\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
+                || s.range(of: #"^\s*\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil
+                || s.range(of: #"^\s*\d+\s+(?:\S*/)?sushi\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
 
             // oMLX: one server serves every model under the oMLX root.
             // Map it onto every discovered oMLX entry (shared pid/port).
@@ -2676,6 +2964,34 @@ class ServerManager {
                 for m in models where m.backend == .mlxserve {
                     if let loaded = loaded, !loaded.contains(mlxServeModelId(for: m)) { continue }
                     externalStates[m.id] = (pid: pid, port: port, ctx: 0)
+                }
+                continue
+            }
+
+            // sushi: same shape as mlx-serve — ONE server serves every
+            // model in its store; residency (not process liveness) is the
+            // truth. Anchored on the REAL argv (`.../sushi serve` as the
+            // command token) so text merely mentioning the string is
+            // never adopted as a server.
+            if s.range(of: #"^\s*\d+\s+(?:\S*/)?sushi\s+serve(\s|$)"#, options: .regularExpression) != nil {
+                let trimmed = s.drop(while: { $0 == " " })
+                let pidStr = trimmed.prefix(while: { $0.isNumber })
+                guard let pid = Int32(pidStr), pid > 0 else { continue }
+                var port = settings.sushiPort > 0 ? settings.sushiPort : 12345
+                if let pm = s.range(of: #"--port (\d+)"#, options: .regularExpression),
+                   let p = Int(String(s[pm].split(separator: " ").last ?? "")) {
+                    port = p
+                }
+                var ctx = 0
+                if let pm = s.range(of: #"--ctx-size (\d+)"#, options: .regularExpression),
+                   let c = Int(String(s[pm].split(separator: " ").last ?? "")) {
+                    ctx = c
+                }
+                let loaded = sushiLoadedModelIds(port: port)
+                sushiResidencyKnown = loaded != nil
+                for m in models where m.backend == .sushi {
+                    if let loaded = loaded, !loaded.contains(sushiModelId(for: m)) { continue }
+                    externalStates[m.id] = (pid: pid, port: port, ctx: ctx)
                 }
                 continue
             }
@@ -2824,6 +3140,20 @@ class ServerManager {
         settings.mlxServeModelDir = d.string(forKey: "mlxServeModelDir") ?? ""
         let msp = d.integer(forKey: "mlxServePort")
         settings.mlxServePort = msp == 0 ? 11234 : msp
+
+        // Splash settings. NOTE (fixed 2026-09-29): these keys were missing
+        // from load/save entirely — splash path/dir/port selections were
+        // forgotten across app restarts.
+        settings.splashServerPath = d.string(forKey: "splashServerPath") ?? ""
+        settings.splashModelDir = d.string(forKey: "splashModelDir") ?? ""
+        let slp = d.integer(forKey: "splashPort")
+        settings.splashPort = slp == 0 ? 8095 : slp
+
+        // sushi (beamivalice/sushi — the mlx-serve fork) settings.
+        settings.sushiServerPath = d.string(forKey: "sushiServerPath") ?? ""
+        settings.sushiModelDir = d.string(forKey: "sushiModelDir") ?? ""
+        let shp = d.integer(forKey: "sushiPort")
+        settings.sushiPort = shp == 0 ? 12345 : shp
         // Global extra args default to empty.
         settings.globalExtraArgs = d.string(forKey: "globalExtraArgs") ?? ""
         // Chat template override: empty = use built-in template.
@@ -2898,6 +3228,12 @@ class ServerManager {
         d.set(settings.mlxServeServerPath, forKey: "mlxServeServerPath")
         d.set(settings.mlxServeModelDir, forKey: "mlxServeModelDir")
         d.set(settings.mlxServePort, forKey: "mlxServePort")
+        d.set(settings.splashServerPath, forKey: "splashServerPath")
+        d.set(settings.splashModelDir, forKey: "splashModelDir")
+        d.set(settings.splashPort, forKey: "splashPort")
+        d.set(settings.sushiServerPath, forKey: "sushiServerPath")
+        d.set(settings.sushiModelDir, forKey: "sushiModelDir")
+        d.set(settings.sushiPort, forKey: "sushiPort")
         d.set(settings.globalExtraArgs, forKey: "globalExtraArgs")
         d.set(settings.chatTemplatePath, forKey: "chatTemplatePath")
         d.set(settings.enableMtp, forKey: "enableMtp")

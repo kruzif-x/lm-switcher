@@ -204,8 +204,19 @@ enum FootprintEstimator {
     /// value outside model-realism bounds makes the whole geometry nil.
     private static func mlxGeometry(_ dir: String) -> Geometry? {
         guard let data = FileManager.default.contents(atPath: dir + "/config.json"),
-              let cfg = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let layers = cfg["num_hidden_layers"] as? Int,
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        // Multimodal / qwen4_exp packs nest the LM tower's config under
+        // `text_config` — the KV-relevant fields (layers, attention heads,
+        // head_dim, max_position_embeddings) live there, not at the top
+        // level. Without this fallback every such pack estimated as
+        // `file_size_only` and the MCP swap guard failed closed.
+        let cfg: [String: Any]
+        if root["num_hidden_layers"] == nil, let nested = root["text_config"] as? [String: Any] {
+            cfg = nested
+        } else {
+            cfg = root
+        }
+        guard let layers = cfg["num_hidden_layers"] as? Int,
               layers >= 1, layers <= maxLayers else { return nil }
         let heads = cfg["num_attention_heads"] as? Int ?? 0
         guard heads >= 0, heads <= maxHeadsPerLayer else { return nil }

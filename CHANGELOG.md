@@ -5,6 +5,21 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.10b] - 2026-09-29
+
+**sushi backend — the eighth engine (beamivalice/sushi, the mlx-serve fork with EXL3/affine "sushi quants"), plus two latent fixes.**
+
+### Added
+- **sushi backend** (beamivalice/sushi): discovery in all three surfaces (app `ServerManager`, CLI `list_all_models`, MCP `StateReader`), load/unload with adoption of externally-launched servers, and settings — sushi binary path, sushi model dir (default `~/.sushi/models`), sushi port (default 12345). ONE shared server; models load on demand (`POST /v1/load-model`, synchronous — the row goes running only once really resident) and unload one at a time (`POST /v1/unload-model`) while the server stays up, same semantics as mlx-serve. App/CLI spawns use the valid 64 GB recipe: explicit `--ctx-size 131072` (context-billed load) + `--max-resident-mem 0` (the free-RAM-derived registry cap otherwise refuses a 49 GB pack), log to `~/.sushi/logs/serve.log`.
+- Engine map: sushi card + fan-out (now 8 engines, `docs/engine-map.html` → regenerated `docs/engine-map.svg`); chat page preset `12345`; Help coverage (install step, Backends card, "Which engine" list, browser-access section).
+
+### Fixed
+- **Splash settings were never persisted** — `splashServerPath` / `splashModelDir` / `splashPort` were missing from `loadSettings`/`saveSettings` entirely, so those selections were forgotten on every app restart. Now persisted like every other backend's.
+- **MCP CLI timeout raised 60 s → 300 s** (`Launcher.cliTimeout`): a shared-server load (mlx-serve, sushi) blocks `llama load` until the model is RESIDENT — 40-55 s for the 49 GB sushi pack, and a cold ds4 model can take ~180 s to bind its port. The old cap killed the CLI child mid-load while the server-side load could still land, so agents saw a failure for a load that actually succeeded.
+
+### Notes
+- Measured on Sirius (M2 Max 64 GB, 2026-09-29, ctx 131072): sushi-3bpw ~30 tok/s decode / ~337 tok/s prefill vs ds4 Q2's ~26 / ~265 on the same box. ds4 Q2 pack retired on that machine (137 GiB reclaimed); the ds4 backend itself is unchanged. Comparison artifacts: `~/ds4-bench/sushi-vs-ds4/`.
+
 ## [0.9.9b] - 2026-09-27
 
 **Splash backend — the paperniuk/splash M1/M2 fork (seventh engine), plus the retired Youssofal MTPLX pack.**

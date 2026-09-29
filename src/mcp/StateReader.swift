@@ -55,7 +55,7 @@ func perModelValue(_ suffix: String, hash: String) -> Any? {
 // MARK: - Discovery (mirrors the CLI's list_all_models)
 
 struct DiscoveredModel {
-    let backend: String   // "GGUF" | "MLX" | "oMLX" | "MTPLX" | "DS4" | "mlx-serve" | "Splash"
+    let backend: String   // "GGUF" | "MLX" | "oMLX" | "MTPLX" | "DS4" | "mlx-serve" | "Splash" | "sushi"
     let path: String
     let name: String
     var hash: String { idHash12(path) }
@@ -68,6 +68,7 @@ func discoverModels() -> [DiscoveredModel] {
     let omlxDir = Prefs.string("omlxModelDir", default: NSHomeDirectory() + "/AI/models/omlx")
     let ds4Dir = Prefs.string("ds4ModelDir", default: NSHomeDirectory() + "/Projects/ds4-metal/gguf")
     let mlxServeDir = Prefs.string("mlxServeModelDir", default: NSHomeDirectory() + "/.mlx-serve/models")
+    let sushiDir = Prefs.string("sushiModelDir", default: NSHomeDirectory() + "/.sushi/models")
     let modelsDir = Prefs.string("modelsDir")
     if !modelsDir.isEmpty {
         guard let en = fm.enumerator(atPath: modelsDir) else { return [] }
@@ -90,6 +91,7 @@ func discoverModels() -> [DiscoveredModel] {
                 if !mlxDirs.contains(dir),
                    !dir.hasPrefix(omlxDir + "/"),
                    !dir.hasPrefix(mlxServeDir + "/"),
+                   !dir.hasPrefix(sushiDir + "/"),
                    let files = try? fm.contentsOfDirectory(atPath: dir),
                    files.contains(where: { $0.hasSuffix(".safetensors") }) {
                     // Skip MTPLX models (have mtplx_runtime.json) — they get .mtplx backend below.
@@ -143,7 +145,8 @@ func discoverModels() -> [DiscoveredModel] {
                     // path under two backends (reproduced 2026-09-26).
                     guard !mtplxDirs.contains(dir),
                           !dir.hasPrefix(omlxDir + "/"),
-                          !dir.hasPrefix(mlxServeDir + "/") else { continue }
+                          !dir.hasPrefix(mlxServeDir + "/"),
+                          !dir.hasPrefix(sushiDir + "/") else { continue }
                     if let files = try? fm.contentsOfDirectory(atPath: dir),
                        files.contains(where: { $0.hasSuffix(".safetensors") }) {
                         mtplxDirs.insert(dir)
@@ -178,6 +181,33 @@ func discoverModels() -> [DiscoveredModel] {
                     if isPlainMLX || isPipeline {
                         visited.insert(dir)
                         out.append(DiscoveredModel(backend: "mlx-serve", path: dir,
+                                                   name: (dir as NSString).lastPathComponent))
+                    }
+                }
+            }
+        }
+    }
+
+    // sushi (beamivalice/sushi): one shared server serves every model
+    // under its store root (folder nesting, depth <= 2).
+    if !sushiDir.isEmpty, fm.fileExists(atPath: sushiDir) {
+        var visited = Set<String>()
+        if let en = fm.enumerator(atPath: sushiDir) {
+            for case let rel as String in en {
+                let depth = rel.split(separator: "/").count
+                guard depth <= 2 else { en.skipDescendants(); continue }
+                if (rel as NSString).lastPathComponent.hasPrefix(".") { continue }
+                let dir = sushiDir + "/" + rel
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue,
+                      !visited.contains(dir) else { continue }
+                if let files = try? fm.contentsOfDirectory(atPath: dir) {
+                    let names = files.map { $0.lowercased() }
+                    let isModel = names.contains("config.json")
+                        && names.contains(where: { $0.hasSuffix(".safetensors") })
+                    if isModel {
+                        visited.insert(dir)
+                        out.append(DiscoveredModel(backend: "sushi", path: dir,
                                                    name: (dir as NSString).lastPathComponent))
                     }
                 }
@@ -325,7 +355,8 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
                 || text.contains("mtplx.server") || text.contains("mtplx serve")
                 || text.contains("ds4-server")
                 || (text.contains("Splash-M1/") && text.contains("server.py"))
-                || text.range(of: #"^\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
+                || text.range(of: #"^\d+\s+(?:\S*/)?mlx-serve\s+serve(\s|$)"#, options: .regularExpression) != nil
+                || text.range(of: #"^\d+\s+(?:\S*/)?sushi\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
             guard let sp = text.firstIndex(of: " "), let pid = Int32(text[..<sp]),
                   !seenPids.contains(pid) else { continue }
             let args = String(text[sp...])
@@ -366,6 +397,28 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
                        !loaded.contains((m.path as NSString).lastPathComponent) { continue }
                     out.append(RunningModel(hash: m.hash, pid: pid, port: msPort, model: m,
                                             displayName: m.name, backend: "mlx-serve", ctxSize: nil,
+                                            fromPidFile: false))
+                }
+                continue
+            }
+
+            // sushi: same shape as mlx-serve — ONE server serves every
+            // model in its store; report only the models it actually has
+            // loaded (residency, not process liveness). Anchored on the
+            // REAL argv (`.../sushi serve` as the command token).
+            if text.range(of: #"^\d+\s+(?:\S*/)?sushi\s+serve(\s|$)"#, options: .regularExpression) != nil {
+                let shModels = models.filter { $0.backend == "sushi" }
+                guard !shModels.isEmpty else { continue }
+                seenPids.insert(pid)
+                var shPort = Prefs.int("sushiPort", default: 12345)
+                if let p = firstMatch(#"--port (\d+)"#, in: args).flatMap(Int.init) { shPort = p }
+                let loaded = sushiLoadedIds(port: shPort)
+                for m in shModels {
+                    if let loaded = loaded,
+                       !loaded.contains(sushiStoreId(forPath: m.path)),
+                       !loaded.contains((m.path as NSString).lastPathComponent) { continue }
+                    out.append(RunningModel(hash: m.hash, pid: pid, port: shPort, model: m,
+                                            displayName: m.name, backend: "sushi", ctxSize: nil,
                                             fromPidFile: false))
                 }
                 continue
@@ -421,7 +474,7 @@ func firstMatch(_ pattern: String, in text: String) -> String? {
 /// llama-server serves /health; mlx_lm.server, oMLX, DS4, mlx-serve and
 /// Splash serve /v1/models (§3.3).
 func probeHealthy(port: Int, backend: String) -> Bool {
-    let path = (backend == "MLX" || backend == "oMLX" || backend == "DS4" || backend == "mlx-serve" || backend == "Splash") ? "/v1/models" : "/health"
+    let path = (backend == "MLX" || backend == "oMLX" || backend == "DS4" || backend == "mlx-serve" || backend == "Splash" || backend == "sushi") ? "/v1/models" : "/health"
     guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return false }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2.0
@@ -452,6 +505,43 @@ func mlxServeStoreId(forPath path: String) -> String {
 /// callers must then fall back to presence-only, never read "unknown" as
 /// "unloaded".
 func mlxServeLoadedIds(port: Int) -> Set<String>? {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models") else { return nil }
+    var req = URLRequest(url: url)
+    req.timeoutInterval = 2.0
+    let sem = DispatchSemaphore(value: 0)
+    var ids: Set<String>? = nil
+    URLSession.shared.dataTask(with: req) { data, resp, _ in
+        defer { sem.signal() }
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let data = data,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["data"] as? [[String: Any]] else { return }
+        var loaded = Set<String>()
+        for m in arr where (m["loaded"] as? Bool) == true {
+            if let id = m["id"] as? String { loaded.insert(id) }
+        }
+        ids = loaded
+    }.resume()
+    _ = sem.wait(timeout: .now() + 3.0)
+    return ids
+}
+
+// MARK: - sushi residency
+
+/// Store-relative id the sushi API uses (path under the store root).
+/// Must mirror the app's `sushiModelId`.
+func sushiStoreId(forPath path: String) -> String {
+    let root = Prefs.string("sushiModelDir", default: NSHomeDirectory() + "/.sushi/models")
+    if path.hasPrefix(root + "/") { return String(path.dropFirst(root.count + 1)) }
+    return (path as NSString).lastPathComponent
+}
+
+/// Model ids currently RESIDENT on a sushi server (GET /v1/models,
+/// `loaded == true`). The store serves every model from ONE process and
+/// loads them lazily, so "server is up" says nothing about a given model
+/// — residency is the truth. nil when the probe failed: callers must
+/// then fall back to presence-only, never read "unknown" as "unloaded".
+func sushiLoadedIds(port: Int) -> Set<String>? {
     guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models") else { return nil }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2.0
@@ -535,6 +625,7 @@ func stateSnapshot() -> [String: Any] {
     let ds4Port = Prefs.int("ds4Port", default: 8090)
     let mlxServePort = Prefs.int("mlxServePort", default: 11234)
     let splashPort = Prefs.int("splashPort", default: 8095)
+    let sushiPort = Prefs.int("sushiPort", default: 12345)
     var portLo = defaultPort
     var portHi = defaultPort + 200
     if omlxPort < portLo { portLo = omlxPort }
@@ -545,6 +636,8 @@ func stateSnapshot() -> [String: Any] {
     if mlxServePort > portHi { portHi = mlxServePort }
     if splashPort < portLo { portLo = splashPort }
     if splashPort > portHi { portHi = splashPort }
+    if sushiPort < portLo { portLo = sushiPort }
+    if sushiPort > portHi { portHi = sushiPort }
     // A shared server (mlx-serve, oMLX) maps onto EVERY model it serves,
     // so several Running entries can share one port — build the map
     // tolerantly (first wins) instead of trapping on a duplicate key.

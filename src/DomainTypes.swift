@@ -110,6 +110,12 @@ enum ModelBackend: String, CaseIterable, Identifiable {
     /// (`~/Library/Application Support/Splash/models/<org>/<repo>`,
     /// symlinked into the shared HF cache). Binary: `splash-m1`.
     case splash = "Splash"
+    /// sushi (beamivalice/sushi) — the mlx-serve fork serving EXL3/affine
+    /// "sushi quants". ONE shared server serves every model in its store
+    /// (`~/.sushi/models`) on `sushiPort` (12345 by convention). Models
+    /// load on demand; unload frees one model via POST /v1/unload-model
+    /// and the server stays up.
+    case sushi = "sushi"
 
     /// `Identifiable` conformance uses the raw value (e.g. "GGUF").
     var id: String { rawValue }
@@ -128,6 +134,7 @@ enum ModelBackend: String, CaseIterable, Identifiable {
         case .ds4: return "star"
         case .mlxserve: return "bolt.horizontal"
         case .splash: return "drop"
+        case .sushi: return "fish"
         }
     }
 }
@@ -298,6 +305,20 @@ struct AppSettings {
     /// One server per model (like MTPLX); per-model port overrides win,
     /// so set one to run two Splash models at once.
     var splashPort: Int = 8095
+
+    /// Absolute path to the `sushi` binary (beamivalice/sushi — the
+    /// mlx-serve fork). Empty = auto-resolve (/opt/homebrew/bin/sushi,
+    /// then ~/.local/bin/sushi, then PATH).
+    var sushiServerPath: String = ""
+
+    /// Root directory scanned for sushi models (default `~/.sushi/models`
+    /// — sushi's own store, folder nesting up to 2).
+    var sushiModelDir: String = ""
+
+    /// TCP port for the shared sushi server. Default 12345 (sushi's own
+    /// convention — clear of llama.cpp 8080, oMLX 8000, MTPLX 8085,
+    /// DS4 8090, Splash 8095, mlx-serve 11234).
+    var sushiPort: Int = 12345
 
     /// Free-form string of extra args passed to every server process.
     /// Parsed with `parseArgs` in `ServerManager` to handle quoting.
