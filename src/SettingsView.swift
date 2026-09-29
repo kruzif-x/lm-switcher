@@ -1674,7 +1674,7 @@ struct SettingsView: View {
                                   "A page opened from a file may only call servers that allow cross-origin requests. llama.cpp, mlx-serve, oMLX, DS4 and sushi do; MTPLX and Splash deliberately refuse (403) — use their own pages (MTPLX http://127.0.0.1:8085/, Splash http://127.0.0.1:8095/). The chat page detects which case you hit and says so instead of failing silently.",
                                   mono: false)
                         helpEntry("Ports at a glance.",
-                                  "llama.cpp & MLX count up from the Default port (8080, 8081, …) · oMLX 8000 · MTPLX 8085 · DS4 8090 · mlx-serve 11234. The engine map (section 2) shows which engine owns which tree.",
+                                  "llama.cpp & MLX count up from the Default port (8080, 8081, …) · oMLX 8000 · MTPLX 8085 · DS4 8090 · Splash 8095 · mlx-serve 11234 · sushi 12345. The engine map (section 2) shows which engine owns which tree.",
                                   detail: "Everything is bound to 127.0.0.1 — other machines on your network cannot reach your models, and neither can the browser page unless it runs on this Mac.",
                                   mono: false)
                     }
