@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Engine map: sushi card + fan-out (now 8 engines, `docs/engine-map.html` → regenerated `docs/engine-map.svg`); chat page preset `12345`; Help coverage (install step, Backends card, "Which engine" list, browser-access section).
 
 ### Fixed
+- **Menu fit hint mis-sized DS4 and Splash rows.** The MenuView sizing scan's single-file branch was keyed on `.gguf` only: DS4 packs (plain `.gguf` files, backend `.ds4`) fell to the directory branch, failed, and were never sized — a 137 GiB DS4 pack showed **no** `won't fit` tag while a 49 GiB directory model was correctly flagged. Splash packages (root has no `*.safetensors`) summed to 0 and were skipped the same way. Both now size properly (DS4: file bytes; Splash: resolved `target/` + `draft/` bins), and the memory-bar hover preview works for them too.
 - **Splash settings were never persisted** — `splashServerPath` / `splashModelDir` / `splashPort` were missing from `loadSettings`/`saveSettings` entirely, so those selections were forgotten on every app restart. Now persisted like every other backend's.
 - **MCP CLI timeout raised 60 s → 300 s** (`Launcher.cliTimeout`): a shared-server load (mlx-serve, sushi) blocks `llama load` until the model is RESIDENT — 40-55 s for the 49 GB sushi pack, and a cold ds4 model can take ~180 s to bind its port. The old cap killed the CLI child mid-load while the server-side load could still land, so agents saw a failure for a load that actually succeeded.
 

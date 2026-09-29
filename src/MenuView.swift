@@ -151,8 +151,32 @@ struct MenuView: View {
             var sizes: [String: UInt64] = [:]
             let fm = FileManager.default
             for entry in unsized {
-                if entry.backend == .gguf {
+                if entry.backend == .gguf || entry.backend == .ds4 {
+                    // Single-file backends. DS4 packs are plain .gguf files
+                    // on disk — before 2026-09-29 the file branch was keyed
+                    // on .gguf ONLY, so DS4 entries fell to the directory
+                    // branch, failed, and were NEVER sized: a 137 GiB pack
+                    // showed no fit hint ("fits") while a 49 GiB dir was
+                    // correctly flagged.
                     sizes[entry.id] = ((try? fm.attributesOfItem(atPath: entry.path.path))?[.size] as? UInt64) ?? 0
+                } else if entry.backend == .splash {
+                    // Splash packages: layer bins + drafter live under
+                    // target/ and draft/ (symlinked into the shared HF
+                    // cache — resolve before stat). The root has no
+                    // *.safetensors, so the generic dir branch read 0 and
+                    // these rows were never flagged either.
+                    var total: UInt64 = 0
+                    for sub in ["target", "draft"] {
+                        let dir = entry.path.path + "/" + sub
+                        for b in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where b.hasSuffix(".bin") {
+                            let full = URL(fileURLWithPath: dir + "/" + b).resolvingSymlinksInPath().path
+                            if let a = try? fm.attributesOfItem(atPath: full),
+                               (a[.type] as? FileAttributeType) == .typeRegular {
+                                total += (a[.size] as? UInt64) ?? 0
+                            }
+                        }
+                    }
+                    sizes[entry.id] = total
                 } else if let files = try? fm.contentsOfDirectory(atPath: entry.path.path) {
                     sizes[entry.id] = files.filter { $0.hasSuffix(".safetensors") }.reduce(0 as UInt64) {
                         $0 + ((((try? fm.attributesOfItem(atPath: entry.path.path + "/" + $1))?[.size]) as? UInt64) ?? 0)
