@@ -290,7 +290,11 @@ struct MenuView: View {
                 Text("+\(gbText(proj)) if loaded → \(gbText(remain)) would remain")
                     .foregroundStyle(Color.accentColor)
             } else {
-                Text("won't fit — needs \(gbText(proj)), \(gbText(m.ramAvailable)) free")
+                // Show the SAME quantity the verdict compares (incl. the
+                // reserved headroom) — otherwise the hint reads
+                // "needs 55 GB, 57 GB free" for a model it just flagged.
+                let headroom = max(UInt64(2) << 30, m.ramTotal / 10)
+                Text("won't fit — needs \(gbText(proj + headroom)), \(gbText(m.ramAvailable)) free")
                     .foregroundStyle(Color.red)
             }
         } else if let m = metrics, m.memoryPressure != "normal" {
