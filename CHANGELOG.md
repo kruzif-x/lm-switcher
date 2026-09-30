@@ -5,6 +5,13 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.13b] - 2026-09-30
+
+**Menu-bar bolt mirrors the cloud rail: a running OrcaRouter counts toward the status colour.**
+
+### Changed
+- The status-bar bolt encodes how many models are running (idle → monochrome, 1 → green, 2+ → blue). An **active OrcaRouter** now counts as one running unit — cloud-only users see **green**, and cloud + one local model reads **blue** (matching the green dot on the panel's cloud row). Live-verified: OrcaRouter alone → green; loading Cyber-Prime alongside → blue.
+
 ## [0.9.12b] - 2026-09-30
 
 **Docs refresh: the engine-selection map gains the OrcaRouter cloud rail; README introduces it up top.**
