@@ -81,6 +81,16 @@ that opens the page in your default browser, plus the CORS caveat explained belo
 remembers the last port. If a fetch fails the page tells you *why*: nothing listening vs. a server that blocks
 cross-origin calls.
 
+## Optional cloud provider — OrcaRouter
+
+LM Switcher stays local-first. If you *also* want cloud models — DeepSeek, GLM, Kimi, Qwen, Claude, GPT, Gemini and more, 200+ of them behind one OpenAI-compatible endpoint, billed at provider rates with no token markup — OrcaRouter is the one we use.
+
+**Sign up via our referral link (LM Switcher earns 5% of what referred workspaces spend — it funds development):**
+
+<https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8>
+
+Ready-to-copy provider entries (Codex CLI format + a generic OpenAI-compatible snippet): [`integrations/orcarouter.toml`](integrations/orcarouter.toml).
+
 ## Features Explained
 
 ### mmproj Auto-Pairing with Fallback Matching

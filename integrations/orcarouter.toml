@@ -6,7 +6,8 @@
 # Optional: it sits alongside LM Switcher's local engines; nothing
 # about your local-model workflows changes when you use it.
 #
-# 1. Get a key:  https://www.orcarouter.ai/register
+# 1. Get a key:  https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8
+#    (referral link — sign-ups through it earn LM Switcher 5% of attributed spend)
 # 2. Base URL:   https://api.orcarouter.ai/v1
 # 3. Auth:       Authorization: Bearer $ORCA_KEY
 # 4. Model id:   anything from  GET https://api.orcarouter.ai/v1/models

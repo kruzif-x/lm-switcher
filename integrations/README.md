@@ -9,6 +9,6 @@ Provider entries and configuration snippets for tools commonly run alongside LM 
 - Base URL: `https://api.orcarouter.ai/v1`
 - Auth: `Bearer $ORCA_KEY`
 - Models: any id from `GET /v1/models`, e.g. `deepseek/deepseek-v4.1-flash`, `z-ai/glm-5.3-flash`, `moonshotai/kimi-k3`, or `orcarouter/auto` for automatic routing
-- Get a key: https://www.orcarouter.ai/register
+- Get a key: <https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8> — referral link; sign-ups through it earn LM Switcher 5% of attributed spend.
 
 See [`orcarouter.toml`](./orcarouter.toml) for a ready-to-copy provider entry (Codex CLI format) plus a generic OpenAI-compatible snippet.
