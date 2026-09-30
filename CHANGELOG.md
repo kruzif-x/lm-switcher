@@ -5,6 +5,17 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.12b] - 2026-09-30
+
+**Docs refresh: the engine-selection map gains the OrcaRouter cloud rail; README introduces it up top.**
+
+### Changed
+- Engine map (in-app **Help → Which engine runs your model?** + the README diagram): new full-width **OrcaRouter cloud rail** below the five-engine row — enable in Settings → OrcaRouter; the menu-bar row loads it (route to `api.orcarouter.ai/v1`, no local process); the key lives in the macOS Keychain; local discovery and the MCP agent surface are untouched. Header, aria-label and a new "Good to know" bullet cover it; viewBox grows to 1500×860.
+- README: OrcaRouter named in the opening line + a ☁️ feature bullet; the Discover list now includes **mlx-serve** (was the one list missing it); diagram caption and alt text mention the cloud rail.
+
+### Fixed
+- `scripts/export-engine-map-svg.py` now derives the exported SVG's width/height from the map's own viewBox instead of hardcoding 1500×800.
+
 ## [0.9.11b] - 2026-09-30
 
 **OrcaRouter — optional cloud provider with its own Settings tab (API key in the Keychain).**

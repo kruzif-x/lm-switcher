@@ -8,7 +8,7 @@ app. Added the MCP so that my Hermes Agent could load and unload models as and w
 
 ![LM Switcher icon](assets/AppIcon.png)
 
-> **Beta — v0.9.11b.** This is an early release of LM Switcher. The core model management
+> **Beta — v0.9.12b.** This is an early release of LM Switcher. The core model management
 > paths (discover / load / unload — GGUF, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash and sushi backends)
 > are stable, but expect rough edges; see the changelog for what landed so far.
 
@@ -501,7 +501,7 @@ Because that's the lightest-weight way to keep a tool always available on macOS 
 
 ## Version
 
-Current: **v0.9.11b** — beta. OrcaRouter optional cloud provider (dedicated Settings tab, API key in the macOS Keychain, live "Test connection"), sushi backend (beamivalice/sushi, the mlx-serve fork with EXL3/affine packs — one shared server, models load on demand), Splash backend (paperniuk/splash M1/M2 fork), menu bar + Per-Model redesign, MCP agent access, idle auto-unload, eight engines (llama.cpp, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash, sushi), and an in-app engine-selection map. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
+Current: **v0.9.12b** — beta. OrcaRouter optional cloud provider (dedicated Settings tab, API key in the macOS Keychain, live "Test connection"), sushi backend (beamivalice/sushi, the mlx-serve fork with EXL3/affine packs — one shared server, models load on demand), Splash backend (paperniuk/splash M1/M2 fork), menu bar + Per-Model redesign, MCP agent access, idle auto-unload, eight engines (llama.cpp, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash, sushi), and an in-app engine-selection map. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
 
 See `CHANGELOG.md` for full version history.
 

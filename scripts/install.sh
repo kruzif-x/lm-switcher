@@ -280,9 +280,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
     <key>CFBundleDisplayName</key>
     <string>LM Switcher</string>
     <key>CFBundleVersion</key>
-    <string>0.9.11b</string>
+    <string>0.9.12b</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.9.11b</string>
+    <string>0.9.12b</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
