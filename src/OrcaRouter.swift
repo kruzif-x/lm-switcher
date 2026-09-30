@@ -27,6 +27,24 @@ enum OrcaRouter {
     /// Referral link shown in the OrcaRouter tab / About / README.
     static let referralURL = "https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8"
 
+    /// OAuth 2.0 + PKCE endpoints for "Sign in with OrcaRouter"
+    /// (docs.orcarouter.ai/getting-started/sign-in-with-orcarouter).
+    static let authURL  = "https://www.orcarouter.ai/auth"
+    static let tokenURL = "https://www.orcarouter.ai/api/v1/auth/keys"
+
+    /// App name shown on the consent screen.
+    static let appName = "LM Switcher"
+
+    /// Partner app id — issued by OrcaRouter on the partner console's
+    /// Integration page once the listing is approved. Empty is fine: the
+    /// flow still works; the consent screen just shows an unverified name
+    /// and keys aren't tagged "via your app". Set this to turn on the
+    /// Verified badge + usage attribution.
+    static let appID = ""
+
+    /// Referral code sent with sign-ins (credits sign-ups to the listing).
+    static let referralCode = "ref_a1a2c3f77b1a87bde5f8"
+
     /// Keychain coordinates. Service is stable across versions so the
     /// stored key survives app updates.
     static let keychainService = "local.llama-menubar.orcarouter"

@@ -91,7 +91,7 @@ LM Switcher stays local-first. If you *also* want cloud models — DeepSeek, GLM
 
 Ready-to-copy provider entries (Codex CLI format + a generic OpenAI-compatible snippet): [`integrations/orcarouter.toml`](integrations/orcarouter.toml).
 
-In the app: open **Settings → OrcaRouter**, paste your API key (kept in the macOS **Keychain**), hit **Test connection** to verify the key and fetch the catalog, then pick a **Default model** (`orcarouter/auto` routes for you). Once enabled, an **OrcaRouter row appears at the top of the menu bar list** for quick load/copy.
+In the app: open **Settings → OrcaRouter** and click **Sign in with OrcaRouter** — approve in your browser and the key is stored in the macOS **Keychain** automatically (no copy-paste; new users can sign up right in that flow, and the referral is credited automatically). Manual paste is still supported. Then hit **Test connection** to verify the key and fetch the catalog, and pick a **Default model** (`orcarouter/auto` routes for you). Once enabled, an **OrcaRouter row appears at the top of the menu bar list** for quick load/copy.
 
 ## Features Explained
 

@@ -212,6 +212,12 @@ struct SettingsView: View {
     @State private var orcaBaseURL: String
     @State private var orcaDefaultModel: String
     @State private var orcaCatalog: [String] = []
+
+    // "Sign in with OrcaRouter" (OAuth2 + PKCE) — controller + status.
+    @State private var orcaSignIn = OrcaSignInController()
+    @State private var orcaSignInStatus: String = ""
+    @State private var orcaSignInOK: Bool = true
+    @State private var orcaSignInBusy: Bool = false
     @State private var orcaKeyInput: String = ""
     @State private var orcaKeyIsSet: Bool
     @State private var orcaTestStatus: String = ""
@@ -1082,7 +1088,38 @@ struct SettingsView: View {
                     shortFieldRow(label: "Base URL", placeholder: OrcaRouter.defaultBaseURL, text: $orcaBaseURL)
                     Divider().opacity(0.5)
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("API key").font(.system(size: 12))
+                        HStack(spacing: 10) {
+                            Button {
+                                startOrcaSignIn()
+                            } label: {
+                                Label("Sign in with OrcaRouter", systemImage: "person.badge.key")
+                                    .font(.system(size: 12))
+                            }
+                            .disabled(orcaSignInBusy)
+                            if orcaSignInBusy {
+                                ProgressView().scaleEffect(0.55).frame(width: 12, height: 12)
+                                Button("Cancel") { cancelOrcaSignIn() }
+                                    .font(.system(size: 11))
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(Color.secondary)
+                            }
+                        }
+                        if !orcaSignInStatus.isEmpty {
+                            Text(orcaSignInStatus)
+                                .font(.system(size: 11))
+                                .foregroundStyle(orcaSignInOK ? Color.green : Color.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("Opens your browser — new users sign up right there. Approve once and the key is stored automatically (no copy-paste).")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    Divider().opacity(0.5)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("API key — or paste an existing one").font(.system(size: 12))
                         HStack(spacing: 8) {
                             SecureField(orcaKeyIsSet ? "•••••••• (stored in Keychain)" : "Paste your OrcaRouter key…", text: $orcaKeyInput)
                                 .font(.system(size: 11, design: .monospaced))
@@ -1100,7 +1137,7 @@ struct SettingsView: View {
                         }
                         Text(orcaKeyIsSet
                              ? "Key stored in the macOS Keychain — it is never written to settings files."
-                             : "No key stored yet — paste one above and Save.")
+                             : "No key stored yet — sign in above, or paste an existing key and Save.")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }
@@ -1197,6 +1234,26 @@ struct SettingsView: View {
         _ = OrcaRouter.deleteKey()
         orcaKeyIsSet = false
         orcaTestStatus = ""
+    }
+
+    private func startOrcaSignIn() {
+        orcaSignInBusy = true
+        orcaSignInStatus = "Waiting for approval in your browser…"
+        orcaSignInOK = true
+        let c = orcaSignIn
+        c.onFinish = { msg, ok in
+            orcaSignInBusy = false
+            orcaSignInStatus = msg
+            orcaSignInOK = ok
+            if ok { orcaKeyIsSet = true }
+        }
+        c.start()
+    }
+
+    private func cancelOrcaSignIn() {
+        orcaSignIn.cancel()
+        orcaSignInBusy = false
+        orcaSignInStatus = ""
     }
 
     private func testOrcaConnection() {
@@ -1891,13 +1948,13 @@ struct SettingsView: View {
                                   "LM Switcher stays local-first. The OrcaRouter tab adds an OPTIONAL cloud provider — 200+ models (DeepSeek, GLM, Kimi and more) behind one OpenAI-compatible endpoint, billed at provider rates with no markup. Turn it on only if you want cloud models alongside your local ones; local engines, discovery, and the menu are untouched.",
                                   mono: false)
                         helpEntry("Set it up in the OrcaRouter tab.",
-                                  "Paste an API key (stored in the macOS Keychain — never in a settings file), keep the default base URL (https://api.orcarouter.ai/v1), then hit Test connection — it verifies the key and fills the Default model dropdown with the live catalog (keep orcarouter/auto to auto-route, or pick a specific one like deepseek/deepseek-v4.1-flash or z-ai/glm-5.3-flash).",
-                                  detail: "Test connection calls GET /models with your key: a green \"✓ Connected — N models\" means the key works and lists the live catalog size.")
+                                  "Click Sign in with OrcaRouter — your browser opens; approve (new users can sign up right on that page) and the key is stored automatically in the macOS Keychain. Prefer manual? Paste a key created in the OrcaRouter dashboard instead. Keep the default base URL (https://api.orcarouter.ai/v1), then hit Test connection — it verifies the key and fills the Default model dropdown with the live catalog (keep orcarouter/auto to auto-route, or pick a specific one like deepseek/deepseek-v4.1-flash or z-ai/glm-5.3-flash).",
+                                  detail: "Sign-in is OAuth 2.0 + PKCE: approval in the browser sends a one-time code to a local 127.0.0.1 callback; the app exchanges it over HTTPS for the key. No password ever touches the app. Test connection calls GET /models with the key and lists the live catalog size.")
                         helpEntry("The menu bar row.",
                                   "Once enabled, an “OrcaRouter” row sits at the top of the menu list. Click it to load/unload (green dot = loaded — this arms the quick actions; cloud needs no local process), hover to copy the base URL, right-click for Copy base URL / Copy model id / these settings.",
                                   detail: "The row shows the model picked in the Default model dropdown (orcarouter/auto = auto-route).")
                         helpEntry("Getting a key also supports this app.",
-                                  "Sign up through the referral link — OrcaRouter pays LM Switcher 5% of what referred workspaces spend on inference. The link is in the OrcaRouter tab, in About, and in the repo's README.",
+                                  "The Sign in button carries the referral link automatically — sign-ups made that way are credited to LM Switcher (OrcaRouter pays it 5% of what referred workspaces spend on inference). The link is also in the OrcaRouter tab, in About, and in the repo's README.",
                                   detail: "https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8")
                         helpEntry("Using it from other tools.",
                                   "Anything that speaks OpenAI-compatible chat works: base URL + Authorization: Bearer <key> + a catalog model id. The repo's integrations/ folder ships ready-made snippets (Codex CLI format).",
