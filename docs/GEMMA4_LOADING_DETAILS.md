@@ -177,7 +177,7 @@ overridable** (Settings → Per-Model → Suppress reasoning, or
 turn it OFF for **Muse Glimmer**: with suppression active, Muse's
 thinking protocol leaks raw into content (`to=self<|message|>…`
 garbage) and the DFlash drafter's acceptance collapses. Custom chat
-templates are configured via the **Global** settings tab and apply to
+templates are configured via the **Local** settings tab and apply to
 every model loaded.
 
 ---
@@ -760,8 +760,8 @@ does, the `--reasoning off` flag is not being applied.
 | `--ctx-size` | Per-model override or `defaultCtxSize` | Yes (`llama ctx`) |
 | `--reasoning` | Hardcoded `off` | No |
 | `--reasoning-format` | Hardcoded `none` | No |
-| `--chat-template` | `chatTemplatePath` setting or env | Yes (Settings → Global) |
-| *(anything in `globalExtraArgs`)* | User-defined | Yes (Settings → Global) |
+| `--chat-template` | `chatTemplatePath` setting or env | Yes (Settings → Local) |
+| *(anything in `globalExtraArgs`)* | User-defined | Yes (Settings → Local) |
 
 ### A.2 Environment variables
 

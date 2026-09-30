@@ -421,4 +421,19 @@ struct AppSettings {
 
     /// Max KV cache size for MLX. 0 = unlimited (use model default).
     var mlxMaxKvSize: Int = 0
+
+    // MARK: - OrcaRouter (optional cloud provider)
+    // Non-secret config only — the API key lives in the macOS Keychain
+    // (managed by the app), never in UserDefaults or settings files.
+
+    /// Enable the OrcaRouter cloud-provider surfaces in the app. Local
+    /// engines are unaffected either way (default: off).
+    var orcaEnabled: Bool = false
+
+    /// Base URL of the OrcaRouter OpenAI-compatible API.
+    var orcaBaseURL: String = "https://api.orcarouter.ai/v1"
+
+    /// Preferred model id when pointing clients at OrcaRouter
+    /// (e.g. "orcarouter/auto" or "deepseek/deepseek-v4.1-flash").
+    var orcaDefaultModel: String = ""
 }

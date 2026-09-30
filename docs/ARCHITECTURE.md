@@ -122,7 +122,7 @@ This is the same mechanism the CLI uses (lazily, on `status` calls).
 | `LlamaMenubarApp` | `@main` entry point. Holds the singleton `ServerManager` and `SettingsWindowHost`. Declares the `MenuBarExtra` scene. |
 | `SettingsWindowHost` | Manages the lifecycle of the settings `NSWindow`. Necessary because SwiftUI's `Settings` scene doesn't work in menu-bar-only apps. |
 | `MenuView` | The dropdown menu content (model list, status, buttons, settings link, quit). |
-| `SettingsView` | Two-tab settings window (Global / Per-Model). |
+| `SettingsView` | Settings window (Local / Per-Model / OrcaRouter / Help / About). |
 | `ServerManager` | The brain. Owns model discovery, lifecycle, state, settings persistence, directory watching, and external-process sync. Marked `@Observable` so views auto-rerender. |
 | `ModelBackend` | Enum: `.gguf` or `.mlx`. Each backend has its own launch command and SF Symbol. |
 | `ModelEntry` | A discovered model (immutable value type). |

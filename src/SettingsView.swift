@@ -1,6 +1,6 @@
 // =============================================================================
 //  SettingsView.swift
-//  LM Switcher — settings window (Global / Per-Model / Help / About)
+//  LM Switcher — settings window (Local / Per-Model / OrcaRouter / Help / About)
 // =============================================================================
 
 import SwiftUI
@@ -10,7 +10,7 @@ import UniformTypeIdentifiers
 
 // MARK: - onChange modifier bundles (help Swift's type checker)
 
-private struct GlobalSettingsModifier: ViewModifier {
+private struct LocalSettingsModifier: ViewModifier {
     @Bindable var manager: ServerManager
     @Binding var modelsDir: String
     @Binding var defaultPort: String
@@ -207,6 +207,16 @@ struct SettingsView: View {
     @State private var noMmap: Bool
     @State private var mlxMaxKvSizeStr: String
 
+    // OrcaRouter (optional cloud provider) — @State mirrors + local UI state.
+    @State private var orcaEnabled: Bool
+    @State private var orcaBaseURL: String
+    @State private var orcaDefaultModel: String
+    @State private var orcaKeyInput: String = ""
+    @State private var orcaKeyIsSet: Bool
+    @State private var orcaTestStatus: String = ""
+    @State private var orcaTestOK: Bool = true
+    @State private var orcaTesting: Bool = false
+
     init(manager: ServerManager, initialTab: Int = 0) {
         self.manager = manager
         _selectedTab    = State(initialValue: initialTab)
@@ -257,23 +267,29 @@ struct SettingsView: View {
         _mlock            = State(initialValue: manager.settings.mlock)
         _noMmap           = State(initialValue: manager.settings.noMmap)
         _mlxMaxKvSizeStr  = State(initialValue: manager.settings.mlxMaxKvSize == 0 ? "" : "\(manager.settings.mlxMaxKvSize)")
+        _orcaEnabled      = State(initialValue: manager.settings.orcaEnabled)
+        _orcaBaseURL      = State(initialValue: manager.settings.orcaBaseURL)
+        _orcaDefaultModel = State(initialValue: manager.settings.orcaDefaultModel)
+        _orcaKeyIsSet     = State(initialValue: OrcaRouter.loadKey() != nil)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             TabView(selection: $selectedTab) {
                 globalPane
-                    .tabItem { Label("Global",    systemImage: "gear") }.tag(0)
+                    .tabItem { Label("Local",     systemImage: "gear") }.tag(0)
                 modelsPane
                     .tabItem { Label("Per-Model", systemImage: "cube") }.tag(1)
+                orcaPane
+                    .tabItem { Label("OrcaRouter", systemImage: "cloud") }.tag(2)
                 helpPane
-                    .tabItem { Label("Help",      systemImage: "questionmark.circle") }.tag(2)
+                    .tabItem { Label("Help",      systemImage: "questionmark.circle") }.tag(3)
                 aboutPane
-                    .tabItem { Label("About",     systemImage: "info.circle") }.tag(3)
+                    .tabItem { Label("About",     systemImage: "info.circle") }.tag(4)
             }
 
             // Pinned footer — hidden on Help and About tabs
-            if selectedTab < 2 {
+            if selectedTab < 3 {
                 Divider()
                 HStack {
                     Button("Restore Defaults") { restoreDefaults() }
@@ -289,13 +305,13 @@ struct SettingsView: View {
                 .padding(.vertical, 10)
             }
         }
-        .frame(width: 580, height: selectedTab < 2 ? 520 : 500)
+        .frame(width: 580, height: selectedTab < 3 ? 520 : 500)
         .onReceive(NotificationCenter.default.publisher(
             for: UserDefaults.didChangeNotification)
             .debounce(for: .milliseconds(400), scheduler: RunLoop.main)) { _ in
             reloadMirrors()
         }
-        .modifier(GlobalSettingsModifier(
+        .modifier(LocalSettingsModifier(
             manager: manager,
             modelsDir: $modelsDir, defaultPort: $defaultPort,
             defaultCtxSize: $defaultCtxSize, globalExtraArgs: $globalExtraArgs,
@@ -325,6 +341,9 @@ struct SettingsView: View {
         .onChange(of: sushiServerPath)    { _, v in manager.settings.sushiServerPath = v }
         .onChange(of: sushiModelDir)      { _, v in manager.settings.sushiModelDir = v; manager.refreshModels() }
         .onChange(of: sushiPortStr)       { _, v in manager.settings.sushiPort = Int(v) ?? 12345 }
+        .onChange(of: orcaEnabled)      { _, v in manager.settings.orcaEnabled = v }
+        .onChange(of: orcaBaseURL)      { _, v in manager.settings.orcaBaseURL = v }
+        .onChange(of: orcaDefaultModel) { _, v in manager.settings.orcaDefaultModel = v }
     }
 
     // MARK: - Save / Restore
@@ -386,6 +405,9 @@ struct SettingsView: View {
         mlock           = d.mlock
         noMmap          = d.noMmap
         mlxMaxKvSizeStr = d.mlxMaxKvSize == 0 ? "" : "\(d.mlxMaxKvSize)"
+        orcaEnabled     = d.orcaEnabled
+        orcaBaseURL     = d.orcaBaseURL
+        orcaDefaultModel = d.orcaDefaultModel
         manager.settings = d
         manager.settings.modelsDir = modelsDir
         manager.saveSettings()
@@ -447,12 +469,13 @@ struct SettingsView: View {
         mlock           = s.mlock
         noMmap          = s.noMmap
         mlxMaxKvSizeStr = s.mlxMaxKvSize == 0 ? "" : "\(s.mlxMaxKvSize)"
+        orcaEnabled     = s.orcaEnabled
+        orcaBaseURL     = s.orcaBaseURL
+        orcaDefaultModel = s.orcaDefaultModel
     }
 
 
-    // MARK: - Global tab
-
-    // MARK: - Global tab
+    // MARK: - Local tab
 
     private var globalPane: some View {
         ScrollView {
@@ -1032,13 +1055,148 @@ struct SettingsView: View {
     }
 
 
+    // MARK: - OrcaRouter tab (optional cloud provider)
+    //
+    //  Additive by design: this tab configures the OPTIONAL cloud side
+    //  (base URL / API key / default model). It never touches local
+    //  engine discovery, launching, or the menu — cloud models do not
+    //  appear in local scans. The API key lives in the macOS Keychain.
+
+    private var orcaPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("OrcaRouter is an optional cloud provider — 200+ models (DeepSeek, GLM, Kimi and more) behind one OpenAI-compatible endpoint, billed at provider rates with no markup. It is completely separate from your local engines: nothing here changes local discovery, launching, or the menu.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+
+                settingsCard(label: "OrcaRouter", symbol: "cloud") {
+                    toggleRow(label: "Enable OrcaRouter",
+                              hint: "Off = the app never calls OrcaRouter. Local models are unaffected either way.",
+                              isOn: $orcaEnabled)
+                    Divider().opacity(0.5)
+                    shortFieldRow(label: "Base URL", placeholder: OrcaRouter.defaultBaseURL, text: $orcaBaseURL)
+                    Divider().opacity(0.5)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("API key").font(.system(size: 12))
+                        HStack(spacing: 8) {
+                            SecureField(orcaKeyIsSet ? "•••••••• (stored in Keychain)" : "Paste your OrcaRouter key…", text: $orcaKeyInput)
+                                .font(.system(size: 11, design: .monospaced))
+                            Button("Save") { saveOrcaKey() }
+                                .font(.system(size: 11))
+                                .buttonStyle(.plain)
+                                .foregroundStyle(orcaKeyInput.isEmpty ? Color.secondary : Color.accentColor)
+                                .disabled(orcaKeyInput.isEmpty)
+                            if orcaKeyIsSet {
+                                Button("Remove") { removeOrcaKey() }
+                                    .font(.system(size: 11))
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(Color.red.opacity(0.8))
+                            }
+                        }
+                        Text(orcaKeyIsSet
+                             ? "Key stored in the macOS Keychain — it is never written to settings files."
+                             : "No key stored yet — paste one above and Save.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    Divider().opacity(0.5)
+                    shortFieldRow(label: "Default model id", placeholder: "orcarouter/auto", text: $orcaDefaultModel)
+                    Divider().opacity(0.5)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 10) {
+                            Button(orcaTesting ? "Testing…" : "Test connection") { testOrcaConnection() }
+                                .font(.system(size: 11))
+                                .disabled(orcaTesting)
+                            if !orcaTestStatus.isEmpty {
+                                Text(orcaTestStatus)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(orcaTestOK ? Color.green : Color.red)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        Text("Calls GET <base>/models with your key — verifies the key and lists the live catalog.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    Divider().opacity(0.5)
+                    HStack(spacing: 6) {
+                        Button("Sign up / get a key — supports this app (referral link)") {
+                            if let u = URL(string: OrcaRouter.referralURL) { NSWorkspace.shared.open(u) }
+                        }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11))
+                        Spacer()
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                }
+
+                settingsCard(label: "Using it", symbol: "terminal") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Any OpenAI-compatible client works: base URL \(orcaBaseURL.isEmpty ? OrcaRouter.defaultBaseURL : orcaBaseURL), header Authorization: Bearer <key>, model = an id from the catalog — e.g. orcarouter/auto (auto-routes) or a specific one like deepseek/deepseek-v4.1-flash or z-ai/glm-5.3-flash.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Ready-made snippets (Codex CLI + generic) ship in the repo under integrations/.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                }
+            }
+            .padding(.bottom, 12)
+        }
+    }
+
+    private func saveOrcaKey() {
+        let k = orcaKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !k.isEmpty else { return }
+        if OrcaRouter.saveKey(k) {
+            orcaKeyInput = ""
+            orcaKeyIsSet = true
+            orcaTestStatus = ""
+        }
+    }
+
+    private func removeOrcaKey() {
+        _ = OrcaRouter.deleteKey()
+        orcaKeyIsSet = false
+        orcaTestStatus = ""
+    }
+
+    private func testOrcaConnection() {
+        orcaTesting = true
+        orcaTestStatus = ""
+        let base = orcaBaseURL
+        let key  = orcaKeyInput.isEmpty
+            ? (OrcaRouter.loadKey() ?? "")
+            : orcaKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        Task {
+            let r = await OrcaRouter.testConnection(baseURL: base, apiKey: key)
+            await MainActor.run {
+                orcaTesting = false
+                orcaTestOK = r.ok
+                orcaTestStatus = r.message
+            }
+        }
+    }
+
     // MARK: - Per-Model tab (redesign Phase 4: master-detail)
     //
     //  Was a DisclosureGroup wall repeating 11 TextFields per model.
     //  Now a sidebar (running state + override-count pill) + a detail
-    //  pane reusing the Global tab's row language, with per-field
-    //  OVERRIDE/GLOBAL badges so "what did I customize?" reads at a
-    //  glance instead of requiring a value-by-value diff against Global.
+    //  pane reusing the Local tab's row language, with per-field
+    //  OVERRIDE/LOCAL badges so "what did I customize?" reads at a
+    //  glance instead of requiring a value-by-value diff against Local.
 
     /// The field keys that make up a model's overridable settings —
     /// shared by the sidebar's count pill and the detail rows' badges.
@@ -1062,7 +1220,7 @@ struct SettingsView: View {
                 VStack(spacing: 6) {
                     Image(systemName: "cube").font(.system(size: 26)).foregroundStyle(.secondary)
                     Text("No models found").font(.system(size: 13, weight: .medium))
-                    Text("Set a Models directory in the Global tab.")
+                    Text("Set a Models directory in the Local tab.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1155,11 +1313,11 @@ struct SettingsView: View {
             .foregroundStyle(backend == .mlx ? Color.purple : Color.secondary)
     }
 
-    /// Small "OVERRIDE" / "GLOBAL" indicator — the badge language that
+    /// Small "OVERRIDE" / "LOCAL" indicator — the badge language that
     /// makes per-field customization legible without a value-by-value
-    /// comparison against the Global tab.
+    /// comparison against the Local tab.
     private func overrideBadge(active: Bool) -> some View {
-        Text(active ? "OVERRIDE" : "GLOBAL")
+        Text(active ? "OVERRIDE" : "LOCAL")
             .font(.system(size: 8, weight: .bold))
             .tracking(0.3)
             .foregroundStyle(active ? Color.accentColor : Color.secondary.opacity(0.55))
@@ -1213,11 +1371,11 @@ struct SettingsView: View {
                             manager.setPerModelOverride(newVal, for: model)
                             manager.refreshTrigger += 1
                         }
-                    )) { Text("Override Global Settings").font(.system(size: 12)) }
+                    )) { Text("Override Local Settings").font(.system(size: 12)) }
                     .toggleStyle(.switch).controlSize(.small)
                     Spacer()
                     if overrideOn {
-                        Button("Reset to Global") {
+                        Button("Reset to Local") {
                             manager.resetPerModel(for: model)
                             manager.refreshTrigger += 1
                         }
@@ -1373,7 +1531,7 @@ struct SettingsView: View {
                                   mono: false)
                         helpEntry("Step 0 — Install an engine (one-time)",
                                   "In Terminal: brew install llama.cpp — that covers GGUF models, which is all most people need. For Apple MLX models, also: pip install mlx-lm. For MTPLX models (native MTP spec-decode), install: pip install mtplx. For Splash (the M1/M2 Metal engine), run install-m1.sh from the paperniuk/splash releases page — it installs splash-m1 to /opt/homebrew/bin. For sushi (the mlx-serve fork with EXL3 packs): brew install beamivalice/tap/sushi.",
-                                  detail: "Paths are auto-detected; override in Global → Backends. Defaults: /opt/homebrew/bin/llama-server, the newest Python user-install of mlx_lm.server, your active venv's mtplx (LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first), mlx-serve (~/AI/tools/mlx-serve/current/mlx-serve, then /opt/homebrew/bin/mlx-serve), splash-m1 (/opt/homebrew/bin/splash-m1, then ~/.local/bin/splash-m1), and sushi (/opt/homebrew/bin/sushi, then ~/.local/bin/sushi).",
+                                  detail: "Paths are auto-detected; override in Local → Backends. Defaults: /opt/homebrew/bin/llama-server, the newest Python user-install of mlx_lm.server, your active venv's mtplx (LM Switcher checks ~/AI/envs/omlx-env/bin/mtplx first), mlx-serve (~/AI/tools/mlx-serve/current/mlx-serve, then /opt/homebrew/bin/mlx-serve), splash-m1 (/opt/homebrew/bin/splash-m1, then ~/.local/bin/splash-m1), and sushi (/opt/homebrew/bin/sushi, then ~/.local/bin/sushi).",
                                   mono: false)
                         helpEntry("Step 1 — Download a model",
                                   "Models are free files from Hugging Face (links below). Not sure what fits your Mac? Use the table in section 5 — e.g. with 16 GB of RAM, search \"Qwen3.5 9B GGUF\" and download the file ending in Q4_K_M.gguf.",
@@ -1382,7 +1540,7 @@ struct SettingsView: View {
                         helpLinks([("Hugging Face — GGUF models", "https://huggingface.co/models?library=gguf"),
                                    ("MLX community", "https://huggingface.co/mlx-community")])
                         helpEntry("Step 2 — Tell the app where your models live",
-                                  "Settings → Global → Models directory: pick the folder you download models into. The app watches it — new downloads appear automatically.",
+                                  "Settings → Local → Models directory: pick the folder you download models into. The app watches it — new downloads appear automatically.",
                                   detail: "Scanned recursively. Hidden folders and mmproj-*/mtp-* companion files are excluded from the list on purpose — they belong to other models.",
                                   mono: false)
                         helpEntry("Step 3 — Load it",
@@ -1518,7 +1676,7 @@ struct SettingsView: View {
                         Group {
                             helpSub("Suggested starting points by task")
                             helpEntry("These are starting points, not rules.",
-                                      "Every model and harness behaves a little differently — treat the numbers below as where to begin, then adjust Temperature/Top-P/Top-K/Repeat penalty yourself in Global or Per-Model until it feels right. Nothing here is enforced or auto-applied.",
+                                      "Every model and harness behaves a little differently — treat the numbers below as where to begin, then adjust Temperature/Top-P/Top-K/Repeat penalty yourself in Local or Per-Model until it feels right. Nothing here is enforced or auto-applied.",
                                       mono: false)
                             helpEntry("General chat", "Temp 0.7 · Top-P 0.8 · Top-K 20 · Repeat penalty 1.0 · Thinking OFF.",
                                       detail: "Qwen's own published non-thinking-mode defaults — verified against Qwen3's model card, not folklore.")
@@ -1534,11 +1692,11 @@ struct SettingsView: View {
                     }
 
                     helpSection(number: "4", title: "Per-model overrides", id: "s4", proxy: proxy) {
-                        helpEntry("Pick a model on the left, then flip \"Override Global Settings\".",
+                        helpEntry("Pick a model on the left, then flip \"Override Local Settings\".",
                                   "The list shows every model with a running-state dot, same as the menu bar. The grey inherited values on the right become editable for that model only. A number badge shows how many fields you've actually customized.",
                                   mono: false)
-                        helpEntry("OVERRIDE vs GLOBAL",
-                                  "Each row is tagged: OVERRIDE means this field has its own value; GLOBAL means it's still inheriting from the Global tab, even with overrides turned on.",
+                        helpEntry("OVERRIDE vs LOCAL",
+                                  "Each row is tagged: OVERRIDE means this field has its own value; LOCAL means it's still inheriting from the Local tab, even with overrides turned on.",
                                   mono: false)
                         helpEntry("Load, Unload, or Switch right from here.",
                                   "The header has the same buttons as the menu bar dropdown — no need to close Settings to start a model.",
@@ -1547,7 +1705,7 @@ struct SettingsView: View {
                                   "Already running? Unload and load again.",
                                   mono: false)
                         helpEntry("Two reset buttons.",
-                                  "\"Reset to Global\" = inherit everything again. \"Reset to Default\" = factory values.",
+                                  "\"Reset to Local\" = inherit everything again. \"Reset to Default\" = factory values.",
                                   detail: "Overrides persist in the shared settings store, so the CLI honors them too. Per-model extra args are APPENDED to global extra args, not replacing them.",
                                   mono: false)
                     }
@@ -1630,7 +1788,7 @@ struct SettingsView: View {
                         helpEntry("mtp-*.gguf exclusion", "MTP encoder heads are excluded from the model list — they are not standalone models. When MTP is ON, the app finds the head (same folder or MTP/ subfolder) and attaches it via --spec-type draft-mtp automatically. Third-party sidecars (e.g. HauhauCS FastMTP) must be renamed to mtp-*.gguf to be detected — the app only looks for the mtp- prefix, not FastMTP or other naming conventions.")
                         helpEntry("dflash-*.gguf exclusion", "DFlash block-diffusion drafters (e.g. Muse Glimmer's dflash-kquant.gguf) are excluded from the model list. When DFlash is ON, the app finds the drafter next to the model and attaches it via --spec-type draft-dflash automatically.")
                         helpEntry("Reasoning suppression (Gemma 4)", "Applied automatically via --reasoning off --reasoning-format none. Now per-model overridable (Per-Model tab → Suppress reasoning) — keep ON for Gemma 4, turn OFF for Muse Glimmer, whose thinking leaks raw into output while suppressed.", detail: "Set per model with model.<hash>.suppressReasoning or the Per-Model tab. Muse Glimmer with suppression ON also collapses DFlash drafter acceptance.")
-                        helpEntry("Chat template bugs (Gemma 4)", "The standard Gemma 4 template has 4 bugs that break multi-turn tool calling. Use a custom .jinja template via Global → Backends → Chat template for agentic harnesses.")
+                        helpEntry("Chat template bugs (Gemma 4)", "The standard Gemma 4 template has 4 bugs that break multi-turn tool calling. Use a custom .jinja template via Local → Backends → Chat template for agentic harnesses.")
                     }
 
                     helpSection(number: "7", title: "Agent access (MCP)", id: "s7", proxy: proxy) {
@@ -1698,10 +1856,25 @@ struct SettingsView: View {
                                   mono: false)
                     }
 
-                    helpSection(number: "10", title: "Troubleshooting & glossary", id: "s10", proxy: proxy) {
+                    helpSection(number: "10", title: "Cloud provider — OrcaRouter", id: "s10", proxy: proxy) {
+                        helpEntry("OrcaRouter is the optional cloud half.",
+                                  "LM Switcher stays local-first. The OrcaRouter tab adds an OPTIONAL cloud provider — 200+ models (DeepSeek, GLM, Kimi and more) behind one OpenAI-compatible endpoint, billed at provider rates with no markup. Turn it on only if you want cloud models alongside your local ones; local engines, discovery, and the menu are untouched.",
+                                  mono: false)
+                        helpEntry("Set it up in the OrcaRouter tab.",
+                                  "Paste an API key (stored in the macOS Keychain — never in a settings file), keep the default base URL (https://api.orcarouter.ai/v1), set a default model id — orcarouter/auto routes for you, or pick a specific one like deepseek/deepseek-v4.1-flash or z-ai/glm-5.3-flash — then hit Test connection.",
+                                  detail: "Test connection calls GET /models with your key: a green \"✓ Connected — N models\" means the key works and lists the live catalog size.")
+                        helpEntry("Getting a key also supports this app.",
+                                  "Sign up through the referral link — OrcaRouter pays LM Switcher 5% of what referred workspaces spend on inference. The link is in the OrcaRouter tab, in About, and in the repo's README.",
+                                  detail: "https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8")
+                        helpEntry("Using it from other tools.",
+                                  "Anything that speaks OpenAI-compatible chat works: base URL + Authorization: Bearer <key> + a catalog model id. The repo's integrations/ folder ships ready-made snippets (Codex CLI format).",
+                                  mono: false)
+                    }
+
+                    helpSection(number: "11", title: "Troubleshooting & glossary", id: "s11", proxy: proxy) {
                         Group {
                             helpEntry("The list is empty",
-                                      "The panel shows a 3-step setup guide automatically — follow it, or set Models directory yourself in the Global tab, then click ↻ Refresh. Note: mmproj-* and mtp-* files are hidden on purpose — they're companions, not models.",
+                                      "The panel shows a 3-step setup guide automatically — follow it, or set Models directory yourself in the Local tab, then click ↻ Refresh. Note: mmproj-* and mtp-* files are hidden on purpose — they're companions, not models.",
                                       mono: false)
                             helpEntry("A model's name turns red with an error underneath",
                                       "The message under the row says exactly what went wrong — no need to hover anything. Most common: the engine isn't installed — run brew install llama.cpp (GGUF) or pip install mlx-lm (MLX).",
@@ -1725,7 +1898,7 @@ struct SettingsView: View {
                                       "The model must be RUNNING (green dot), and the URL needs the /v1: http://127.0.0.1:8080/v1. Only apps on this Mac can reach it.",
                                       mono: false)
                             helpEntry("An agent says \"access disabled\"",
-                                      "That's the Agent access toggle doing its job. Turn it ON in Settings → Global if you want agents in control.",
+                                      "That's the Agent access toggle doing its job. Turn it ON in Settings → Local if you want agents in control.",
                                       mono: false)
                         }
                         Group {
@@ -1768,7 +1941,8 @@ struct SettingsView: View {
                 ("7", "s7", "Agent access (MCP)"),
                 ("8", "s8", "Browser access (chat)"),
                 ("9", "s9", "Command line"),
-                ("10", "s10", "Troubleshooting"),
+                ("10", "s10", "Cloud provider (OrcaRouter)"),
+                ("11", "s11", "Troubleshooting"),
             ]
 
             let cols = [GridItem(.flexible()), GridItem(.flexible())]
@@ -1926,7 +2100,7 @@ struct SettingsView: View {
                     }
                     Text("LM Switcher")
                         .font(.title2).fontWeight(.medium)
-                    Text("Version 0.9.10b (beta)")
+                    Text("Version 0.9.11b (beta)")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.top, 24)
@@ -1934,7 +2108,7 @@ struct SettingsView: View {
 
                 // Description
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages eight engines on your behalf — llama-server (GGUF), mlx_lm.server (Apple MLX), oMLX, MTPLX, ds4-server (DwarfStar), mlx-serve, Splash (the M1/M2 fork of incoai/splash) and sushi (the mlx-serve fork with EXL3 packs). Models start on demand, serve on a local port, and stop cleanly when you unload them.")
+                    Text("LM Switcher is a macOS menu bar app for running and switching between local language models without touching the terminal. It manages eight engines on your behalf — llama-server (GGUF), mlx_lm.server (Apple MLX), oMLX, MTPLX, ds4-server (DwarfStar), mlx-serve, Splash (the M1/M2 fork of incoai/splash) and sushi (the mlx-serve fork with EXL3 packs). Models start on demand, serve on a local port, and stop cleanly when you unload them. On top of those local engines, an optional cloud provider — OrcaRouter — can serve 200+ hosted models (DeepSeek, GLM, Kimi and more) behind the same OpenAI-compatible endpoint; it lives in its own Settings tab and never touches your local setup.")
                         .font(.body).foregroundStyle(.secondary)
                     Text("Discovered models appear in the menu bar dropdown. Click one to load it, right-click for single-model actions, or use the bulk controls to load and unload multiple models at once. All settings — context size, KV cache, sampling, per-model overrides — are persisted and shared with the companion llama CLI, so the terminal and the app always stay in sync.")
                         .font(.body).foregroundStyle(.secondary)
@@ -1990,6 +2164,9 @@ struct SettingsView: View {
                     }
                     if let url = URL(string: "https://github.com/ddalcu/mlx-serve") {
                         Link("mlx-serve", destination: url).font(.caption)
+                    }
+                    if let url = URL(string: OrcaRouter.referralURL) {
+                        Link("OrcaRouter (optional cloud provider)", destination: url).font(.caption)
                     }
                     // MTP issue link removed — fixed in llama.cpp b9859+
                 }

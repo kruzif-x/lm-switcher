@@ -37,7 +37,7 @@
 //                             `ServerManager` and a `SettingsWindowHost`.
 //  - `MenuView`            — The dropdown menu content (model list, status,
 //                             buttons, settings link, quit).
-//  - `SettingsView`        — A two-tab settings window (Global / Per-Model).
+//  - `SettingsView`        — The settings window (Local / Per-Model / OrcaRouter / Help / About).
 //  - `SettingsWindowHost`  — Manages the lifecycle of the settings NSWindow
 //                             (so it isn't torn down when the SwiftUI view
 //                             re-renders).

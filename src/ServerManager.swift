@@ -1900,7 +1900,7 @@ class ServerManager {
             var s = modelStates[model.id] ?? ModelState()
             s.isRunning = false
             s.pid = nil
-            s.lastError = "\(model.backend.rawValue) engine not found at \(executable) — install with: \(installHint), or fix the path in Settings → Global → Backends."
+            s.lastError = "\(model.backend.rawValue) engine not found at \(executable) — install with: \(installHint), or fix the path in Settings → Local → Backends."
             modelStates[model.id] = s
             NSSound.beep()
             return
@@ -3154,7 +3154,7 @@ class ServerManager {
         settings.sushiModelDir = d.string(forKey: "sushiModelDir") ?? ""
         let shp = d.integer(forKey: "sushiPort")
         settings.sushiPort = shp == 0 ? 12345 : shp
-        // Global extra args default to empty.
+        // App-wide extra args default to empty.
         settings.globalExtraArgs = d.string(forKey: "globalExtraArgs") ?? ""
         // Chat template override: empty = use built-in template.
         settings.chatTemplatePath = d.string(forKey: "chatTemplatePath") ?? ""
@@ -3203,6 +3203,12 @@ class ServerManager {
 
         // MLX-specific.
         settings.mlxMaxKvSize = d.integer(forKey: "mlxMaxKvSize")
+
+        // OrcaRouter (optional cloud provider). The API key lives in the
+        // macOS Keychain, not here — only non-secret config is persisted.
+        settings.orcaEnabled = d.bool(forKey: "orcaEnabled")
+        settings.orcaBaseURL = d.string(forKey: "orcaBaseURL") ?? OrcaRouter.defaultBaseURL
+        settings.orcaDefaultModel = d.string(forKey: "orcaDefaultModel") ?? ""
     }
 
     /// Persist all settings to `UserDefaults`. Currently called by
@@ -3257,6 +3263,9 @@ class ServerManager {
         d.set(settings.mlock, forKey: "mlock")
         d.set(settings.noMmap, forKey: "noMmap")
         d.set(settings.mlxMaxKvSize, forKey: "mlxMaxKvSize")
+        d.set(settings.orcaEnabled, forKey: "orcaEnabled")
+        d.set(settings.orcaBaseURL, forKey: "orcaBaseURL")
+        d.set(settings.orcaDefaultModel, forKey: "orcaDefaultModel")
     }
 }
 

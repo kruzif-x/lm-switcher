@@ -59,7 +59,7 @@ enum McpTools {
         Prefs.sync()
         guard Prefs.bool("mcpEnabled") else {
             return failure("agent_access_disabled",
-                "Agent access is disabled. The user can enable it in LM Switcher → Settings → Global → Agent access (MCP). Running models are unaffected.")
+                "Agent access is disabled. The user can enable it in LM Switcher → Settings → Local → Agent access (MCP). Running models are unaffected.")
         }
         switch name {
         case "status":        return payload(["ok": true])

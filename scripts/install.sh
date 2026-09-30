@@ -169,7 +169,7 @@ done
 # the floor when the OS is upgraded.
 swiftc -parse-as-library -o "$COMPILED_BIN" -O \
     -target arm64-apple-macos26.0 \
-    -framework SwiftUI -framework AppKit -framework WebKit \
+    -framework SwiftUI -framework AppKit -framework WebKit -framework Security \
     "${SWIFT_SOURCES[@]}"
 
 # MCP agent-access server (MCP_SPEC.md Phase 1). A separate binary that
@@ -280,9 +280,9 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
     <key>CFBundleDisplayName</key>
     <string>LM Switcher</string>
     <key>CFBundleVersion</key>
-    <string>0.9.10b</string>
+    <string>0.9.11b</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.9.10b</string>
+    <string>0.9.11b</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
@@ -445,7 +445,7 @@ echo "  - From Spotlight: ⌘+Space then 'LM Switcher'"
 echo "  - From CLI:       llama menubar"
 echo "  - Direct:         open '$APP_BUNDLE'"
 echo ""
-echo "Agent access (MCP) — OFF by default; enable in Settings → Global:"
+echo "Agent access (MCP) — OFF by default; enable in Settings → Local:"
 echo "  hermes mcp add lm-switcher --command $BIN_DIR/lm-switcher-mcp"
 echo ""
 echo "To use the CLI:"

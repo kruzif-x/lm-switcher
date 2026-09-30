@@ -8,7 +8,7 @@ app. Added the MCP so that my Hermes Agent could load and unload models as and w
 
 ![LM Switcher icon](assets/AppIcon.png)
 
-> **Beta — v0.9.10b.** This is an early release of LM Switcher. The core model management
+> **Beta — v0.9.11b.** This is an early release of LM Switcher. The core model management
 > paths (discover / load / unload — GGUF, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash and sushi backends)
 > are stable, but expect rough edges; see the changelog for what landed so far.
 
@@ -32,7 +32,7 @@ LM Switcher is a native macOS app that lives in your menu bar (next to the clock
 - 🔄 **Run multiple models simultaneously**, each on its own port (e.g. one chat model on :8080, an embedder on :8081)
 - 🎨 **Auto-pair** `mmproj-*.gguf` projection files with their vision-capable base models (with fallback matching for QAT/generic naming)
 - 🧠 **MTP exclusion** — `mtp-*.gguf` encoder files are excluded from the model list; loaded automatically by llama-server
-- ⚡ **DFlash drafter support** — auto-detects `dflash-*.gguf` companions (e.g. Muse Glimmer) and attaches them via `--spec-type draft-dflash`, with adaptive disengage (`--spec-draft-p-min 0.4`); DFlash toggle in Settings → Global → Inference
+- ⚡ **DFlash drafter support** — auto-detects `dflash-*.gguf` companions (e.g. Muse Glimmer) and attaches them via `--spec-type draft-dflash`, with adaptive disengage (`--spec-draft-p-min 0.4`); DFlash toggle in Settings → Local → Inference
 - 📝 **Chat Template Override** — configure a custom `.jinja` or `.json` template for agentic harnesses (opencode, pi)
 - 🤖 **Gemma 4 ready** — auto-applies `--reasoning off --reasoning-format none` so OpenAI-compatible clients (opencode, pi, OpenClaw) don't break on `reasoning_content` (per-model overridable — Muse Glimmer needs it OFF)
 - ⚙️ **Tune per-model port, context size, and extra args** via a settings window
@@ -91,6 +91,8 @@ LM Switcher stays local-first. If you *also* want cloud models — DeepSeek, GLM
 
 Ready-to-copy provider entries (Codex CLI format + a generic OpenAI-compatible snippet): [`integrations/orcarouter.toml`](integrations/orcarouter.toml).
 
+In the app: open **Settings → OrcaRouter**, paste your API key (kept in the macOS **Keychain**), optionally set a default model id (`orcarouter/auto` routes for you), and hit **Test connection** to verify the key and list the live catalog.
+
 ## Features Explained
 
 ### mmproj Auto-Pairing with Fallback Matching
@@ -136,11 +138,11 @@ mtp-Q4_K_M.gguf                  ← MTP head, loaded automatically
 gemma-3-mtp-Q4_K_M.gguf          ← a model with "mtp" in its name
 ```
 
-### MTP Toggle (Settings → Global)
+### MTP Toggle (Settings → Local)
 
 MTP is **ON by default** — the app auto-detects whether a model supports it (companion `mtp-*.gguf` file or built-in MTP), and silently skips it for models that don't.
 
-If you want to experiment with MTP on your own hardware, toggle "Enable MTP" in **Settings → Global**. This passes `--spec-type draft-mtp` to llama-server. It persists across restarts via UserDefaults.
+If you want to experiment with MTP on your own hardware, toggle "Enable MTP" in **Settings → Local**. This passes `--spec-type draft-mtp` to llama-server. It persists across restarts via UserDefaults.
 
 The companion `llama` CLI also supports this via `LLAMA_ENABLE_MTP=true`.
 
@@ -156,7 +158,7 @@ Glimmer ships a drafter as `dflash-kquant.gguf` next to the main model file.
   --spec-draft-model <file> --spec-draft-n-max 15 --spec-draft-p-min 0.4`.
 - **Exclusion**: `dflash-*.gguf` files never appear in the model list
   (menu bar, `llama list`, MCP) — same treatment as `mtp-*`.
-- **DFlash toggle (Settings → Global → Inference)**: ON by default,
+- **DFlash toggle (Settings → Local → Inference)**: ON by default,
   silently skipped when no companion exists. Also available as a
   per-model override.
 - **Sampling interaction**: while a DFlash drafter is attached, the app
@@ -189,7 +191,7 @@ The standard Gemma 4 chat template has four edge cases that only surface during 
 Custom `.jinja` templates (like `gemma4_chat_template.jinja`) fix these issues but may cause tokenization errors if used with `llama-server`'s built-in tokenizer for regular chat.
 
 **How to use it:**
-- **Menu bar app:** Open Settings → Global → Chat Template Override → browse to your `.jinja` file
+- **Menu bar app:** Open Settings → Local → Chat Template Override → browse to your `.jinja` file
 - **CLI:** `LLAMA_CHAT_TEMPLATE=~/models/gemma4_chat_template.jinja llama load gemma-4-12B-it-qat-UD-Q4_K_XL`
 - **Leave empty** to use the model's built-in template (works for regular chat, web UI, Hermes, etc.)
 
@@ -302,7 +304,7 @@ The app **automatically excludes** these files from the model list (they're not 
 
 Open Settings from the menu bar dropdown (⚙ Settings…).
 
-**Global tab** (card-based):
+**Local tab** (card-based):
 - **Models** — models directory, default port, context size, idle-unload
   timer, extra args
 - **Backends** — `llama-server` / `mlx_lm.server` paths, chat template override
@@ -315,7 +317,7 @@ Open Settings from the menu bar dropdown (⚙ Settings…).
 
 **Per-Model tab** — a sidebar of every discovered model (running state +
 an override-count badge) next to a detail pane for the selected model.
-Flip "Override Global Settings" to edit that model's port, context,
+Flip "Override Local Settings" to edit that model's port, context,
 sampling, KV cache, thinking, reasoning suppression, MTP, DFlash, and
 extra args independently; each
 field is tagged **OVERRIDE** or **GLOBAL** so it's obvious at a glance
@@ -338,7 +340,7 @@ LLAMA_CHAT_TEMPLATE=""       # optional chat template override
 LM Switcher ships a standalone MCP server, `lm-switcher-mcp` (installed
 to `~/bin`), that lets agents — Hermes, opencode, anything
 speaking MCP over stdio — manage your local models. It is **OFF by
-default**: enable **Agent access (MCP)** in Settings → Global (Inference
+default**: enable **Agent access (MCP)** in Settings → Local (Inference
 card, below MTP) before registering.
 
 ```bash
@@ -397,7 +399,7 @@ Safety rails:
 │   ├── LlamaMenubarApp.swift     # @main entry point + settings window host
 │   ├── ServerManager.swift       # the brain: discovery, process lifecycle, state
 │   ├── MenuView.swift            # menu bar dropdown UI
-│   ├── SettingsView.swift        # Global / Per-Model settings window
+│   ├── SettingsView.swift        # Local / Per-Model / OrcaRouter / Help / About settings window
 │   ├── DomainTypes.swift         # ModelEntry, ModelState, AppSettings, ModelBackend
 │   └── llama                     # the CLI (bash)
 ├── scripts/
@@ -484,7 +486,7 @@ Because that's the lightest-weight way to keep a tool always available on macOS 
 
 ## Version
 
-Current: **v0.9.10b** — beta. sushi backend (beamivalice/sushi, the mlx-serve fork with EXL3/affine packs — one shared server, models load on demand), Splash backend (paperniuk/splash M1/M2 fork), menu bar + Per-Model redesign, MCP agent access, idle auto-unload, eight engines (llama.cpp, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash, sushi), and an in-app engine-selection map. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
+Current: **v0.9.11b** — beta. OrcaRouter optional cloud provider (dedicated Settings tab, API key in the macOS Keychain, live "Test connection"), sushi backend (beamivalice/sushi, the mlx-serve fork with EXL3/affine packs — one shared server, models load on demand), Splash backend (paperniuk/splash M1/M2 fork), menu bar + Per-Model redesign, MCP agent access, idle auto-unload, eight engines (llama.cpp, MLX, oMLX, MTPLX, DS4, mlx-serve, Splash, sushi), and an in-app engine-selection map. (Matches `CFBundleShortVersionString` in `scripts/install.sh`.)
 
 See `CHANGELOG.md` for full version history.
 

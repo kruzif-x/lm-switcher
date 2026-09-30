@@ -5,6 +5,21 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.11b] - 2026-09-30
+
+**OrcaRouter — optional cloud provider with its own Settings tab (API key in the Keychain).**
+
+### Added
+- **OrcaRouter Settings tab** (new tab): enable toggle, base URL (default `https://api.orcarouter.ai/v1`), API key stored in the **macOS Keychain** (never UserDefaults), default model id, a live **Test connection** button (`GET /models` — verifies the key and reports the catalog size), and the referral sign-up link. Cloud surfaces are additive: local discovery, launching, the menu bar, and MCP are untouched (cloud models do NOT appear in local scans).
+- Help: new **“Cloud provider — OrcaRouter”** section (Contents renumbered: Troubleshooting is now section 11). About: cloud-provider note + OrcaRouter reference link.
+- Repo: `integrations/orcarouter.toml` + `integrations/README.md` (OrcaRouter Built-with listing in review), README section, referral link.
+
+### Changed
+- The Settings tab formerly called **“Global”** is now **“Local”** — it only ever governed local engines, and the name would collide with the new cloud option. Badge language follows: per-model `GLOBAL` chip → `LOCAL`, “Override Global Settings” → “Override Local Settings”, “Reset to Global” → “Reset to Local”. README/Help updated to match.
+
+### Notes
+- OrcaRouter (orcarouter.ai) is a 200+ model OpenAI-compatible gateway billed at provider rates with no markup. Sign-ups through the in-app referral link support development (OrcaRouter pays this project 5% of referred workspaces' eligible spend).
+
 ## [0.9.10b] - 2026-09-29
 
 **sushi backend — the eighth engine (beamivalice/sushi, the mlx-serve fork with EXL3/affine "sushi quants"), plus two latent fixes.**
