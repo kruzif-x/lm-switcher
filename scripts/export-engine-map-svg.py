@@ -31,16 +31,22 @@ style = style_m.group(1).strip("\n")
 svg = svg_m.group(0)
 
 # Required namespace + intrinsic size (GitHub scales it to the content column).
+# Size derives from the map's own viewBox so the map can grow (e.g. when the
+# OrcaRouter cloud rail was added) without touching this script.
+vb_m = re.search(r'viewBox="0 0 (\d+) (\d+)"', svg)
+if not vb_m:
+    sys.exit("no viewBox on <svg>")
+W, H = vb_m.group(1), vb_m.group(2)
 svg = svg.replace(
     "<svg ",
-    '<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="800" ',
+    f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" ',
     1,
 )
 
 # Panel-coloured backdrop instead of the HTML page's .panel CSS.
 svg = svg.replace(
     "</defs>",
-    '</defs>\n  <rect x="0" y="0" width="1500" height="800" fill="var(--panel)"></rect>',
+    f'</defs>\n  <rect x="0" y="0" width="{W}" height="{H}" fill="var(--panel)"></rect>',
     1,
 )
 

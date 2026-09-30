@@ -1,6 +1,6 @@
 # LM Switcher (MacOS Apple Silicon Only)
 
-A macOS menu bar app + CLI + MCP for managing local LLM models (GGUF and Apple MLX/oMLX/MTPLX/DS4/Mlx-Serve/Splash/sushi).
+A macOS menu bar app + CLI + MCP for managing local LLM models (GGUF and Apple MLX/oMLX/MTPLX/DS4/Mlx-Serve/Splash/sushi) — plus an optional **cloud rail, [OrcaRouter](https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8)** (200+ hosted models: DeepSeek, GLM, Kimi, Qwen, Claude, GPT…), when you want hosted models too. Local-first: nothing changes until you enable it.
 
 Made this initially for my wife, so that it would be easy for her to switch models instead of typing on the CLI, 
 then I expanded it with more features for my lazy self. I use Deepseek-v4-flash and GLM 5.2 to assist me to code this
@@ -14,19 +14,19 @@ app. Added the MCP so that my Hermes Agent could load and unload models as and w
 
 ## Which engine runs your model?
 
-![LM Switcher engine-selection map — GGUF goes to llama-server (or ds4-server inside the DS4 folder); MLX folders go to MTPLX, mlx-serve, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; folders under the sushi store (~/.sushi/models) go to the sushi engine (the mlx-serve fork); Splash packages (manifest.json + target/) under the Splash root go to splash-m1](docs/engine-map.svg)
+![LM Switcher engine-selection map — GGUF goes to llama-server (or ds4-server inside the DS4 folder); MLX folders go to MTPLX, mlx-serve, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; folders under the sushi store (~/.sushi/models) go to the sushi engine (the mlx-serve fork); Splash packages (manifest.json + target/) under the Splash root go to splash-m1; the OrcaRouter cloud rail sits outside this flow](docs/engine-map.svg)
 
 The engine is chosen when a model is **discovered** — file format *plus the folder it lives in*. There is no
 engine picker: move a model into another engine's root (or hot-load it) to change engines, and one tree has one
 owner, so nothing lists twice. The interactive version ships inside the app (**Help → Which engine runs your
 model?**); source: [`docs/engine-map.html`](docs/engine-map.html) — the SVG above is generated from it by
-[`scripts/export-engine-map-svg.py`](scripts/export-engine-map-svg.py).
+[`scripts/export-engine-map-svg.py`](scripts/export-engine-map-svg.py). The optional **OrcaRouter** cloud rail is drawn at the bottom — it’s outside this discovery flow entirely (enable it in Settings; see [Optional cloud provider — OrcaRouter](#optional-cloud-provider--orcarouter)).
 
 ## What is this?
 
 LM Switcher is a native macOS app that lives in your menu bar (next to the clock). It lets you:
 
-- 🔍 **Discover** GGUF and MLX/oMLX/MTPLX/DS4/Splash/sushi models in a directory of your choice (recursive scan)
+- 🔍 **Discover** GGUF and MLX/oMLX/MTPLX/DS4/mlx-serve/Splash/sushi models in a directory of your choice (recursive scan)
 - ▶️ **Load** any model with one click (spawns the right backend: `llama-server` or `mlx_lm.server`)
 - ⏹ **Unload** any model independently — no more "kill the wrong process" surprises
 - 🔄 **Run multiple models simultaneously**, each on its own port (e.g. one chat model on :8080, an embedder on :8081)
@@ -38,6 +38,7 @@ LM Switcher is a native macOS app that lives in your menu bar (next to the clock
 - ⚙️ **Tune per-model port, context size, and extra args** via a settings window
 - 🔌 **Sync** with externally-launched servers (started by the companion CLI or by hand)
 - 📁 **Show up in Launchpad, Spotlight, and `~/Applications/`** like a real Mac app
+- ☁️ **Optional cloud rail** — flip on **OrcaRouter** in Settings → OrcaRouter for 200+ hosted models (sign-in keeps the key in the Keychain; local scanning, launching and the MCP surface are untouched)
 
 A companion shell command `llama` provides the same functionality from your terminal, and the two tools share state automatically.
 

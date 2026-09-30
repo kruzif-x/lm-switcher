@@ -53,11 +53,11 @@
   <h1>Which engine runs your model?</h1>
   <p>LM Switcher decides the engine when it <b>discovers</b> a model — the file format plus the folder it lives in.
      There is no engine picker; move a model to another engine's root (or hot-load it) to change engines.
-     One owner per tree: nothing lists twice.</p>
+     One owner per tree: nothing lists twice. Optional cloud models (OrcaRouter) sit outside this flow — see the rail at the bottom of the map.</p>
 </header>
 
 <div class="panel">
-<svg viewBox="0 0 1500 800" role="img" aria-label="Engine selection flow: GGUF files go to llama-server (or ds4-server when in the DS4 folder); MLX folders go to MTPLX, mlx-serve, sushi, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; Splash packages (manifest.json + target/) under the Splash root go to splash-m1.">
+<svg viewBox="0 0 1500 860" role="img" aria-label="Engine selection flow: GGUF files go to llama-server (or ds4-server when in the DS4 folder); MLX folders go to MTPLX, mlx-serve, sushi, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; Splash packages (manifest.json + target/) under the Splash root go to splash-m1; OrcaRouter (optional cloud) is drawn as a separate rail outside this flow.">
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dash)"></path>
@@ -219,11 +219,19 @@
   <text class="s" x="1202" y="640" font-size="11.5" fill="var(--faint)">the default owner of plain MLX</text>
   <text class="s" x="1202" y="656" font-size="11.5" fill="var(--faint)">folders in your Models directory</text>
 
+  <!-- ===== optional cloud rail (outside the discovery flow) ===== -->
+  <rect class="card" x="30" y="700" width="1424" height="88" rx="14" stroke="var(--ink)"></rect>
+  <text class="t" x="50" y="732" font-size="15.5">OrcaRouter — optional cloud rail</text>
+  <rect class="chipbg" x="350" y="716" width="250" height="26" rx="13"></rect>
+  <text class="m" x="475" y="733" text-anchor="middle">optional · not part of discovery</text>
+  <text class="s" x="50" y="758">Enable in Settings → OrcaRouter · menu-bar row at the top of the model list · load = route to api.orcarouter.ai/v1 (no local process) · unload = deactivate</text>
+  <text class="s" x="50" y="778" font-size="11.5" fill="var(--faint)">200+ hosted models (DeepSeek, GLM, Kimi, Qwen, Claude, GPT…) · API key in the macOS Keychain · local scans and the MCP agent surface are untouched</text>
+
   <!-- bottom caption -->
-  <text class="lbl" x="750" y="726" text-anchor="middle" font-size="12">
+  <text class="lbl" x="750" y="806" text-anchor="middle" font-size="12">
     Ports: llama.cpp &amp; MLX count up from the Default port (8080) · oMLX 8000 · MTPLX 8085 · DS4 8090 · Splash 8095 · mlx-serve 11234 · sushi 12345
   </text>
-  <text class="lbl" x="750" y="746" text-anchor="middle" font-size="12">
+  <text class="lbl" x="750" y="826" text-anchor="middle" font-size="12">
     Per-model overrides change port, context, sampling, MTP/DFlash and extra args — never the engine.
   </text>
 </svg>
@@ -238,6 +246,7 @@
     <li><b>Moving engines = moving folders</b> (Settings → Local → Backends sets the roots). mlx-serve exception: it can also hot-load any MLX folder without moving it — <code>POST /v1/load-model {"model": "&lt;absolute path&gt;"}</code>.</li>
     <li><b>“Switch” swaps models, not engines.</b> It loads the new model, verifies it, then unloads the old ones — safe model swaps for the same engines.</li>
     <li><b>Shared servers behave differently on unload.</b> oMLX stops for everyone; mlx-serve frees just that model and stays up for agents (a LaunchAgent usually keeps it running); sushi frees just that model too — stop the server itself with <code>pkill -f 'sushi serve'</code>.</li>
+    <li><b>OrcaRouter is a rail, not an engine.</b> The cloud card at the bottom is enabled in <b>Settings → OrcaRouter</b> and loads from the menu-bar row — it never appears in local discovery or the MCP agent surface, and its API key lives in the macOS Keychain (never in preferences files).</li>
   </ul>
 </div>
 

@@ -1,5 +1,5 @@
 <!-- Generated from docs/engine-map.html by scripts/export-engine-map-svg.py — do not edit by hand. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="800" viewBox="0 0 1500 800" role="img" aria-label="Engine selection flow: GGUF files go to llama-server (or ds4-server when in the DS4 folder); MLX folders go to MTPLX, mlx-serve, sushi, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; Splash packages (manifest.json + target/) under the Splash root go to splash-m1.">
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="860" viewBox="0 0 1500 860" role="img" aria-label="Engine selection flow: GGUF files go to llama-server (or ds4-server when in the DS4 folder); MLX folders go to MTPLX, mlx-serve, sushi, oMLX or mlx_lm.server depending on the marker file and the tree that owns them; Splash packages (manifest.json + target/) under the Splash root go to splash-m1; OrcaRouter (optional cloud) is drawn as a separate rail outside this flow.">
 <style>
   :root {
     --bg: #f5f5f7; --panel: #ffffff; --stroke: #d2d2d7; --dash: #86868b;
@@ -49,7 +49,7 @@
       <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dash)"></path>
     </marker>
   </defs>
-  <rect x="0" y="0" width="1500" height="800" fill="var(--panel)"></rect>
+  <rect x="0" y="0" width="1500" height="860" fill="var(--panel)"></rect>
 
   <!-- ===== spine (left of centre) ===== -->
 
@@ -206,11 +206,19 @@
   <text class="s" x="1202" y="640" font-size="11.5" fill="var(--faint)">the default owner of plain MLX</text>
   <text class="s" x="1202" y="656" font-size="11.5" fill="var(--faint)">folders in your Models directory</text>
 
+  <!-- ===== optional cloud rail (outside the discovery flow) ===== -->
+  <rect class="card" x="30" y="700" width="1424" height="88" rx="14" stroke="var(--ink)"></rect>
+  <text class="t" x="50" y="732" font-size="15.5">OrcaRouter — optional cloud rail</text>
+  <rect class="chipbg" x="350" y="716" width="250" height="26" rx="13"></rect>
+  <text class="m" x="475" y="733" text-anchor="middle">optional · not part of discovery</text>
+  <text class="s" x="50" y="758">Enable in Settings → OrcaRouter · menu-bar row at the top of the model list · load = route to api.orcarouter.ai/v1 (no local process) · unload = deactivate</text>
+  <text class="s" x="50" y="778" font-size="11.5" fill="var(--faint)">200+ hosted models (DeepSeek, GLM, Kimi, Qwen, Claude, GPT…) · API key in the macOS Keychain · local scans and the MCP agent surface are untouched</text>
+
   <!-- bottom caption -->
-  <text class="lbl" x="750" y="726" text-anchor="middle" font-size="12">
+  <text class="lbl" x="750" y="806" text-anchor="middle" font-size="12">
     Ports: llama.cpp &amp; MLX count up from the Default port (8080) · oMLX 8000 · MTPLX 8085 · DS4 8090 · Splash 8095 · mlx-serve 11234 · sushi 12345
   </text>
-  <text class="lbl" x="750" y="746" text-anchor="middle" font-size="12">
+  <text class="lbl" x="750" y="826" text-anchor="middle" font-size="12">
     Per-model overrides change port, context, sampling, MTP/DFlash and extra args — never the engine.
   </text>
 </svg>
