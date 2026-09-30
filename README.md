@@ -93,6 +93,20 @@ Ready-to-copy provider entries (Codex CLI format + a generic OpenAI-compatible s
 
 In the app: open **Settings → OrcaRouter** and click **Sign in with OrcaRouter** — approve in your browser and the key is stored in the macOS **Keychain** automatically (no copy-paste; new users can sign up right in that flow, and the referral is credited automatically). Manual paste is still supported. Then hit **Test connection** to verify the key and fetch the catalog, and pick a **Default model** (`orcarouter/auto` routes for you). Once enabled, an **OrcaRouter row appears at the top of the menu bar list** for quick load/copy.
 
+**One key, every tool.** OrcaRouter speaks plain OpenAI-compatible HTTP, so the same key works in any client — including the tools this project runs beside:
+
+| Tool | Where the provider block goes |
+|---|---|
+| **Hermes Agent** | `~/.hermes/config.yaml` → `custom_providers:` entry (`name: OrcaRouter`, `base_url: https://api.orcarouter.ai/v1`, `key_env: ORCA_KEY`) + `ORCA_KEY=…` in `~/.hermes/.env` |
+| **pi** | `~/.pi/agent/models.json` → provider block with `"api": "openai-completions"`, `"apiKey": "${ORCA_KEY}"` |
+| **opencode** | `~/.config/opencode/opencode.json` → `@ai-sdk/openai-compatible` provider with `"apiKey": "{env:ORCA_KEY}"` |
+| **Codex CLI** | [`integrations/orcarouter.toml`](integrations/orcarouter.toml) in this repo |
+| **dsh (DeepSeek CLI)** | add a custom OpenAI-compatible provider in its Settings → Models |
+
+Shared catalog across all of them: `orcarouter/auto`, `deepseek/deepseek-v4.1-flash`, `z-ai/glm-5.3-flash`, `moonshotai/kimi-k3`, … The app's **Copy key** button moves the key from the macOS Keychain to your clipboard to bootstrap any of these.
+
+**Agents (MCP) & OrcaRouter:** LM Switcher's MCP agent surface manages **local models only** — OrcaRouter is deliberately not exposed to agents (no cloud models in agent listings, settings are read-only for agents, and the key never leaves the Keychain). Agents that want cloud models use their own provider configuration (e.g. the Hermes block above).
+
 ## Features Explained
 
 ### mmproj Auto-Pairing with Fallback Matching

@@ -218,6 +218,7 @@ struct SettingsView: View {
     @State private var orcaSignInStatus: String = ""
     @State private var orcaSignInOK: Bool = true
     @State private var orcaSignInBusy: Bool = false
+    @State private var orcaCopyFeedback: String = ""
     @State private var orcaKeyInput: String = ""
     @State private var orcaKeyIsSet: Bool
     @State private var orcaTestStatus: String = ""
@@ -1095,6 +1096,8 @@ struct SettingsView: View {
                                 Label("Sign in with OrcaRouter", systemImage: "person.badge.key")
                                     .font(.system(size: 12))
                             }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.blue)
                             .disabled(orcaSignInBusy)
                             if orcaSignInBusy {
                                 ProgressView().scaleEffect(0.55).frame(width: 12, height: 12)
@@ -1129,6 +1132,11 @@ struct SettingsView: View {
                                 .foregroundStyle(orcaKeyInput.isEmpty ? Color.secondary : Color.accentColor)
                                 .disabled(orcaKeyInput.isEmpty)
                             if orcaKeyIsSet {
+                                Button("Copy key") { copyOrcaKey() }
+                                    .font(.system(size: 11))
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(Color.accentColor)
+                                    .help("Copy the stored key to the clipboard — for Hermes, pi, opencode, Codex…")
                                 Button("Remove") { removeOrcaKey() }
                                     .font(.system(size: 11))
                                     .buttonStyle(.plain)
@@ -1136,7 +1144,7 @@ struct SettingsView: View {
                             }
                         }
                         Text(orcaKeyIsSet
-                             ? "Key stored in the macOS Keychain — it is never written to settings files."
+                             ? "Key stored in the macOS Keychain — it is never written to settings files." + (orcaCopyFeedback.isEmpty ? "" : "  \(orcaCopyFeedback)")
                              : "No key stored yet — sign in above, or paste an existing key and Save.")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
@@ -1174,6 +1182,8 @@ struct SettingsView: View {
                         HStack(spacing: 10) {
                             Button(orcaTesting ? "Testing…" : "Test connection") { testOrcaConnection() }
                                 .font(.system(size: 11))
+                                .buttonStyle(.borderedProminent)
+                                .tint(.blue)
                                 .disabled(orcaTesting)
                             if !orcaTestStatus.isEmpty {
                                 Text(orcaTestStatus)
@@ -1230,10 +1240,21 @@ struct SettingsView: View {
         }
     }
 
+    private func copyOrcaKey() {
+        guard let k = OrcaRouter.loadKey() else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(k, forType: .string)
+        orcaCopyFeedback = "✓ Copied to clipboard."
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            if orcaCopyFeedback == "✓ Copied to clipboard." { orcaCopyFeedback = "" }
+        }
+    }
+
     private func removeOrcaKey() {
         _ = OrcaRouter.deleteKey()
         orcaKeyIsSet = false
         orcaTestStatus = ""
+        orcaCopyFeedback = ""
     }
 
     private func startOrcaSignIn() {
@@ -1950,6 +1971,9 @@ struct SettingsView: View {
                         helpEntry("Set it up in the OrcaRouter tab.",
                                   "Click Sign in with OrcaRouter — your browser opens; approve (new users can sign up right on that page) and the key is stored automatically in the macOS Keychain. Prefer manual? Paste a key created in the OrcaRouter dashboard instead. Keep the default base URL (https://api.orcarouter.ai/v1), then hit Test connection — it verifies the key and fills the Default model dropdown with the live catalog (keep orcarouter/auto to auto-route, or pick a specific one like deepseek/deepseek-v4.1-flash or z-ai/glm-5.3-flash).",
                                   detail: "Sign-in is OAuth 2.0 + PKCE: approval in the browser sends a one-time code to a local 127.0.0.1 callback; the app exchanges it over HTTPS for the key. No password ever touches the app. Test connection calls GET /models with the key and lists the live catalog size.")
+                        helpEntry("Agents & MCP.",
+                                  "Agent access (MCP) covers LOCAL models only — OrcaRouter is deliberately not in the agent surface: no tool lists cloud models, settings stay read-only for agents, and the key never leaves the Keychain. Agents that want cloud models set up OrcaRouter themselves as an ordinary OpenAI-compatible provider (see Using it from other tools).",
+                                  mono: false)
                         helpEntry("The menu bar row.",
                                   "Once enabled, an “OrcaRouter” row sits at the top of the menu list. Click it to load/unload (green dot = loaded — this arms the quick actions; cloud needs no local process), hover to copy the base URL, right-click for Copy base URL / Copy model id / these settings.",
                                   detail: "The row shows the model picked in the Default model dropdown (orcarouter/auto = auto-route).")
@@ -1957,7 +1981,7 @@ struct SettingsView: View {
                                   "The Sign in button carries the referral link automatically — sign-ups made that way are credited to LM Switcher (OrcaRouter pays it 5% of what referred workspaces spend on inference). The link is also in the OrcaRouter tab, in About, and in the repo's README.",
                                   detail: "https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8")
                         helpEntry("Using it from other tools.",
-                                  "Anything that speaks OpenAI-compatible chat works: base URL + Authorization: Bearer <key> + a catalog model id. The repo's integrations/ folder ships ready-made snippets (Codex CLI format).",
+                                  "Anything that speaks OpenAI-compatible chat works: base URL + Authorization: Bearer <key> + a catalog model id. The Copy key button moves the stored key to your clipboard for Hermes (custom_providers in config.yaml), pi (models.json), opencode, and Codex CLI (repo: integrations/orcarouter.toml).",
                                   mono: false)
                     }
 

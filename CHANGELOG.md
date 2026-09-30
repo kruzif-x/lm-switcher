@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The Settings tab formerly called **“Global”** is now **“Local”** — it only ever governed local engines, and the name would collide with the new cloud option. Badge language follows: per-model `GLOBAL` chip → `LOCAL`, “Override Global Settings” → “Override Local Settings”, “Reset to Global” → “Reset to Local”. README/Help updated to match.
+- OrcaRouter tab: **Sign in with OrcaRouter** and **Test connection** are now blue prominent buttons; new **Copy key** button (stored key → clipboard for Hermes / pi / opencode / Codex setups).
+- Builds now sign with the **Developer ID Application** identity when present — ad-hoc rebuilds changed the app's Keychain identity every time, re-triggering the "wants to use your confidential information" prompt for the OrcaRouter key.
+
+### Fixed
+- **MCP discovery lost every GGUF / Splash / sushi / mlx-serve model when path settings held empty strings** (the app persists `""` for auto-detect paths, but the MCP treated `""` as a literal path): `hasPrefix(ds4Dir + "/")` degenerated to `hasPrefix("/")` and excluded *all* GGUF files, and empty Splash/sushi/mlx-serve roots skipped those scans. Empty values now fall back to defaults — the agent surface lists the same set as the app/CLI (reproduced on Sirius: 1 of 7 models visible → all 7, model switching verified end-to-end).
 
 ### Notes
 - OrcaRouter (orcarouter.ai) is a 200+ model OpenAI-compatible gateway billed at provider rates with no markup. Sign-ups through the in-app referral link support development (OrcaRouter pays this project 5% of referred workspaces' eligible spend).
