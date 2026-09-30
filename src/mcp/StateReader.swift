@@ -37,6 +37,16 @@ struct Prefs {
     static func string(_ key: String, default def: String = "") -> String {
         (value(key) as? String) ?? def
     }
+    /// Path-valued preference. The app persists EMPTY strings for
+    /// auto-detect paths; an empty value must fall back to the default,
+    /// not act as a literal path — with "" the prefix exclusions below
+    /// degenerate (`hasPrefix("" + "/")` matches EVERY absolute path) and
+    /// the scans silently lose every model. Reproduced 2026-09-30:
+    /// discovery returned only oMLX while the app listed everything.
+    static func path(_ key: String, default def: String) -> String {
+        let v = string(key)
+        return v.isEmpty ? def : v
+    }
 }
 
 // MARK: - Model identity (must match app + CLI exactly)
@@ -65,13 +75,12 @@ func discoverModels() -> [DiscoveredModel] {
     let fm = FileManager.default
     var out: [DiscoveredModel] = []
     // oMLX root known up front so the generic MLX scan below can skip it.
-    let omlxDir = Prefs.string("omlxModelDir", default: NSHomeDirectory() + "/AI/models/omlx")
-    let ds4Dir = Prefs.string("ds4ModelDir", default: NSHomeDirectory() + "/Projects/ds4-metal/gguf")
-    let mlxServeDir = Prefs.string("mlxServeModelDir", default: NSHomeDirectory() + "/.mlx-serve/models")
-    let sushiDir = Prefs.string("sushiModelDir", default: NSHomeDirectory() + "/.sushi/models")
-    let modelsDir = Prefs.string("modelsDir")
-    if !modelsDir.isEmpty {
-        guard let en = fm.enumerator(atPath: modelsDir) else { return [] }
+    let omlxDir = Prefs.path("omlxModelDir", default: NSHomeDirectory() + "/AI/models/omlx")
+    let ds4Dir = Prefs.path("ds4ModelDir", default: NSHomeDirectory() + "/Projects/ds4-metal/gguf")
+    let mlxServeDir = Prefs.path("mlxServeModelDir", default: NSHomeDirectory() + "/.mlx-serve/models")
+    let sushiDir = Prefs.path("sushiModelDir", default: NSHomeDirectory() + "/.sushi/models")
+    let modelsDir = Prefs.path("modelsDir", default: NSHomeDirectory() + "/models")
+    if !modelsDir.isEmpty, let en = fm.enumerator(atPath: modelsDir) {
         var mlxDirs = Set<String>()
         for case let rel as String in en {
             let base = (rel as NSString).lastPathComponent
@@ -220,7 +229,7 @@ func discoverModels() -> [DiscoveredModel] {
     // SYMLINKS into the shared HF cache — fileExists follows them, so both
     // the real and symlinked layout discovery works. ONE server per model;
     // the root is outside every other scan tree, so no exclusion is needed.
-    let splashDir = Prefs.string("splashModelDir", default: NSHomeDirectory() + "/Library/Application Support/Splash/models")
+    let splashDir = Prefs.path("splashModelDir", default: NSHomeDirectory() + "/Library/Application Support/Splash/models")
     if !splashDir.isEmpty, fm.fileExists(atPath: splashDir) {
         let orgs = (try? fm.contentsOfDirectory(atPath: splashDir)) ?? []
         for org in orgs where !org.hasPrefix(".") {
@@ -493,7 +502,7 @@ func probeHealthy(port: Int, backend: String) -> Bool {
 /// Store-relative id the mlx-serve API uses (`org/model` under the store
 /// root). Must mirror the app's `mlxServeModelId`.
 func mlxServeStoreId(forPath path: String) -> String {
-    let root = Prefs.string("mlxServeModelDir", default: NSHomeDirectory() + "/.mlx-serve/models")
+    let root = Prefs.path("mlxServeModelDir", default: NSHomeDirectory() + "/.mlx-serve/models")
     if path.hasPrefix(root + "/") { return String(path.dropFirst(root.count + 1)) }
     return (path as NSString).lastPathComponent
 }
@@ -531,7 +540,7 @@ func mlxServeLoadedIds(port: Int) -> Set<String>? {
 /// Store-relative id the sushi API uses (path under the store root).
 /// Must mirror the app's `sushiModelId`.
 func sushiStoreId(forPath path: String) -> String {
-    let root = Prefs.string("sushiModelDir", default: NSHomeDirectory() + "/.sushi/models")
+    let root = Prefs.path("sushiModelDir", default: NSHomeDirectory() + "/.sushi/models")
     if path.hasPrefix(root + "/") { return String(path.dropFirst(root.count + 1)) }
     return (path as NSString).lastPathComponent
 }
