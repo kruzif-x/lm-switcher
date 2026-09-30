@@ -76,6 +76,10 @@ struct MenuView: View {
     /// MenuBarExtra window — they've been unreliable there).
     @State private var showingAgentFeed: Bool = false
 
+    /// Whether an OrcaRouter API key exists in the Keychain (row chip).
+    /// Read once per panel open — Keychain reads are not free.
+    @State private var orcaKeyStored: Bool = false
+
     /// Models captured just before "Unload all", offered back via Undo.
     @State private var undoStash: [ModelEntry] = []
     @State private var undoSecondsLeft: Int = 0
@@ -125,6 +129,7 @@ struct MenuView: View {
         }
         .onAppear {
             refreshMetrics()
+            orcaKeyStored = OrcaRouter.loadKey() != nil
             let t = Timer(timeInterval: 3, repeats: true) { _ in refreshMetrics() }
             t.tolerance = 1
             RunLoop.main.add(t, forMode: .common)
@@ -495,6 +500,7 @@ struct MenuView: View {
         // and scrolls for long ones (capped at 320).
         let naturalH: CGFloat = {
             var h: CGFloat = 0
+            if manager.settings.orcaEnabled { h += 30 }
             if !running.isEmpty {
                 h += sectionH + CGFloat(running.count) * rowH
                 if running.count >= 2 { h += bulkH }
@@ -516,6 +522,22 @@ struct MenuView: View {
 
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
+
+                // --- OrcaRouter (optional cloud provider) ---
+                if manager.settings.orcaEnabled,
+                   q.isEmpty || "orcarouter".contains(q) {
+                    CloudRow(
+                        baseURL: manager.settings.orcaBaseURL.isEmpty
+                            ? OrcaRouter.defaultBaseURL : manager.settings.orcaBaseURL,
+                        modelID: manager.settings.orcaDefaultModel.isEmpty
+                            ? "orcarouter/auto" : manager.settings.orcaDefaultModel,
+                        active: manager.settings.orcaActive,
+                        keyStored: orcaKeyStored,
+                        onToggle: { toggleOrca() },
+                        onOpenSettings: { settingsHost.show(manager: manager, initialTab: 2) },
+                        onToast: { showToast($0) })
+                    Divider().padding(.vertical, 2)
+                }
 
                 // --- Running section ---
                 if !running.isEmpty {
@@ -570,6 +592,17 @@ struct MenuView: View {
             .frame(width: 300, alignment: .leading)
         }
         .frame(width: 300, height: naturalH)
+    }
+
+    // MARK: - OrcaRouter menu actions
+
+    /// Toggle the cloud quick-state. There is no process to start or stop
+    /// — this arms the row's quick actions (copy base URL / model id).
+    private func toggleOrca() {
+        manager.settings.orcaActive.toggle()
+        manager.saveSettings()
+        manager.refreshTrigger += 1
+        showToast(manager.settings.orcaActive ? "OrcaRouter active" : "OrcaRouter unloaded")
     }
 
     // MARK: - First run (empty models list)
@@ -957,6 +990,101 @@ private struct StoppedRow: View {
         Task {
             try? await Task.sleep(nanoseconds: 8_000_000_000)
             loadingIDs.remove(model.id)
+        }
+    }
+}
+
+
+// MARK: - OrcaRouter cloud row
+
+private struct CloudRow: View {
+    let baseURL: String
+    /// Effective model id (never empty — falls back to orcarouter/auto).
+    let modelID: String
+    let active: Bool
+    let keyStored: Bool
+    let onToggle: () -> Void
+    let onOpenSettings: () -> Void
+    let onToast: (String) -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                if active {
+                    Circle().fill(Color.green).frame(width: 7, height: 7)
+                } else {
+                    Circle().stroke(Color.secondary.opacity(0.4), lineWidth: 1.5)
+                        .frame(width: 7, height: 7)
+                }
+            }
+
+            Image(systemName: active ? "cloud.fill" : "cloud")
+                .imageScale(.small)
+                .foregroundStyle(active ? Color.green : Color.secondary)
+
+            Text("OrcaRouter")
+                .lineLimit(1)
+                .font(.system(size: 13))
+
+            if !keyStored {
+                Text("no key")
+                    .font(.system(size: 8.5, weight: .semibold))
+                    .foregroundStyle(Color.orange)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 1)
+                    .overlay(RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.orange.opacity(0.5), lineWidth: 0.5))
+                    .help("No API key stored — open OrcaRouter settings and paste one.")
+            }
+
+            Spacer()
+
+            if hovering {
+                HStack(spacing: 1) {
+                    rowActionButton("doc.on.doc", help: "Copy base URL") {
+                        copyToClipboard(baseURL)
+                        onToast("Copied \(baseURL)")
+                    }
+                    rowActionButton("gearshape", help: "OrcaRouter settings") { onOpenSettings() }
+                }
+            }
+
+            Text("Cloud")
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color.accentColor.opacity(0.4), lineWidth: 0.5))
+
+            Text(modelID)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Color.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 92, alignment: .trailing)
+                .help(modelID)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(active ? Color.green.opacity(0.07) : Color.accentColor.opacity(0.05))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { onToggle() }
+        .contextMenu {
+            Button(active ? "Unload" : "Load") { onToggle() }
+            Button("Copy base URL") {
+                copyToClipboard(baseURL)
+                onToast("Copied \(baseURL)")
+            }
+            Button("Copy model id") {
+                copyToClipboard(modelID)
+                onToast("Copied \(modelID)")
+            }
+            Divider()
+            Button("OrcaRouter settings…") { onOpenSettings() }
         }
     }
 }

@@ -211,6 +211,7 @@ struct SettingsView: View {
     @State private var orcaEnabled: Bool
     @State private var orcaBaseURL: String
     @State private var orcaDefaultModel: String
+    @State private var orcaCatalog: [String] = []
     @State private var orcaKeyInput: String = ""
     @State private var orcaKeyIsSet: Bool
     @State private var orcaTestStatus: String = ""
@@ -270,6 +271,7 @@ struct SettingsView: View {
         _orcaEnabled      = State(initialValue: manager.settings.orcaEnabled)
         _orcaBaseURL      = State(initialValue: manager.settings.orcaBaseURL)
         _orcaDefaultModel = State(initialValue: manager.settings.orcaDefaultModel)
+        _orcaCatalog      = State(initialValue: UserDefaults.standard.stringArray(forKey: "orcaModelCatalog") ?? [])
         _orcaKeyIsSet     = State(initialValue: OrcaRouter.loadKey() != nil)
     }
 
@@ -1105,7 +1107,31 @@ struct SettingsView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     Divider().opacity(0.5)
-                    shortFieldRow(label: "Default model id", placeholder: "orcarouter/auto", text: $orcaDefaultModel)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Default model").font(.system(size: 12))
+                        Picker("", selection: $orcaDefaultModel) {
+                            Text("orcarouter/auto — auto-route").tag("orcarouter/auto")
+                            ForEach(orcaCatalog, id: \.self) { id in
+                                Text(id).tag(id)
+                            }
+                            if !orcaDefaultModel.isEmpty
+                                && orcaDefaultModel != "orcarouter/auto"
+                                && !orcaCatalog.contains(orcaDefaultModel) {
+                                Text("\(orcaDefaultModel) — custom").tag(orcaDefaultModel)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Text(orcaCatalog.isEmpty
+                             ? "Keep auto-route, or hit Test connection above to fetch the catalog and pick a specific model."
+                             : "Catalog: \(orcaCatalog.count) models — the picked model is what “Copy model id” and the menu bar row use.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
                     Divider().opacity(0.5)
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 10) {
@@ -1186,6 +1212,10 @@ struct SettingsView: View {
                 orcaTesting = false
                 orcaTestOK = r.ok
                 orcaTestStatus = r.message
+                if r.ok && !r.modelIDs.isEmpty {
+                    orcaCatalog = r.modelIDs
+                    UserDefaults.standard.set(r.modelIDs, forKey: "orcaModelCatalog")
+                }
             }
         }
     }
@@ -1861,8 +1891,11 @@ struct SettingsView: View {
                                   "LM Switcher stays local-first. The OrcaRouter tab adds an OPTIONAL cloud provider — 200+ models (DeepSeek, GLM, Kimi and more) behind one OpenAI-compatible endpoint, billed at provider rates with no markup. Turn it on only if you want cloud models alongside your local ones; local engines, discovery, and the menu are untouched.",
                                   mono: false)
                         helpEntry("Set it up in the OrcaRouter tab.",
-                                  "Paste an API key (stored in the macOS Keychain — never in a settings file), keep the default base URL (https://api.orcarouter.ai/v1), set a default model id — orcarouter/auto routes for you, or pick a specific one like deepseek/deepseek-v4.1-flash or z-ai/glm-5.3-flash — then hit Test connection.",
+                                  "Paste an API key (stored in the macOS Keychain — never in a settings file), keep the default base URL (https://api.orcarouter.ai/v1), then hit Test connection — it verifies the key and fills the Default model dropdown with the live catalog (keep orcarouter/auto to auto-route, or pick a specific one like deepseek/deepseek-v4.1-flash or z-ai/glm-5.3-flash).",
                                   detail: "Test connection calls GET /models with your key: a green \"✓ Connected — N models\" means the key works and lists the live catalog size.")
+                        helpEntry("The menu bar row.",
+                                  "Once enabled, an “OrcaRouter” row sits at the top of the menu list. Click it to load/unload (green dot = loaded — this arms the quick actions; cloud needs no local process), hover to copy the base URL, right-click for Copy base URL / Copy model id / these settings.",
+                                  detail: "The row shows the model picked in the Default model dropdown (orcarouter/auto = auto-route).")
                         helpEntry("Getting a key also supports this app.",
                                   "Sign up through the referral link — OrcaRouter pays LM Switcher 5% of what referred workspaces spend on inference. The link is in the OrcaRouter tab, in About, and in the repo's README.",
                                   detail: "https://www.orcarouter.ai/ref/ref_a1a2c3f77b1a87bde5f8")

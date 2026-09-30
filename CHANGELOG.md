@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **OrcaRouter — optional cloud provider with its own Settings tab (API key in the Keychain).**
 
 ### Added
-- **OrcaRouter Settings tab** (new tab): enable toggle, base URL (default `https://api.orcarouter.ai/v1`), API key stored in the **macOS Keychain** (never UserDefaults), default model id, a live **Test connection** button (`GET /models` — verifies the key and reports the catalog size), and the referral sign-up link. Cloud surfaces are additive: local discovery, launching, the menu bar, and MCP are untouched (cloud models do NOT appear in local scans).
+- **OrcaRouter Settings tab** (new tab): enable toggle, base URL (default `https://api.orcarouter.ai/v1`), API key stored in the **macOS Keychain** (never UserDefaults), a **Default model dropdown** (`orcarouter/auto` plus the live catalog fetched by **Test connection**, cached in `orcaModelCatalog`; custom values preserved as their own option), and the referral sign-up link. Cloud surfaces are additive: local discovery, launching, and MCP are untouched (cloud models do NOT appear in local scans).
+- **Menu bar row**: with OrcaRouter enabled, an **OrcaRouter row** sits at the top of the model list — click to load/unload (green = active; quick-state only, no local process), hover to **Copy base URL**, right-click for Copy base URL / Copy model id / OrcaRouter settings.
 - Help: new **“Cloud provider — OrcaRouter”** section (Contents renumbered: Troubleshooting is now section 11). About: cloud-provider note + OrcaRouter reference link.
 - Repo: `integrations/orcarouter.toml` + `integrations/README.md` (OrcaRouter Built-with listing in review), README section, referral link.
 

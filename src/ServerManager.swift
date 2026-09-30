@@ -3208,7 +3208,9 @@ class ServerManager {
         // macOS Keychain, not here — only non-secret config is persisted.
         settings.orcaEnabled = d.bool(forKey: "orcaEnabled")
         settings.orcaBaseURL = d.string(forKey: "orcaBaseURL") ?? OrcaRouter.defaultBaseURL
-        settings.orcaDefaultModel = d.string(forKey: "orcaDefaultModel") ?? ""
+        let odm = d.string(forKey: "orcaDefaultModel") ?? ""
+        settings.orcaDefaultModel = odm.isEmpty ? "orcarouter/auto" : odm
+        settings.orcaActive = d.bool(forKey: "orcaActive")
     }
 
     /// Persist all settings to `UserDefaults`. Currently called by
@@ -3266,6 +3268,7 @@ class ServerManager {
         d.set(settings.orcaEnabled, forKey: "orcaEnabled")
         d.set(settings.orcaBaseURL, forKey: "orcaBaseURL")
         d.set(settings.orcaDefaultModel, forKey: "orcaDefaultModel")
+        d.set(settings.orcaActive, forKey: "orcaActive")
     }
 }
 

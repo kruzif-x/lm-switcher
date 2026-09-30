@@ -83,6 +83,9 @@ enum OrcaRouter {
     struct ConnectionResult {
         var ok: Bool
         var message: String
+        /// Live catalog ids from a successful fetch (empty otherwise).
+        /// Used to fill the Settings "Default model" picker.
+        var modelIDs: [String] = []
     }
 
     /// GET `<base>/models` with Bearer auth. Verifies the key and returns
@@ -119,7 +122,8 @@ enum OrcaRouter {
                     let ids = m.data.map { $0.id }
                     let sample = ids.prefix(3).joined(separator: ", ")
                     return ConnectionResult(ok: true,
-                        message: "✓ Connected — \(ids.count) models (e.g. \(sample))")
+                        message: "✓ Connected — \(ids.count) models (e.g. \(sample))",
+                        modelIDs: ids)
                 }
                 return ConnectionResult(ok: true, message: "✓ Connected (HTTP 200).")
             case 401, 403:

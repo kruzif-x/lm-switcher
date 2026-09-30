@@ -433,7 +433,12 @@ struct AppSettings {
     /// Base URL of the OrcaRouter OpenAI-compatible API.
     var orcaBaseURL: String = "https://api.orcarouter.ai/v1"
 
-    /// Preferred model id when pointing clients at OrcaRouter
-    /// (e.g. "orcarouter/auto" or "deepseek/deepseek-v4.1-flash").
-    var orcaDefaultModel: String = ""
+    /// Preferred model id when pointing clients at OrcaRouter.
+    /// Defaults to the auto-router; the Settings picker lists the live
+    /// catalog fetched by "Test connection".
+    var orcaDefaultModel: String = "orcarouter/auto"
+
+    /// Quick "cloud pick is loaded" flag toggled from the menu bar row.
+    /// Purely UI state — there is no local process for OrcaRouter.
+    var orcaActive: Bool = false
 }
