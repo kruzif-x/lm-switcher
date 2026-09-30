@@ -305,17 +305,28 @@ EOF
 # -----------------------------------------------------------------------------
 # Step 4: Codesign
 # -----------------------------------------------------------------------------
-# macOS requires apps to be signed. For a personal app you can use an
-# "ad-hoc" signature (`--sign -`), which doesn't require a developer
-# certificate. The signature lets Launchpad/Spotlight/Quarantine
-# accept the app without complaints. The `--force` flag overwrites any
+# macOS requires apps to be signed. Prefer the stable "Developer ID
+# Application" identity when it exists in the keychain: unlike ad-hoc
+# signing (whose identity is the build's hash and therefore CHANGES on
+# every rebuild), a certificate-based identity keeps the app's Keychain
+# ACL stable across rebuilds — ad-hoc rebuilds re-trigger "wants to use
+# your confidential information" prompts for secrets the app itself
+# stored (e.g. the OrcaRouter API key). Falls back to ad-hoc when the
+# certificate is unavailable. The `--force` flag overwrites any
 # existing signature.
 
-echo "==> Ad-hoc codesigning app bundle..."
+SIGN_ID="Developer ID Application: Roland Chia (S6TR6PN5VQ)"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "S6TR6PN5VQ"; then
+    echo "==> Codesigning app bundle (Developer ID)..."
+    SIGN_FLAG="$SIGN_ID"
+else
+    echo "==> Codesigning app bundle (ad-hoc — no Developer ID found)..."
+    SIGN_FLAG="-"
+fi
 # B-4 fix: `--deep` is deprecated. For this single-binary bundle (no nested
 # frameworks), sign the inner executable first, then the bundle.
-codesign --force --sign - "$APP_BUNDLE/Contents/MacOS/lm-switcher" 2>/dev/null || true
-codesign --force --sign - "$APP_BUNDLE" 2>/dev/null || true
+codesign --force --sign "$SIGN_FLAG" "$APP_BUNDLE/Contents/MacOS/lm-switcher" 2>/dev/null || true
+codesign --force --sign "$SIGN_FLAG" "$APP_BUNDLE" 2>/dev/null || true
 
 
 # -----------------------------------------------------------------------------
