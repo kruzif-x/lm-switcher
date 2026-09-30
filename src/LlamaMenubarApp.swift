@@ -105,7 +105,11 @@ struct LlamaMenubarApp: App {
             // Using Image(nsImage:) with isTemplate=false bypasses this: SwiftUI
             // passes the NSImage directly to NSStatusBarButton.image without
             // re-templating it, so our tint colour is preserved.
+            // A running OrcaRouter cloud rail counts as one more "running"
+            // unit, so the bolt mirrors the panel: 0 → monochrome, 1 → green
+            // (cloud only counts too), 2+ → blue.
             let count = manager.models.filter { manager.state(for: $0).isRunning }.count
+                + (manager.settings.orcaActive ? 1 : 0)
             Image(nsImage: menuBarIcon(runCount: count))
         }
         // Window-based style keeps the panel open after each selection.
