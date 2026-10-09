@@ -2214,7 +2214,7 @@ struct SettingsView: View {
                     }
                     Text("LM Switcher")
                         .font(.title2).fontWeight(.medium)
-                    Text("Version 0.9.13b (beta)")
+                    Text("Version 0.9.14b (beta)")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 .padding(.top, 24)

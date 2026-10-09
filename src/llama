@@ -331,7 +331,8 @@ list_all_models() {
 
     # oMLX: models under the oMLX root (org/model nesting, depth <= 2).
     # All entries share ONE server on OMLX_PORT — loading any of them
-    # starts/stops the same `omlx serve` process. (The MLX scan above
+    # ensures that server is up and loads THAT model; unloading frees
+    # THAT model (per-model residency — 2026-10-09). (The MLX scan above
     # already skips this tree, so no exclusion needed here — including
     # when OMLX_MODEL_DIR sits inside MODELS_DIR.)
     if [[ -d "$OMLX_MODEL_DIR" ]]; then
@@ -634,11 +635,23 @@ load_model() {
     local name; name=$(echo "$line" | cut -d'|' -f3)
     local id_hash; id_hash=$(id_hash "$path")
 
-    # oMLX: the shared server is the load unit — if it's already healthy
-    # on OMLX_PORT, this model is by definition loaded.
+    # oMLX: ONE shared server serves every model under OMLX_MODEL_DIR —
+    # a healthy server only means "available on demand". Load THIS model
+    # explicitly (POST /v1/models/<id>/load — server-side the call answers
+    # only once the model is resident, so a large model takes a while).
+    # Ids are the directory name, store-relative path fallback (2026-10-09).
     if [[ "$type" == "omlx" ]] && nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
-        echo "● [$type] $name already loaded on port $OMLX_PORT (shared oMLX server)"
-        return 0
+        local om_ok=0
+        if curl -sf -m 600 -X POST "http://127.0.0.1:$OMLX_PORT/v1/models/$(basename "$path")/load" >/dev/null 2>&1 \
+           || curl -sf -m 600 -X POST "http://127.0.0.1:$OMLX_PORT/v1/models/${path#$OMLX_MODEL_DIR/}/load" >/dev/null 2>&1; then
+            om_ok=1
+        fi
+        if (( om_ok )); then
+            echo "✓ [$type] $name loaded on port $OMLX_PORT (shared oMLX server; model resident)"
+            return 0
+        fi
+        echo "✗ [$type] $name: oMLX server on :$OMLX_PORT refused the load" >&2
+        return 1
     fi
 
     # mlx-serve: ONE always-on shared server serves the whole store — but a
@@ -933,8 +946,12 @@ load_model() {
         # free-RAM-derived registry cap. Logs go to ~/.sushi/logs.
         executable="$SUSHI_SERVER"
         mkdir -p "$HOME/.sushi/logs"
+        # 2026-10-05 (Sirius): --skip-mem-preflight — the free-RAM pre-flight
+        # refuses the 49 GB pack once available RAM dips below ~53.5 GB (typical
+        # after hours of use), even with the wired limit set; swap is accepted
+        # for this background load (user decision). See sushi-apple-silicon skill.
         args=("serve" "--host" "127.0.0.1" "--port" "$port" "--model-dir" "$SUSHI_MODEL_DIR" \
-              "--ctx-size" "131072" "--max-resident-mem" "0" \
+              "--ctx-size" "131072" "--max-resident-mem" "0" "--skip-mem-preflight" \
               "--log-file" "$HOME/.sushi/logs/serve.log")
     elif [[ "$type" == "mtplx" ]]; then
         # MTPLX: one server per model with native MTP spec-decode.
@@ -1009,14 +1026,15 @@ load_model() {
     # per-model log file so the user can `tail -f` it.
     nohup "$executable" "${args[@]}" > "$lf" 2>&1 &
 
-    # Capture the new PID and write the PID file — EXCEPT for sushi: its
-    # server is SHARED (one process serves the whole store), so a pidfile
-    # keyed to one model would make every surface treat that model as
-    # running even after the model itself is unloaded. Residency, not
-    # process liveness, is the truth — same rule as mlx-serve (which also
-    # writes no pidfile).
+    # Capture the new PID and write the PID file — EXCEPT for the shared
+    # servers (sushi, oMLX): one process serves the whole store, so a
+    # pidfile keyed to one model would claim that model owns the server
+    # (and outlive the model's own unload). For oMLX the process also
+    # renames itself to `omlx-server` and may be reparented when its
+    # launcher exits — none of which changes that the model is resident.
+    # Residency, not process liveness, is the truth (2026-10-09).
     local newpid; newpid=$!
-    if [[ "$type" != "sushi" ]]; then
+    if [[ "$type" != "sushi" && "$type" != "omlx" ]]; then
         echo "$newpid" > "$pf"
         # Second line is the port — for fast get_port_for() without ps.
         echo "$newpid --port $port" >> "$pf"
@@ -1094,6 +1112,24 @@ load_model() {
                 echo "  ✗ sushi refused to load the model (see ~/.sushi/logs/serve.log)" >&2
             fi
         fi
+        # oMLX: a freshly spawned shared server is only "available" — make
+        # THIS model resident so the load actually happened (the server
+        # answers /v1/models/<id>/load only once resident). Wait briefly
+        # for the API first: the port binds before the API is answering.
+        if [[ "$type" == "omlx" ]]; then
+            local _om_wait=0
+            while (( _om_wait < 30 )); do
+                curl -sf -m 2 "http://127.0.0.1:$OMLX_PORT/health" >/dev/null 2>&1 && break
+                sleep 1
+                _om_wait=$(( _om_wait + 1 ))
+            done
+            if curl -sf -m 600 -X POST "http://127.0.0.1:$OMLX_PORT/v1/models/$(basename "$path")/load" >/dev/null 2>&1 \
+               || curl -sf -m 600 -X POST "http://127.0.0.1:$OMLX_PORT/v1/models/${path#$OMLX_MODEL_DIR/}/load" >/dev/null 2>&1; then
+                echo "  ✓ model resident (oMLX)"
+            else
+                echo "  ✗ oMLX refused to load the model" >&2
+            fi
+        fi
     else
         echo "✗ Failed to start $name (not listening on :$port)"
         kill -TERM "$newpid" 2>/dev/null
@@ -1131,6 +1167,27 @@ unload_model() {
     local pid port
     pid=$(head -1 "$pidfile" 2>/dev/null | tr -d '[:space:]')
     port=$(sed -n '2s/.*--port \([0-9]*\).*/\1/p' "$pidfile" 2>/dev/null)
+
+    # oMLX: one shared server serves every model under its root. Unload
+    # frees JUST this model (POST /v1/models/<id>/unload) and leaves the
+    # server running for its siblings — killing the shared process (the
+    # pre-2026-10-09 behavior) dropped every other oMLX model's residency
+    # with it. The model id is the pidfile stem's basename part.
+    if [[ -n "$port" && "$port" == "$OMLX_PORT" ]] && pgrep -f "omlx[- ]serve" >/dev/null 2>&1; then
+        local om_stem om_name2 om_code
+        om_stem=$(basename "$pidfile" .pid)
+        om_name2="${om_stem#*.}"
+        [[ -z "$om_name2" || "$om_name2" == "$om_stem" ]] && om_name2="$name"
+        om_code=$(curl -s -o /dev/null -w '%{http_code}' -m 60 -X POST \
+            "http://127.0.0.1:$OMLX_PORT/v1/models/$om_name2/unload" 2>/dev/null || echo 000)
+        if [[ "$om_code" == "200" || "$om_code" == "400" ]]; then
+            echo "✓ $name stopped (oMLX: model freed; shared server keeps serving other models)"
+        else
+            echo "✗ oMLX on :$OMLX_PORT refused the unload for '$om_name2' (HTTP $om_code)" >&2
+        fi
+        rm -f "$pidfile"
+        return 0
+    fi
 
     if [[ "$pid" =~ ^[0-9]{1,9}$ ]] && (( pid > 1 )) && kill -0 "$pid" 2>/dev/null; then
         # Identity check: never signal a process that does not look like one
@@ -1300,6 +1357,27 @@ cmd_status() {
             done <<< "$sh_ids"
         fi
     fi
+    # oMLX: the shared server serves its whole root lazily (and renames
+    # itself to `omlx-server`), so report what it actually has RESIDENT
+    # — GET /v1/models/status. The
+    # plain /v1/models list carries no loaded flag and is ASCII-sorted,
+    # so it must never be used for residency.
+    if nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
+        local om_ids om_spid
+        om_ids=$(curl -sf -m 4 "http://127.0.0.1:$OMLX_PORT/v1/models/status" 2>/dev/null \
+            | tr -d ' \n' \
+            | grep -o '"id":"[^"]*"[^}]*"loaded":true' \
+            | sed 's/^"id":"\([^"]*\)".*/\1/')
+        om_spid=$(pgrep -f 'omlx[- ]serve' | head -1)
+        if [[ -n "$om_ids" ]]; then
+            local omid
+            while IFS= read -r omid; do
+                [[ -z "$omid" ]] && continue
+                echo "● ${omid##*/}  :$OMLX_PORT  (PID ${om_spid:-?}, oMLX)"
+                any=1
+            done <<< "$om_ids"
+        fi
+    fi
     [[ $any -eq 0 ]] && echo "○ No models loaded"
 }
 
@@ -1437,21 +1515,25 @@ cmd_unload() {
                 else
                     echo "○ $name not loaded"
                 fi
-            elif [[ "$type" == "omlx" && ! -f "$pf" ]] && nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
-                # Externally-launched oMLX server (no pidfile): stop the
-                # shared server — the `omlx serve` parent AND its
-                # `omlx-server` worker child, by port listener.
-                local spid; spid=$(pgrep -f "omlx[- ]serve" | head -1)
-                if [[ -n "$spid" ]]; then
-                    echo "Stopping $name (PID $spid) ..."
-                    kill "$spid" 2>/dev/null
-                    sleep 1
-                    kill -0 "$spid" 2>/dev/null && kill -9 "$spid" 2>/dev/null
-                    lsof -tiTCP:"$OMLX_PORT" -sTCP:LISTEN 2>/dev/null | while IFS= read -r p; do
-                        kill -9 "$p" 2>/dev/null
-                    done
-                    echo "✓ $name stopped"
+            elif [[ "$type" == "omlx" ]] && nc -z 127.0.0.1 "$OMLX_PORT" 2>/dev/null; then
+                # Shared oMLX server (CLI- or app-launched): free JUST this
+                # model via POST /v1/models/<id>/unload — the server keeps
+                # serving its siblings (2026-10-09; the old code killed the
+                # shared process and dropped every other oMLX model with
+                # it). Stop the server itself with: pkill -f 'omlx[- ]serve'.
+                local om_ok=0 om_code om_id
+                for om_id in "$(basename "$path")" "${path#$OMLX_MODEL_DIR/}"; do
+                    om_code=$(curl -s -o /dev/null -w '%{http_code}' -m 60 -X POST \
+                        "http://127.0.0.1:$OMLX_PORT/v1/models/$om_id/unload" 2>/dev/null || echo 000)
+                    # 200 = freed; 400 "Model not loaded" = desired state already.
+                    if [[ "$om_code" == "200" || "$om_code" == "400" ]]; then om_ok=1; break; fi
+                done
+                if (( om_ok )); then
+                    echo "✓ $name unloaded (shared oMLX server on :$OMLX_PORT stays up)"
+                else
+                    echo "○ $name is not currently resident on the oMLX server (nothing to free)"
                 fi
+                if [[ -f "$pf" ]]; then rm -f "$pf"; fi
             else
                 unload_model "$pf" "$name"
             fi

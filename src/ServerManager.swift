@@ -117,6 +117,17 @@ class ServerManager {
     private var sushiPendingUnload: Set<String> = []
     private var sushiResidencyKnown = false
 
+    /// oMLX: mirror of the mlx-serve in-flight machinery (epoch +
+    /// pending-unload + residency-known) — same shared-server semantics,
+    /// independent state. ONE `omlx serve` process serves every model
+    /// under its root and loads them lazily, so process liveness says
+    /// nothing about a given model; residency (GET /v1/models/status)
+    /// is the truth (2026-10-09).
+    private var omlxLoadEpoch: [String: Int] = [:]
+    private var omlxPendingUnload: Set<String> = []
+    @ObservationIgnored
+    private var omlxResidencyKnown = false
+
     /// Serial queue used for the periodic `ps` reconciliation. Running the
     /// `Process` spawn and pipe reads on a background queue prevents a slow
     /// or hung `ps` from blocking the main thread (which would freeze the
@@ -985,6 +996,161 @@ class ServerManager {
         } catch { return nil }
     }
 
+    /// Is an oMLX server answering on `port`? (Port-parameterized variant
+    /// of `omlxServerHealthy()` used by `beginOmlxLoad`'s post-spawn wait.)
+    private func omlxHealthy(port: Int) -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models") else { return false }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            if let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) { ok = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.0)
+        return ok
+    }
+
+    /// Server-side id oMLX uses for `model`: the store-relative path when
+    /// the model sits under the oMLX root, else the folder name. (oMLX
+    /// reports `id` = directory name for root-level models; nested
+    /// org/model trees use the store-relative path.)
+    private func omlxModelId(for model: ModelEntry) -> String {
+        let root = resolvedOmlxModelDir()
+        let p = model.path.path
+        if p.hasPrefix(root + "/") { return String(p.dropFirst(root.count + 1)) }
+        return model.path.lastPathComponent
+    }
+
+    /// IDs of the models oMLX currently reports as RESIDENT (GET
+    /// /v1/models/status, `loaded == true`). ONE server serves every
+    /// model under its root and loads them lazily, so "server is up"
+    /// says nothing about a given model — residency is the truth. The
+    /// plain /v1/models list carries no per-model loaded flag and is
+    /// ASCII-sorted, so its order must never be read as truth. Returns
+    /// nil when the probe failed: callers must not read "absent from a
+    /// failed probe" as "unloaded".
+    private func omlxLoadedModelIds(port: Int) -> Set<String>? {
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models/status") else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        let sem = DispatchSemaphore(value: 0)
+        var ids: Set<String>? = nil
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            defer { sem.signal() }
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let arr = obj["models"] as? [[String: Any]] else { return }
+            var loaded = Set<String>()
+            for m in arr where (m["loaded"] as? Bool) == true {
+                if let id = m["id"] as? String { loaded.insert(id) }
+            }
+            ids = loaded
+        }.resume()
+        _ = sem.wait(timeout: .now() + 3.0)
+        return ids
+    }
+
+    /// POST `/v1/models/<id>/load` or `/unload` to the oMLX server.
+    /// `/load` is SYNCHRONOUS server-side — it answers only once the
+    /// model is resident — so the timeout must cover a real load (tens
+    /// of seconds for a large oQ4e). Unloading an already-unloaded model
+    /// answers 400 ("Model not loaded"), which is the desired end state.
+    private func postOmlx(_ action: String, modelId: String, port: Int,
+                          timeout: TimeInterval) -> Bool {
+        guard let enc = modelId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "http://127.0.0.1:\(port)/v1/models/\(enc)/\(action)") else { return false }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = timeout
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            if let http = resp as? HTTPURLResponse {
+                ok = (200..<300).contains(http.statusCode)
+                    || (action == "unload" && http.statusCode == 400)
+            }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 1.0)
+        return ok
+    }
+
+    /// Make `model` resident on the shared oMLX server WITHOUT blocking
+    /// the UI. `/v1/models/<id>/load` answers only once the model is
+    /// loaded, so this runs on a background queue and applies the result
+    /// on main: success marks the row running (pid/port from the shared
+    /// process), failure records `lastError` so the row explains itself.
+    /// `waitForHealth` polls the port first — used right after spawning
+    /// the server, when it is not answering yet.
+    private func beginOmlxLoad(_ model: ModelEntry, port: Int, waitForHealth: Bool) {
+        assertMain()
+        // A new load supersedes any stop that is still awaiting its
+        // follow-up unload.
+        omlxPendingUnload.remove(model.id)
+        let epoch = (omlxLoadEpoch[model.id] ?? 0) + 1
+        omlxLoadEpoch[model.id] = epoch
+        let modelId = omlxModelId(for: model)
+        let leaf = model.path.lastPathComponent
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            if waitForHealth {
+                var tries = 0
+                while tries < 60, !self.omlxHealthy(port: port) {
+                    Thread.sleep(forTimeInterval: 1.0)
+                    tries += 1
+                }
+            }
+            // Store-relative id first, folder-name fallback. An unknown
+            // id 404s immediately, so the fallback costs nothing when the
+            // first id is right.
+            let ok = self.postOmlx("load", modelId: modelId, port: port, timeout: 300)
+                || self.postOmlx("load", modelId: leaf, port: port, timeout: 300)
+            let pid = ok ? self.omlxServerPid() : nil
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                guard self.omlxLoadEpoch[model.id] == epoch else {
+                    // Superseded — a stop, or a newer load. If the user
+                    // stopped while this load was in flight, the model
+                    // can still land resident server-side; honour the
+                    // stop with ONE follow-up unload.
+                    if ok, self.omlxPendingUnload.remove(model.id) != nil {
+                        let mId = modelId, leafId = leaf
+                        DispatchQueue.global(qos: .utility).async { [weak self] in
+                            guard let self = self else { return }
+                            _ = self.postOmlx("unload", modelId: mId, port: port, timeout: 60)
+                                || self.postOmlx("unload", modelId: leafId, port: port, timeout: 60)
+                        }
+                    }
+                    return
+                }
+                var s = self.modelStates[model.id] ?? ModelState()
+                if ok {
+                    s.isRunning = true
+                    s.pid = pid
+                    s.port = port
+                    s.ctxSize = 0
+                    s.lastError = nil
+                    // A running model is checked in the menu (same rule
+                    // the generic spawn path applies).
+                    self.selected.insert(model.id)
+                } else {
+                    s.isRunning = false
+                    s.pid = nil
+                    s.lastError = "oMLX on 127.0.0.1:\(port) refused to load \(modelId)"
+                }
+                self.modelStates[model.id] = s
+                // Re-read reality right away so the row settles now
+                // rather than on the next 3s tick.
+                self.syncQueue.async { [weak self] in
+                    self?.syncWithRunningProcesses()
+                }
+            }
+        }
+    }
+
     // MARK: - mlx-serve backend (ddalcu)
 
     /// Resolved mlx-serve model root (settings override, else the shared
@@ -1698,30 +1864,33 @@ class ServerManager {
             }
         case .omlx:
             // oMLX: ONE server process serves every model under the oMLX
-            // model root on settings.omlxPort. Loading any oMLX entry =
-            // ensure the shared server is up; sampling/MTP/VLM config is
-            // handled by oMLX itself (~/.omlx/model_settings.json).
+            // model root on settings.omlxPort. Loading an entry means
+            // ensure the shared server is up (adopt a running one or
+            // spawn it) AND make THIS model resident: the root loads
+            // models from disk lazily, so a healthy server alone only
+            // means "available on demand", not "loaded". Before
+            // 2026-10-09 the app treated the server as "every oMLX model
+            // loaded" — loading one row painted every sibling as loaded
+            // and nothing was actually loaded. Sampling/MTP/VLM config is
+            // handled by oMLX itself (~/.omlx/model_settings.json). The
+            // load runs off the main thread and the row flips to running
+            // only once the model is really resident; an
+            // optimistically-set row would be cleared by the 3s
+            // residency sync and the menu spinner would never settle.
             executable = resolvedOmlxServerPath()
-            // Already healthy → adopt the running server (externally
-            // launched or spawned by loading a sibling oMLX entry).
+            let omlxPort = settings.omlxPort > 0 ? settings.omlxPort : 8000
             if omlxServerHealthy() {
-                if var s = modelStates[model.id] {
-                    s.isRunning = true
-                    s.pid = omlxServerPid()
-                    s.port = settings.omlxPort > 0 ? settings.omlxPort : 8000
-                    s.ctxSize = 0
-                    s.lastError = nil
-                    modelStates[model.id] = s
-                }
+                beginOmlxLoad(model, port: omlxPort, waitForHealth: false)
                 return
             }
             let root = resolvedOmlxModelDir()
             args += ["serve", "--model-dir", root]
-            statePort = settings.omlxPort > 0 ? settings.omlxPort : 8000
+            statePort = omlxPort
             if settings.omlxPort > 0 {
                 args += ["--port", "\(settings.omlxPort)"]
             }
             // NOTE: no --host — oMLX binds 127.0.0.1 by default.
+            beginOmlxLoad(model, port: omlxPort, waitForHealth: true)
         case .mtplx:
             // MTPLX: serve one model with native MTP speculative decoding.
             executable = resolvedMtplxPath()
@@ -1982,27 +2151,38 @@ class ServerManager {
     /// externally-launched processes by killing them by PID.
     func unloadModel(_ model: ModelEntry) {
         assertMain()   // A3: all state mutation must happen on main
-        // oMLX: one shared server. Unloading any oMLX entry stops the
-        // server (and with it, every oMLX model). Sibling entries pick
-        // up the stopped state on the next 3s sync.
+        // oMLX: one shared server. Unload frees JUST this model's memory
+        // (POST /v1/models/<id>/unload) and deliberately leaves the
+        // server running — it serves every other model under the root
+        // and reloads models on demand. Before 2026-10-09, unloading ANY
+        // oMLX entry killed the shared server and dropped every sibling
+        // model's residency with it; stop the server itself with:
+        // pkill -f 'omlx[- ]serve'.
         if model.backend == .omlx {
-            if let pid = omlxServerPid() {
-                kill(pid, SIGTERM)
-                // The oMLX worker (`omlx-server`) may outlive the parent
-                // CLI process — kill anything still listening on the port.
-                DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 4.0) { [self] in
-                    if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
-                    let port = self.settings.omlxPort > 0 ? self.settings.omlxPort : 8000
-                    let t = Process()
-                    t.executableURL = URL(fileURLWithPath: "/bin/sh")
-                    t.arguments = ["-c", "lsof -tiTCP:\(port) -sTCP:LISTEN | xargs kill -9 2>/dev/null"]
-                    try? t.run()
+            let port = settings.omlxPort > 0 ? settings.omlxPort : 8000
+            // Invalidate any in-flight load so its completion cannot put
+            // the row back to running. If that load still lands resident
+            // server-side, its completion fires ONE follow-up unload that
+            // honours this stop (same rule as mlx-serve, 2026-09-16).
+            omlxLoadEpoch[model.id] = (omlxLoadEpoch[model.id] ?? 0) + 1
+            omlxPendingUnload.insert(model.id)
+            let rel = omlxModelId(for: model)
+            let leaf = model.path.lastPathComponent
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+                // Best effort: try the store-relative id, then the folder
+                // name (unload of an already-unloaded model answers 400,
+                // which postOmlx counts as the desired end state).
+                _ = self.postOmlx("unload", modelId: rel, port: port, timeout: 60)
+                    || self.postOmlx("unload", modelId: leaf, port: port, timeout: 60)
+                self.syncQueue.async { [weak self] in
+                    self?.syncWithRunningProcesses()
                 }
             }
-            for id in modelStates.keys {
-                guard let st = modelStates[id], st.isRunning,
-                      models.contains(where: { $0.id == id && $0.backend == .omlx }) else { continue }
-                modelStates[id] = ModelState(isRunning: false, pid: nil, port: 0, ctxSize: 0, lastError: nil)
+            if var s = modelStates[model.id] {
+                s.isRunning = false
+                s.pid = nil
+                modelStates[model.id] = s
             }
             selected.remove(model.id)
             return
@@ -2651,13 +2831,16 @@ class ServerManager {
                 // dead via `kill(pid, 0)` (which sends no signal —
                 // it just tests for existence). This prevents
                 // loaded models from falsely appearing stopped.
-                // mlx-serve: the shared server's process is always-on
-                // (LaunchAgent), so PID liveness says nothing about THIS
-                // model. A clean residency read that omits the model is
-                // authoritative: it is unloaded → clear the row.
+                // mlx-serve / oMLX / sushi: the shared server's process
+                // says nothing about THIS model (always-on for mlx-serve;
+                // one process serving every model under its root for
+                // oMLX/sushi). A clean residency read that omits the
+                // model is authoritative: it is unloaded → clear the row.
                 let isMlxServe = models.first(where: { $0.id == id })?.backend == .mlxserve
                 let isSushi = models.first(where: { $0.id == id })?.backend == .sushi
-                if (isMlxServe && mlxServeResidencyKnown) || (isSushi && sushiResidencyKnown) {
+                let isOmlx = models.first(where: { $0.id == id })?.backend == .omlx
+                if (isMlxServe && mlxServeResidencyKnown) || (isSushi && sushiResidencyKnown)
+                    || (isOmlx && omlxResidencyKnown) {
                     var cleared = s
                     cleared.isRunning = false
                     cleared.pid = nil
@@ -2903,10 +3086,11 @@ class ServerManager {
         let output = String(data: data, encoding: .utf8) ?? ""
 
         var externalStates: [String: (pid: Int32, port: Int, ctx: Int)] = [:]
-        // Reset per tick: only the mlx-serve / sushi branches below may
-        // set these true.
+        // Reset per tick: only the mlx-serve / sushi / oMLX branches
+        // below may set these true.
         mlxServeResidencyKnown = false
         sushiResidencyKnown = false
+        omlxResidencyKnown = false
 
         for line in output.split(separator: "\n") {
             let s = String(line)
@@ -2924,15 +3108,29 @@ class ServerManager {
                 || s.range(of: #"^\s*\d+\s+(?:\S*/)?sushi\s+serve(\s|$)"#, options: .regularExpression) != nil else { continue }
 
             // oMLX: one server serves every model under the oMLX root.
-            // Map it onto every discovered oMLX entry (shared pid/port).
-            // Match both the `omlx serve` parent and the `omlx-server`
-            // worker child (which outlives the parent).
+            // The process renames itself to `omlx-server` (and may be
+            // reparented to launchd when its launcher exits) — match both
+            // spellings. Residency, not
+            // process liveness: this server is not per-model and loads
+            // models from disk lazily, so map ONLY the models it reports
+            // as resident (GET /v1/models/status; the plain /v1/models
+            // list carries no loaded flag and is ASCII-sorted — order
+            // must never be read as truth). When the probe fails the flag
+            // stays false and the merge keeps prior state instead of
+            // reading "absent" as "unloaded". Before 2026-10-09 this
+            // mapped ALL oMLX entries → loading one row painted every
+            // sibling as loaded.
             if s.contains("omlx serve") || s.contains("omlx-server") {
                 let trimmed = s.drop(while: { $0 == " " })
                 let pidStr = trimmed.prefix(while: { $0.isNumber })
                 guard let pid = Int32(pidStr), pid > 0 else { continue }
                 let port = settings.omlxPort > 0 ? settings.omlxPort : 8000
+                let loaded = omlxLoadedModelIds(port: port)
+                omlxResidencyKnown = loaded != nil
                 for m in models where m.backend == .omlx {
+                    if let loaded = loaded,
+                       !loaded.contains(omlxModelId(for: m)),
+                       !loaded.contains(m.path.lastPathComponent) { continue }
                     externalStates[m.id] = (pid: pid, port: port, ctx: 0)
                 }
                 continue

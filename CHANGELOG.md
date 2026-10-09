@@ -5,6 +5,16 @@ All notable changes to LM Switcher are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.14b] - 2026-10-09
+
+**oMLX rows track true per-model residency — loading one model no longer marks its siblings loaded.**
+
+### Fixed
+- Clicking **load** on an oMLX model no longer paints every oMLX row as running. The app mapped the shared `omlx serve` process onto ALL oMLX entries, so loading CyberTiel also showed MiMo as loaded — and nothing was ever actually loaded (a healthy shared server only means "available on demand"). Rows now follow GET /v1/models/status residency, and load makes the clicked model resident (POST /v1/models/<id>/load).
+- **Unload** of an oMLX model frees JUST that model (POST /v1/models/<id>/unload); the shared server keeps serving its siblings. Before, unloading any oMLX row killed the shared server and dropped every other oMLX model's residency with it. Stop the server itself with `pkill -f 'omlx[- ]serve'`.
+- MCP `status` now sees the `omlx-server` worker (it only matched `omlx serve`, so externally-launched servers were invisible) and reports per-model residency instead of all-or-nothing.
+- CLI (`llama`): `load` on a healthy oMLX server loads THIS model; `unload` frees THIS model; `status` lists oMLX residents from /v1/models/status; oMLX loads write no pidfile (one process serves every model — residency is the truth).
+
 ## [0.9.13b] - 2026-09-30
 
 **Menu-bar bolt mirrors the cloud rail: a running OrcaRouter counts toward the status colour.**

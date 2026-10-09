@@ -370,14 +370,25 @@ func readRunning(models: [DiscoveredModel]) -> [RunningModel] {
                   !seenPids.contains(pid) else { continue }
             let args = String(text[sp...])
 
-            // oMLX: one server serves every model under the oMLX root —
-            // map it onto all discovered oMLX entries (shared pid/port).
-            if args.contains("omlx serve") {
+            // oMLX: ONE server serves every model under the oMLX root.
+            // The process renames itself to `omlx-server`, so match both
+            // spellings — matching only `omlx serve` missed the renamed
+            // process entirely.
+            // Residency, not process liveness: report only the models the
+            // server reports as loaded (GET /v1/models/status — the plain
+            // /v1/models list carries no loaded flag and is ASCII-sorted,
+            // so order must never be read as truth). A failed probe falls
+            // back to reporting all (presence-only).
+            if args.contains("omlx serve") || args.contains("omlx-server") {
                 let omlxModels = models.filter { $0.backend == "oMLX" }
                 guard !omlxModels.isEmpty else { continue }
                 seenPids.insert(pid)
                 let port = Prefs.int("omlxPort", default: 8000)
+                let loaded = omlxLoadedIds(port: port)
                 for m in omlxModels {
+                    if let loaded = loaded,
+                       !loaded.contains(omlxModelId(forPath: m.path)),
+                       !loaded.contains((m.path as NSString).lastPathComponent) { continue }
                     out.append(RunningModel(hash: m.hash, pid: pid, port: port, model: m,
                                             displayName: m.name, backend: "oMLX", ctxSize: nil,
                                             fromPidFile: false))
@@ -562,6 +573,47 @@ func sushiLoadedIds(port: Int) -> Set<String>? {
               let data = data,
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let arr = obj["data"] as? [[String: Any]] else { return }
+        var loaded = Set<String>()
+        for m in arr where (m["loaded"] as? Bool) == true {
+            if let id = m["id"] as? String { loaded.insert(id) }
+        }
+        ids = loaded
+    }.resume()
+    _ = sem.wait(timeout: .now() + 3.0)
+    return ids
+}
+
+// MARK: - oMLX residency
+
+/// Store-relative id the oMLX server uses for `path` (oMLX reports model
+/// ids as the directory name for root-level models; nested org/model
+/// trees use the store-relative path). Must mirror the app's
+/// `omlxModelId`.
+func omlxModelId(forPath path: String) -> String {
+    let root = Prefs.path("omlxModelDir", default: NSHomeDirectory() + "/AI/models/omlx")
+    if path.hasPrefix(root + "/") { return String(path.dropFirst(root.count + 1)) }
+    return (path as NSString).lastPathComponent
+}
+
+/// Model ids currently RESIDENT on the oMLX server (GET /v1/models/status,
+/// `loaded == true`). ONE server serves every model under its root and
+/// loads them lazily, so "server is up" says nothing about a given model —
+/// residency is the truth. The plain /v1/models list carries no per-model
+/// loaded flag and is ASCII-sorted, so its order must never be read as
+/// truth. nil when the probe failed: callers must then fall back to
+/// presence-only, never read "unknown" as "unloaded".
+func omlxLoadedIds(port: Int) -> Set<String>? {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/v1/models/status") else { return nil }
+    var req = URLRequest(url: url)
+    req.timeoutInterval = 2.0
+    let sem = DispatchSemaphore(value: 0)
+    var ids: Set<String>? = nil
+    URLSession.shared.dataTask(with: req) { data, resp, _ in
+        defer { sem.signal() }
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let data = data,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["models"] as? [[String: Any]] else { return }
         var loaded = Set<String>()
         for m in arr where (m["loaded"] as? Bool) == true {
             if let id = m["id"] as? String { loaded.insert(id) }
